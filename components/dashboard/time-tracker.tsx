@@ -3,10 +3,20 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Play, Square } from "lucide-react";
+import { Play, Square, Coffee, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 
@@ -40,6 +50,13 @@ export function TimeTracker({
   const [pausedTime, setPausedTime] = useState(0);
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
   const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
+  
+  // Confirmation dialog states
+  const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
+  const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
+  const [lunchStartConfirmOpen, setLunchStartConfirmOpen] = useState(false);
+  const [lunchEndConfirmOpen, setLunchEndConfirmOpen] = useState(false);
+  
   const { toast } = useToast();
 
   // Get current date in user's timezone
@@ -165,7 +182,7 @@ export function TimeTracker({
     };
   };
 
-  const handleClockIn = () => {
+  const confirmClockIn = () => {
     const now = Date.now();
     setStatus("working");
     setStartTime(now);
@@ -190,6 +207,7 @@ export function TimeTracker({
     setElapsedTime(existingPausedTime);
     setOvertimeNotificationShown(false);
     onClockInChange?.(true);
+    setClockInConfirmOpen(false);
     
     toast({
       title: "Clocked In",
@@ -197,7 +215,7 @@ export function TimeTracker({
     });
   };
 
-  const handleClockOut = () => {
+  const confirmClockOut = () => {
     const payInfo = calculatePay(elapsedTime);
     
     setStatus("idle");
@@ -205,6 +223,7 @@ export function TimeTracker({
     setOvertimeNotificationShown(false);
     onClockInChange?.(false);
     onLunchChange?.(false);
+    setClockOutConfirmOpen(false);
     
     // Don't reset elapsed time and paused time - keep them for the day
     // Only clear from localStorage
@@ -221,6 +240,34 @@ export function TimeTracker({
     });
   };
 
+  const confirmStartLunch = () => {
+    if (status === "working") {
+      setPausedTime(elapsedTime);
+      setStatus("lunch");
+      onLunchChange?.(true);
+      setLunchStartConfirmOpen(false);
+      
+      toast({
+        title: "Lunch Break Started",
+        description: `Timer paused at ${formatTime(elapsedTime)}. Enjoy your break!`,
+      });
+    }
+  };
+
+  const confirmEndLunch = () => {
+    if (status === "lunch") {
+      setStartTime(Date.now());
+      setStatus("working");
+      onLunchChange?.(false);
+      setLunchEndConfirmOpen(false);
+      
+      toast({
+        title: "Lunch Break Ended",
+        description: "Timer resumed. Welcome back!",
+      });
+    }
+  };
+
   const handleOvertimeRequest = (reason: string) => {
     // In a real app, this would submit to the backend
     setStatus("working"); // Continue working while waiting for approval
@@ -232,7 +279,7 @@ export function TimeTracker({
 
   const handleForceClockOut = () => {
     const payInfo = calculatePay(elapsedTime);
-    handleClockOut();
+    confirmClockOut();
     
     toast({
       title: "Automatically Clocked Out",
@@ -276,14 +323,14 @@ export function TimeTracker({
             <div className="flex gap-2 w-full sm:w-auto">
               {status === "idle" ? (
                 <Button 
-                  onClick={handleClockIn} 
+                  onClick={() => setClockInConfirmOpen(true)}
                   className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
                 >
                   <Play className="mr-2 h-4 w-4" /> Clock In
                 </Button>
               ) : (
                 <Button 
-                  onClick={handleClockOut} 
+                  onClick={() => setClockOutConfirmOpen(true)}
                   variant="outline"
                   className="w-full sm:w-auto"
                 >
@@ -323,6 +370,151 @@ export function TimeTracker({
           </div>
         </CardContent>
       </Card>
+
+      {/* Lunch Break Button (separate card for better UX) */}
+      {status !== "idle" && (
+        <Card className="w-full sm:w-auto">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              {status !== "lunch" ? (
+                <Button 
+                  onClick={() => setLunchStartConfirmOpen(true)}
+                  disabled={status === "idle"}
+                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
+                </Button>
+              ) : (
+                <Button 
+                  onClick={() => setLunchEndConfirmOpen(true)}
+                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+                >
+                  <Check className="mr-2 h-4 w-4" /> End Lunch Break
+                </Button>
+              )}
+              <div className={`
+                rounded-full px-4 py-2 text-sm font-medium
+                ${status === "lunch" 
+                  ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
+                  : "bg-muted text-muted-foreground"
+                }
+              `}>
+                {status === "lunch" ? "On Lunch Break" : "Not on Break"}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Clock In Confirmation Dialog */}
+      <AlertDialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Clock In</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clock in and start tracking your work time?
+              {elapsedTime > 0 && (
+                <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
+                  You have {formatTime(elapsedTime)} of work time from earlier today that will continue.
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmClockIn}
+              className="bg-[#005cb3] hover:bg-[#005cb3]/90"
+            >
+              <Play className="mr-2 h-4 w-4" />
+              Clock In
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clock Out Confirmation Dialog */}
+      <AlertDialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Clock Out</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clock out? Your work session will end.
+              <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
+                <div className="text-sm space-y-1">
+                  <div><strong>Total time worked:</strong> {formatTime(elapsedTime)}</div>
+                  <div><strong>Total pay:</strong> ${payInfo.totalPay.toFixed(2)}</div>
+                  {payInfo.overtimeHours > 0 && (
+                    <div className="text-amber-600 dark:text-amber-400">
+                      <strong>Overtime pay:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)} hours)
+                    </div>
+                  )}
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmClockOut}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Square className="mr-2 h-4 w-4" />
+              Clock Out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Start Lunch Confirmation Dialog */}
+      <AlertDialog open={lunchStartConfirmOpen} onOpenChange={setLunchStartConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Start Lunch Break</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to start your lunch break? Your work timer will be paused.
+              <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-sm">
+                Current work time: {formatTime(elapsedTime)}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmStartLunch}
+              className="bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black"
+            >
+              <Coffee className="mr-2 h-4 w-4" />
+              Start Lunch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* End Lunch Confirmation Dialog */}
+      <AlertDialog open={lunchEndConfirmOpen} onOpenChange={setLunchEndConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>End Lunch Break</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to end your lunch break and resume work? Your timer will continue from where it was paused.
+              <div className="mt-2 p-2 bg-green-50 dark:bg-green-950/20 rounded text-sm">
+                Work time when paused: {formatTime(elapsedTime)}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmEndLunch}
+              className="bg-[#005cb3] hover:bg-[#005cb3]/90"
+            >
+              <Check className="mr-2 h-4 w-4" />
+              End Lunch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <OvertimeNotificationDialog
         open={overtimeDialogOpen}

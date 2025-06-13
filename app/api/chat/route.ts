@@ -24,7 +24,10 @@ import {
 const extractDataFromResponse = (message: string, dataType: string) => {
   const lowerMessage = message.toLowerCase();
   
+  console.log('extractDataFromResponse called with:', { message, dataType });
+  
   switch (dataType) {
+    case 'total_sales':
     case 'policy_amount':
       const amountMatch = message.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       return amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
@@ -33,6 +36,7 @@ const extractDataFromResponse = (message: string, dataType: string) => {
       const feeMatch = message.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       return feeMatch ? parseFloat(feeMatch[1].replace(/,/g, '')) : null;
     
+    case 'hours_worked':
     case 'hours':
       const hoursMatch = message.match(/(\d+(?:\.\d+)?)/);
       return hoursMatch ? parseFloat(hoursMatch[1]) : null;
@@ -46,13 +50,18 @@ const extractDataFromResponse = (message: string, dataType: string) => {
       const policiesMatch = message.match(/(\d+)/);
       return policiesMatch ? parseInt(policiesMatch[1]) : null;
     
+    case 'client_name':
+      // For client names, just return the trimmed message
+      return message.trim();
+    
     case 'policy_number':
       const trimmed = message.trim();
       
       // Don't extract from conversational phrases
       const conversationalPhrases = [
         'i sold', 'sold a', 'new policy', 'policy today', 'yesterday',
-        'client review', 'customer feedback', 'daily summary', 'hours worked'
+        'client review', 'customer feedback', 'daily summary', 'hours worked',
+        'client name', 'client\'s name', 'name is', 'insur'
       ];
       
       if (conversationalPhrases.some(phrase => lowerMessage.includes(phrase))) {
@@ -81,8 +90,17 @@ const extractDataFromResponse = (message: string, dataType: string) => {
       
       return null;
     
-    default:
-      return message.trim();
+    case 'cross_sold':
+      // Handle yes/no responses for cross-sell question
+      const yesResponses = ['yes', 'y', 'yeah', 'yep', 'sure', 'true'];
+      const noResponses = ['no', 'n', 'nope', 'false', 'none'];
+      
+      if (yesResponses.includes(lowerMessage)) {
+        return 'yes';
+      } else if (noResponses.includes(lowerMessage)) {
+        return 'no';
+      }
+      return null;
   }
 };
 
@@ -127,11 +145,11 @@ export async function POST(request: NextRequest) {
 
 async function handleAdminChat(message: string, userId: string) {
   try {
-    // Get admin data for context
+    // Get admin data for context - get ALL policy sales for company-wide view
     const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([
       getEmployees(),
       getOvertimeRequests(),
-      getPolicySales()
+      getPolicySales() // This gets ALL policy sales, not just for one employee
     ]);
 
     const activeEmployees = employees.filter(emp => emp.status === 'active');
@@ -151,6 +169,11 @@ async function handleAdminChat(message: string, userId: string) {
       dept.avgRate = dept.totalRate / dept.count;
     });
 
+    // Recent policy sales (last 10)
+    const recentSales = allPolicySales
+      .sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime())
+      .slice(0, 10);
+
     const systemPrompt = `You are "Let's Insure Admin Assistant", an AI assistant for LetsInsure HR system administrators. You help HR managers and administrators manage employees, review performance, and analyze company metrics.
 
 COMPANY OVERVIEW:
@@ -159,11 +182,18 @@ COMPANY OVERVIEW:
 - Pending Requests: ${pendingRequests.length}
 - Total Company Sales: $${totalSales.toLocaleString()}
 - Total Bonuses Paid: $${totalBonuses.toLocaleString()}
+- Total Policies Sold: ${allPolicySales.length}
 
 DEPARTMENT BREAKDOWN:
 ${Array.from(departmentMap.entries()).map(([dept, data]) => 
   `- ${dept}: ${data.count} employees, avg rate $${data.avgRate.toFixed(2)}/hr`
 ).join('\n')}
+
+RECENT POLICY SALES (Last 10):
+${recentSales.map(sale => {
+  const employee = employees.find(emp => emp.clerk_user_id === sale.employee_id);
+  return `- ${sale.policy_number}: ${sale.client_name}, ${sale.policy_type}, $${sale.amount.toLocaleString()} by ${employee?.name || 'Unknown'} (${new Date(sale.sale_date).toLocaleDateString()})`;
+}).join('\n')}
 
 RECENT OVERTIME REQUESTS:
 ${pendingRequests.slice(0, 5).map(req => {
@@ -191,7 +221,7 @@ As an admin assistant, you can help with:
 - HR policy questions and guidance
 - Workforce planning and optimization
 
-Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency.`;
+Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency. You have access to real-time data including all policy sales, employee information, and recent activity.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
@@ -246,6 +276,7 @@ async function handleEmployeeChat(message: string, userId: string) {
 
   // Handle conversation flows for data collection
   if (conversationState && conversationState.current_flow !== 'none') {
+    console.log('Found active conversation state:', conversationState);
     return await handleConversationFlow(conversationState, message, userId);
   }
 
@@ -349,7 +380,7 @@ Be conversational and helpful. Extract specific data points (numbers, names, amo
 }
 
 async function handleConversationFlow(conversationState: any, message: string, employeeId: string) {
-  const { current_flow: currentFlow, collected_data: collectedData, next_question: nextQuestion } = conversationState;
+  const { current_flow: currentFlow, collected_data: collectedData = {}, next_question: nextQuestion } = conversationState;
   
   // For debugging
   console.log('Current flow:', currentFlow);
@@ -357,31 +388,53 @@ async function handleConversationFlow(conversationState: any, message: string, e
   console.log('Collected data:', collectedData);
   console.log('User message:', message);
   
-  // Extract data based on the current question
-  let extractedValue = extractDataFromResponse(message, nextQuestion);
+  // Ensure collectedData is an object
+  const safeCollectedData = typeof collectedData === 'object' && collectedData !== null ? collectedData : {};
   
-  // Special handling for policy_number validation
-  if (nextQuestion === 'policy_number' && !extractedValue) {
-    const trimmed = message.trim();
-    
-    // If it's a reasonable length and doesn't look like a typical name/phrase, accept it
-    if (trimmed.length >= 3 && trimmed.length <= 20 && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
-      // Additional check: should not be a common name or word
-      const commonWords = ['deltagroup', 'group', 'company', 'client', 'customer', 'insurance'];
-      if (!commonWords.includes(trimmed.toLowerCase())) {
-        extractedValue = trimmed.toUpperCase();
-      }
-    }
-    
+  // Extract data based on the current question
+  let extractedValue: any;
+  
+  // Handle client_name separately to avoid policy_number validation
+  if (nextQuestion === 'client_name') {
+    extractedValue = message.trim();
     if (!extractedValue) {
       return NextResponse.json({ 
-        response: "Please provide a valid policy number (e.g., POL-2025-001):" 
+        response: "Please provide the client's name:" 
       });
+    }
+  } else {
+    extractedValue = extractDataFromResponse(message, nextQuestion);
+    
+    // Special handling for policy_number validation
+    if (nextQuestion === 'policy_number' && !extractedValue) {
+      const trimmed = message.trim();
+      
+      // If it's a reasonable length and doesn't look like a typical name/phrase, accept it
+      if (trimmed.length >= 3 && trimmed.length <= 20 && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
+        // Additional check: should not be a common name or word
+        const commonWords = ['deltagroup', 'group', 'company', 'client', 'customer', 'insurance'];
+        if (!commonWords.includes(trimmed.toLowerCase())) {
+          extractedValue = trimmed.toUpperCase();
+        }
+      }
+      
+      if (!extractedValue) {
+        return NextResponse.json({ 
+          response: "Please provide a valid policy number (e.g., POL-2025-001):" 
+        });
+      }
     }
   }
   
   // Store the extracted data with the correct key
-  collectedData[nextQuestion] = extractedValue || message.trim();
+  safeCollectedData[nextQuestion] = extractedValue || message.trim();
+  
+  // Debug logging
+  console.log('Storing data:', {
+    key: nextQuestion,
+    value: safeCollectedData[nextQuestion],
+    allData: safeCollectedData
+  });
   
   let response = "";
   let nextQuestionKey = "";
@@ -389,32 +442,37 @@ async function handleConversationFlow(conversationState: any, message: string, e
 
   switch (currentFlow) {
     case 'policy_entry':
-      [nextQuestionKey, isComplete] = getPolicyEntryNextQuestion(collectedData);
-      response = await handlePolicyEntryFlow(collectedData, nextQuestionKey, extractedValue, message);
+      [nextQuestionKey, isComplete] = getPolicyEntryNextQuestion(safeCollectedData);
+      response = await handlePolicyEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
       break;
       
     case 'review_entry':
-      [nextQuestionKey, isComplete] = getReviewEntryNextQuestion(collectedData);
-      response = await handleReviewEntryFlow(collectedData, nextQuestionKey, extractedValue, message);
+      [nextQuestionKey, isComplete] = getReviewEntryNextQuestion(safeCollectedData);
+      response = await handleReviewEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
       break;
       
     case 'daily_summary':
-      [nextQuestionKey, isComplete] = getDailySummaryNextQuestion(collectedData);
-      response = await handleDailySummaryFlow(collectedData, nextQuestionKey, extractedValue, message);
+      [nextQuestionKey, isComplete] = getDailySummaryNextQuestion(safeCollectedData);
+      response = await handleDailySummaryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
       break;
   }
 
   if (isComplete) {
     // Save the collected data
-    await saveCollectedData(currentFlow, collectedData, employeeId);
+    await saveCollectedData(currentFlow, safeCollectedData, employeeId);
     await clearConversationState(employeeId);
     response += "\n\n✅ Data saved successfully! Is there anything else I can help you with?";
   } else {
     // Update conversation state with next question
+    console.log('Updating conversation state with:', {
+      nextQuestion: nextQuestionKey,
+      collectedData: safeCollectedData
+    });
+    
     await updateConversationState({
       employeeId,
       currentFlow,
-      collectedData,
+      collectedData: safeCollectedData,
       nextQuestion: nextQuestionKey,
       lastUpdated: new Date()
     });
@@ -424,6 +482,8 @@ async function handleConversationFlow(conversationState: any, message: string, e
 }
 
 function getPolicyEntryNextQuestion(data: any): [string, boolean] {
+  console.log('getPolicyEntryNextQuestion - checking data:', data);
+  
   if (!data.policy_number) return ['policy_number', false];
   if (!data.client_name) return ['client_name', false];
   if (!data.policy_type) return ['policy_type', false];
@@ -452,6 +512,9 @@ function getDailySummaryNextQuestion(data: any): [string, boolean] {
 }
 
 async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  // Debug log
+  console.log('handlePolicyEntryFlow - nextQuestion:', nextQuestion, 'data:', data);
+  
   // Determine response based on what we're asking for next
   switch (nextQuestion) {
     case 'client_name':
@@ -467,14 +530,14 @@ async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedV
       const amount = parseFloat(data.policy_amount);
       if (!isNaN(amount)) {
         const bonus = calculateBonus(amount);
-        return `Policy amount: ${amount.toLocaleString()}. Your bonus will be ${bonus.toLocaleString()}! What's the broker fee?`;
+        return `Policy amount: $${amount.toLocaleString()}. Your bonus will be $${bonus.toLocaleString()}! What's the broker fee?`;
       }
       return "Please provide a valid dollar amount for the policy:";
     
     case 'cross_sold':
       const fee = parseFloat(data.broker_fee);
       if (!isNaN(fee)) {
-        return `Broker fee: ${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
+        return `Broker fee: $${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
       }
       return "Please provide a valid broker fee amount:";
     
@@ -496,6 +559,8 @@ async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedV
 }
 
 async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  console.log('handleReviewEntryFlow - nextQuestion:', nextQuestion, 'data:', data);
+  
   const responses: { [key: string]: string } = {
     'client_name': `Client name: ${data.client_name}. What's the policy number for this review?`,
     'policy_number': `Policy number: ${data.policy_number}. What rating did the client give? (1-5 stars)`,
@@ -509,6 +574,8 @@ async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedV
 }
 
 async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  console.log('handleDailySummaryFlow - nextQuestion:', nextQuestion, 'data:', data);
+  
   const responses: { [key: string]: string } = {
     'hours_worked': data.hours_worked ? `Hours worked: ${data.hours_worked}. How many policies did you sell today?` : "Please provide the number of hours you worked:",
     'policies_sold': data.policies_sold !== undefined ? `Policies sold: ${data.policies_sold}. What was the total sales amount for today?` : "Please provide the number of policies sold:",

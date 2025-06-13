@@ -264,24 +264,27 @@ export function ChatInterface() {
           Let's Insure {userRole === 'admin' ? 'Admin' : 'Employee'} Assistant
         </CardTitle>
       </CardHeader>
+      
+      {/* Sticky Quick Action Buttons */}
+      <div className="px-4 pb-3 border-b bg-background sticky top-0 z-10">
+        <div className="grid grid-cols-2 gap-2">
+          {quickActions.map((action, index) => (
+            <Button
+              key={index}
+              variant="outline"
+              size="sm"
+              onClick={() => handleQuickAction(action.action)}
+              className="text-xs h-auto p-2 flex flex-col items-start gap-1 justify-start text-left hover:bg-[#005cb3]/5"
+            >
+              <action.icon className="h-4 w-4 text-[#005cb3] self-start" />
+              <span className="text-left font-medium">{action.label}</span>
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <CardContent className="flex-1 overflow-y-auto px-4 pb-0">
         <div className="space-y-4">
-          {/* Quick Action Buttons */}
-          <div className="grid grid-cols-2 gap-2 mb-4">
-            {quickActions.map((action, index) => (
-              <Button
-                key={index}
-                variant="outline"
-                size="sm"
-                onClick={() => handleQuickAction(action.action)}
-                className="text-xs h-auto p-2 flex flex-col items-start gap-1 justify-start text-left hover:bg-[#005cb3]/5"
-              >
-                <action.icon className="h-4 w-4 text-[#005cb3] self-start" />
-                <span className="text-left font-medium">{action.label}</span>
-              </Button>
-            ))}
-          </div>
-
           {messages.map((message) => (
             <div
               key={message.id}

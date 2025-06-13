@@ -297,6 +297,8 @@ export const updateConversationState = async (state: {
       collected_data: state.collectedData,
       next_question: state.nextQuestion,
       last_updated: state.lastUpdated.toISOString()
+    }, {
+      onConflict: 'employee_id'  // Specify the unique column for conflict resolution
     });
 
   if (error) {
