@@ -97,7 +97,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSave} className="bg-teal-600 hover:bg-teal-700">
+            <Button onClick={handleSave} className="bg-[#005cb3] hover:bg-[#005cb3]/90">
               Save Changes
             </Button>
           </div>

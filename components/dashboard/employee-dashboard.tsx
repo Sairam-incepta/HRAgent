@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useUser } from "@clerk/nextjs";
 import { 
   Card, 
   CardContent, 
@@ -40,71 +41,126 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { getEmployeeRequests, type Request } from "@/lib/database";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
 }
 
 export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboardProps) {
+  const { user } = useUser();
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [isOnLunch, setIsOnLunch] = useState(false);
+  const [isClockedIn, setIsClockedIn] = useState(false);
+  
+  // Time tracking state
+  const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
+  const [timeStatus, setTimeStatus] = useState<"idle" | "working" | "lunch" | "overtime_pending">("idle");
+  
+  // Requests state
+  const [requests, setRequests] = useState<Request[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(true);
 
-  const requests = [
-    {
-      id: "1",
-      type: "vacation",
-      title: "Vacation Request",
-      date: "May 15-20, 2025",
-      status: "pending",
-      description: "Annual summer vacation",
-      comments: [
-        { author: "John Doe", text: "Submitted request", timestamp: "2025-05-01 09:00 AM" },
-        { author: "HR Manager", text: "Under review", timestamp: "2025-05-01 02:30 PM" }
-      ]
-    },
-    {
-      id: "2",
-      type: "overtime",
-      title: "Overtime Request",
-      date: "May 10, 2025",
-      status: "approved",
-      description: "3 hours overtime for project completion",
-      comments: [
-        { author: "John Doe", text: "Overtime needed for project deadline", timestamp: "2025-05-08 04:00 PM" },
-        { author: "Manager", text: "Approved. Please proceed.", timestamp: "2025-05-08 04:30 PM" }
-      ]
-    },
-    {
-      id: "3",
-      type: "sick",
-      title: "Sick Leave",
-      date: "May 5, 2025",
-      status: "approved",
-      description: "Doctor's appointment",
-      comments: [
-        { author: "John Doe", text: "Medical checkup scheduled", timestamp: "2025-05-03 08:00 AM" },
-        { author: "HR", text: "Approved. Get well soon!", timestamp: "2025-05-03 09:15 AM" }
-      ]
+  // Mock employee settings - in real app, this would come from database
+  const employeeSettings = {
+    maxHoursBeforeOvertime: 8,
+    hourlyRate: 25
+  };
+
+  const getUserName = () => {
+    if (user?.firstName) {
+      return user.firstName;
     }
-  ];
+    return "Employee";
+  };
+
+  // Handle time tracker updates
+  const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
+    setCurrentElapsedTime(elapsedSeconds);
+    setTimeStatus(status as any);
+  };
+
+  // Format time for display
+  const formatTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+  };
+
+  // Calculate progress percentage
+  const getProgressPercentage = () => {
+    const hoursWorked = currentElapsedTime / 3600;
+    return Math.min((hoursWorked / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
+  };
+
+  // Get progress color based on status
+  const getProgressColor = () => {
+    const hoursWorked = currentElapsedTime / 3600;
+    if (hoursWorked > employeeSettings.maxHoursBeforeOvertime) {
+      return "bg-red-500"; // Overtime
+    } else if (hoursWorked > employeeSettings.maxHoursBeforeOvertime * 0.9) {
+      return "bg-amber-500"; // Near overtime
+    }
+    return "bg-[#005cb3]"; // Normal
+  };
+
+  // Load requests from database
+  useEffect(() => {
+    const loadRequests = async () => {
+      if (!user?.id) return;
+      
+      try {
+        const data = await getEmployeeRequests(user.id);
+        setRequests(data);
+      } catch (error) {
+        console.error('Error loading requests:', error);
+      } finally {
+        setRequestsLoading(false);
+      }
+    };
+
+    loadRequests();
+  }, [user?.id]);
 
   const filteredRequests = requests.filter(request => {
     const matchesFilter = requestFilter === "all" || request.status === requestFilter;
     const matchesSearch = 
       request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      request.date.toLowerCase().includes(searchTerm.toLowerCase());
+      request.request_date.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesFilter && matchesSearch;
   });
+
+  const handleLunchBreak = () => {
+    if (!isClockedIn) {
+      return; // Don't allow lunch break if not clocked in
+    }
+    
+    const newLunchState = !isOnLunch;
+    setIsOnLunch(newLunchState);
+    
+    // Control the timer through the global functions
+    if (newLunchState) {
+      // Starting lunch break - pause timer
+      if ((window as any).pauseTimer) {
+        (window as any).pauseTimer();
+      }
+    } else {
+      // Ending lunch break - resume timer
+      if ((window as any).resumeTimer) {
+        (window as any).resumeTimer();
+      }
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Welcome back, John</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Welcome back, {getUserName()}</h1>
         <p className="text-muted-foreground">
           Here's what's happening with your time tracking today.
         </p>
@@ -112,21 +168,28 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
 
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
         <div className="flex flex-col sm:flex-row gap-2 w-full">
-          <TimeTracker />
+          <TimeTracker 
+            onClockInChange={setIsClockedIn} 
+            onLunchChange={setIsOnLunch}
+            onTimeUpdate={handleTimeUpdate}
+            maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
+            hourlyRate={employeeSettings.hourlyRate}
+          />
           <Card className="w-full sm:w-auto">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 {!isOnLunch ? (
                   <Button 
-                    onClick={() => setIsOnLunch(true)}
-                    className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700"
+                    onClick={handleLunchBreak}
+                    disabled={!isClockedIn}
+                    className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
                   </Button>
                 ) : (
                   <Button 
-                    onClick={() => setIsOnLunch(false)}
-                    className="w-full sm:w-auto bg-teal-600 hover:bg-teal-700"
+                    onClick={handleLunchBreak}
+                    className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
                   >
                     <Check className="mr-2 h-4 w-4" /> End Lunch Break
                   </Button>
@@ -134,7 +197,7 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
                 <div className={`
                   rounded-full px-4 py-2 text-sm font-medium
                   ${isOnLunch 
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                    ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
                     : "bg-muted text-muted-foreground"
                   }
                 `}>
@@ -149,16 +212,42 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
       <Card>
         <CardHeader>
           <CardTitle>Today's Hours</CardTitle>
-          <CardDescription>Track your daily work hours and progress</CardDescription>
+          <CardDescription>
+            Track your daily work hours and progress (Max: {employeeSettings.maxHoursBeforeOvertime}h before overtime)
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div>
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
-                <span className="text-sm">6h 25m / 8h 00m</span>
+                <span className="text-sm">
+                  {timeStatus === "idle" ? "0h 00m" : formatTime(currentElapsedTime)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                </span>
               </div>
-              <Progress value={78} />
+              <Progress 
+                value={getProgressPercentage()} 
+                className={`[&>div]:${getProgressColor()}`}
+              />
+              <div className="flex justify-between items-center mt-2">
+                <p className="text-xs text-muted-foreground">
+                  {timeStatus === "idle" 
+                    ? "Clock in to start tracking your hours"
+                    : timeStatus === "lunch"
+                    ? "On lunch break - timer paused"
+                    : timeStatus === "overtime_pending"
+                    ? "Overtime approval pending"
+                    : currentElapsedTime / 3600 > employeeSettings.maxHoursBeforeOvertime
+                    ? "You're in overtime - earning 1.5x rate"
+                    : "You'll be notified when you reach overtime"
+                  }
+                </p>
+                {timeStatus !== "idle" && (
+                  <div className="text-xs text-muted-foreground">
+                    Status: <span className="capitalize font-medium">{timeStatus.replace('_', ' ')}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </CardContent>
@@ -169,11 +258,11 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Requests & Communication</CardTitle>
-              <CardDescription>Manage your requests and chat history</CardDescription>
+              <CardDescription>Manage your requests and view approval status</CardDescription>
             </div>
             <Button 
               onClick={() => setRequestDialogOpen(true)}
-              className="bg-teal-600 hover:bg-teal-700"
+              className="bg-[#005cb3] hover:bg-[#005cb3]/90"
             >
               New Request
             </Button>
@@ -205,47 +294,57 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
           </div>
 
           <div className="space-y-4">
-            {filteredRequests.map((request) => (
-              <Collapsible key={request.id}>
-                <div className="p-4 bg-secondary/50 rounded-lg">
-                  <CollapsibleTrigger className="w-full">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-medium text-left">{request.title}</h4>
-                        <p className="text-sm text-muted-foreground text-left">{request.date}</p>
-                      </div>
-                      <Badge 
-                        variant="outline" 
-                        className={
-                          request.status === "approved"
-                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                            : request.status === "pending"
-                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                            : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
-                        }
-                      >
-                        {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                      </Badge>
-                    </div>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-4 space-y-3">
-                    <p className="text-sm text-muted-foreground">{request.description}</p>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">Comments</p>
-                      {request.comments.map((comment, index) => (
-                        <div key={index} className="bg-background rounded-md p-3">
-                          <div className="flex justify-between items-start mb-1">
-                            <p className="text-sm font-medium">{comment.author}</p>
-                            <p className="text-xs text-muted-foreground">{comment.timestamp}</p>
-                          </div>
-                          <p className="text-sm">{comment.text}</p>
+            {requestsLoading ? (
+              <div className="text-center py-4 text-muted-foreground">
+                Loading requests...
+              </div>
+            ) : filteredRequests.length > 0 ? (
+              filteredRequests.map((request) => (
+                <Collapsible key={request.id}>
+                  <div className="p-4 bg-white dark:bg-card border rounded-lg">
+                    <CollapsibleTrigger className="w-full">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className="font-medium text-left">{request.title}</h4>
+                          <p className="text-sm text-muted-foreground text-left">
+                            {new Date(request.request_date).toLocaleDateString()}
+                          </p>
                         </div>
-                      ))}
-                    </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
-            ))}
+                        <Badge 
+                          variant="outline" 
+                          className={
+                            request.status === "approved"
+                              ? "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]"
+                              : request.status === "pending"
+                              ? "bg-secondary/50 text-muted-foreground"
+                              : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                          }
+                        >
+                          {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                        </Badge>
+                      </div>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-4 space-y-3">
+                      <p className="text-sm text-muted-foreground">{request.description}</p>
+                      {request.hours_requested && (
+                        <p className="text-sm">
+                          <span className="font-medium">Hours Requested:</span> {request.hours_requested}
+                        </p>
+                      )}
+                      {request.current_overtime_hours && (
+                        <p className="text-sm">
+                          <span className="font-medium">Current Overtime:</span> {request.current_overtime_hours} hours
+                        </p>
+                      )}
+                    </CollapsibleContent>
+                  </div>
+                </Collapsible>
+              ))
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                {requests.length === 0 ? "No requests submitted yet." : "No requests found matching your filters."}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -304,12 +403,18 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
           </div>
           <div className="flex justify-between items-center">
             <div>
-              <p className="font-medium">Thursday</p>
-              <p className="text-sm text-muted-foreground">8:30 AM - Present</p>
+              <p className="font-medium">Today</p>
+              <p className="text-sm text-muted-foreground">
+                {timeStatus === "idle" ? "Not clocked in" : 
+                 timeStatus === "lunch" ? "On lunch break" :
+                 "Currently working"}
+              </p>
             </div>
             <div className="text-right">
-              <p>6h 25m</p>
-              <p className="text-sm text-muted-foreground">In Progress</p>
+              <p>{timeStatus === "idle" ? "0h 00m" : formatTime(currentElapsedTime)}</p>
+              <p className="text-sm text-muted-foreground">
+                {timeStatus === "idle" ? "Not started" : "In Progress"}
+              </p>
             </div>
           </div>
         </CollapsibleContent>

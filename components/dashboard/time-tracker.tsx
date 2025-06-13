@@ -6,28 +6,140 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Play, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
 
-type TimeStatus = "idle" | "working";
+type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 
-export function TimeTracker() {
+interface TimeTrackerProps {
+  onClockInChange?: (isClockedIn: boolean) => void;
+  onLunchChange?: (isOnLunch: boolean) => void;
+  onTimeUpdate?: (elapsedSeconds: number, status: TimeStatus) => void;
+  maxHoursBeforeOvertime?: number;
+  hourlyRate?: number;
+}
+
+interface TimeSession {
+  startTime: number;
+  pausedTime: number;
+  status: TimeStatus;
+  date: string; // YYYY-MM-DD format
+}
+
+const STORAGE_KEY = 'letsinsure_time_session';
+
+export function TimeTracker({ 
+  onClockInChange, 
+  onLunchChange, 
+  onTimeUpdate,
+  maxHoursBeforeOvertime = 8,
+  hourlyRate = 25
+}: TimeTrackerProps) {
   const [status, setStatus] = useState<TimeStatus>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
+  const [pausedTime, setPausedTime] = useState(0);
+  const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
+  const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
   const { toast } = useToast();
+
+  // Get current date in user's timezone
+  const getCurrentDate = () => {
+    return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+  };
+
+  // Load time session from localStorage on component mount
+  useEffect(() => {
+    const loadTimeSession = () => {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const session: TimeSession = JSON.parse(stored);
+          const currentDate = getCurrentDate();
+          
+          // Only restore session if it's from today
+          if (session.date === currentDate) {
+            setStatus(session.status);
+            setStartTime(session.startTime);
+            setPausedTime(session.pausedTime);
+            
+            // Calculate elapsed time based on current time
+            if (session.status === "working" || session.status === "overtime_pending") {
+              const now = Date.now();
+              const elapsed = Math.floor((now - session.startTime) / 1000) + session.pausedTime;
+              setElapsedTime(elapsed);
+            } else if (session.status === "lunch") {
+              setElapsedTime(session.pausedTime);
+            }
+            
+            // Restore notification state
+            const hoursWorked = (session.pausedTime + (session.status === "working" ? (Date.now() - session.startTime) / 1000 : 0)) / 3600;
+            if (hoursWorked > maxHoursBeforeOvertime) {
+              setOvertimeNotificationShown(true);
+            }
+          } else {
+            // Clear old session data
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading time session:', error);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    };
+
+    loadTimeSession();
+  }, [maxHoursBeforeOvertime]);
+
+  // Save time session to localStorage whenever relevant state changes
+  useEffect(() => {
+    if (status !== "idle" && startTime) {
+      const session: TimeSession = {
+        startTime,
+        pausedTime,
+        status,
+        date: getCurrentDate()
+      };
+      
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+      } catch (error) {
+        console.error('Error saving time session:', error);
+      }
+    } else if (status === "idle") {
+      // Clear session when idle
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [status, startTime, pausedTime]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     
-    if (status !== "idle" && startTime) {
+    if (status === "working" && startTime) {
       interval = setInterval(() => {
         const now = Date.now();
-        const elapsed = Math.floor((now - startTime) / 1000);
+        const elapsed = Math.floor((now - startTime) / 1000) + pausedTime;
         setElapsedTime(elapsed);
+        
+        // Notify parent component of time update
+        onTimeUpdate?.(elapsed, status);
+        
+        // Check for overtime
+        const hoursWorked = elapsed / 3600;
+        if (hoursWorked > maxHoursBeforeOvertime && !overtimeNotificationShown) {
+          setOvertimeNotificationShown(true);
+          setOvertimeDialogOpen(true);
+          setStatus("overtime_pending");
+        }
       }, 1000);
     }
 
     return () => clearInterval(interval);
-  }, [status, startTime]);
+  }, [status, startTime, pausedTime, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate]);
+
+  // Update parent when status changes
+  useEffect(() => {
+    onTimeUpdate?.(elapsedTime, status);
+  }, [status, elapsedTime, onTimeUpdate]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -37,60 +149,189 @@ export function TimeTracker() {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const calculatePay = (seconds: number) => {
+    const hours = seconds / 3600;
+    const regularHours = Math.min(hours, maxHoursBeforeOvertime);
+    const overtimeHours = Math.max(0, hours - maxHoursBeforeOvertime);
+    
+    const regularPay = regularHours * hourlyRate;
+    const overtimePay = overtimeHours * hourlyRate * 1.5; // 1.5x rate for overtime
+    
+    return {
+      regularPay,
+      overtimePay,
+      totalPay: regularPay + overtimePay,
+      overtimeHours
+    };
+  };
+
   const handleClockIn = () => {
+    const now = Date.now();
     setStatus("working");
-    setStartTime(Date.now());
-    setElapsedTime(0);
+    setStartTime(now);
+    
+    // If there's existing time from today, keep it, otherwise reset
+    const currentDate = getCurrentDate();
+    const stored = localStorage.getItem(STORAGE_KEY);
+    let existingPausedTime = 0;
+    
+    if (stored) {
+      try {
+        const session: TimeSession = JSON.parse(stored);
+        if (session.date === currentDate) {
+          existingPausedTime = session.pausedTime;
+        }
+      } catch (error) {
+        console.error('Error parsing stored session:', error);
+      }
+    }
+    
+    setPausedTime(existingPausedTime);
+    setElapsedTime(existingPausedTime);
+    setOvertimeNotificationShown(false);
+    onClockInChange?.(true);
+    
     toast({
       title: "Clocked In",
-      description: `You clocked in at ${new Date().toLocaleTimeString()}`,
+      description: `You clocked in at ${new Date().toLocaleTimeString()}${existingPausedTime > 0 ? ` (continuing from ${formatTime(existingPausedTime)})` : ''}`,
     });
   };
 
   const handleClockOut = () => {
+    const payInfo = calculatePay(elapsedTime);
+    
     setStatus("idle");
     setStartTime(null);
+    setOvertimeNotificationShown(false);
+    onClockInChange?.(false);
+    onLunchChange?.(false);
+    
+    // Don't reset elapsed time and paused time - keep them for the day
+    // Only clear from localStorage
+    localStorage.removeItem(STORAGE_KEY);
+    
+    let description = `You clocked out at ${new Date().toLocaleTimeString()} after ${formatTime(elapsedTime)} total today`;
+    if (payInfo.overtimeHours > 0) {
+      description += `\nOvertime pay: $${payInfo.overtimePay.toFixed(2)} for ${payInfo.overtimeHours.toFixed(1)} hours`;
+    }
+    
     toast({
       title: "Clocked Out",
-      description: `You clocked out at ${new Date().toLocaleTimeString()} after ${formatTime(elapsedTime)}`,
+      description,
     });
   };
 
+  const handleOvertimeRequest = (reason: string) => {
+    // In a real app, this would submit to the backend
+    setStatus("working"); // Continue working while waiting for approval
+    toast({
+      title: "Overtime Request Submitted",
+      description: "Your overtime request has been sent to admin for approval. You can continue working.",
+    });
+  };
+
+  const handleForceClockOut = () => {
+    const payInfo = calculatePay(elapsedTime);
+    handleClockOut();
+    
+    toast({
+      title: "Automatically Clocked Out",
+      description: `You've been paid overtime for ${payInfo.overtimeHours.toFixed(1)} hours: $${payInfo.overtimePay.toFixed(2)}`,
+    });
+  };
+
+  const pauseTimer = () => {
+    if (status === "working") {
+      setPausedTime(elapsedTime);
+      setStatus("lunch");
+    }
+  };
+
+  const resumeTimer = () => {
+    if (status === "lunch") {
+      setStartTime(Date.now());
+      setStatus("working");
+    }
+  };
+
+  // Expose pause/resume functions to parent
+  useEffect(() => {
+    (window as any).pauseTimer = pauseTimer;
+    (window as any).resumeTimer = resumeTimer;
+    return () => {
+      delete (window as any).pauseTimer;
+      delete (window as any).resumeTimer;
+    };
+  }, [status, elapsedTime]);
+
+  const hoursWorked = elapsedTime / 3600;
+  const isInOvertime = hoursWorked > maxHoursBeforeOvertime;
+  const payInfo = calculatePay(elapsedTime);
+
   return (
-    <Card className="w-full sm:w-auto transition-all duration-300 hover:shadow-md">
-      <CardContent className="p-4">
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <div className="flex gap-2 w-full sm:w-auto">
-            {status === "idle" ? (
-              <Button 
-                onClick={handleClockIn} 
-                className="w-full sm:w-auto bg-[#0064b4] hover:bg-[#0064b4]/90"
-              >
-                <Play className="mr-2 h-4 w-4" /> Clock In
-              </Button>
-            ) : (
-              <Button 
-                onClick={handleClockOut} 
-                variant="outline"
-                className="w-full sm:w-auto"
-              >
-                <Square className="mr-2 h-4 w-4" /> Clock Out
-              </Button>
+    <>
+      <Card className="w-full sm:w-auto transition-all duration-300 hover:shadow-md">
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <div className="flex gap-2 w-full sm:w-auto">
+              {status === "idle" ? (
+                <Button 
+                  onClick={handleClockIn} 
+                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+                >
+                  <Play className="mr-2 h-4 w-4" /> Clock In
+                </Button>
+              ) : (
+                <Button 
+                  onClick={handleClockOut} 
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                >
+                  <Square className="mr-2 h-4 w-4" /> Clock Out
+                </Button>
+              )}
+            </div>
+            
+            <div className={cn(
+              "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
+              status === "idle" ? "bg-muted text-muted-foreground" :
+              status === "lunch" ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]" :
+              status === "overtime_pending" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" :
+              isInOvertime ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400" :
+              "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]"
+            )}>
+              {status === "idle" ? "Not Clocked In" : 
+               status === "lunch" ? "On Lunch Break" : 
+               status === "overtime_pending" ? "Overtime Pending" :
+               isInOvertime ? "In Overtime" :
+               "Currently Working"}
+              {(status !== "idle" || elapsedTime > 0) && (
+                <span className="ml-2 font-mono">{formatTime(elapsedTime)}</span>
+              )}
+            </div>
+            
+            {(status !== "idle" || elapsedTime > 0) && (
+              <div className="text-xs text-muted-foreground">
+                <div>Pay: ${payInfo.totalPay.toFixed(2)}</div>
+                {isInOvertime && (
+                  <div className="text-amber-600 dark:text-amber-400">
+                    OT: ${payInfo.overtimePay.toFixed(2)}
+                  </div>
+                )}
+              </div>
             )}
           </div>
-          
-          <div className={cn(
-            "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
-            status === "idle" ? "bg-muted text-muted-foreground" :
-            "bg-[#0064b4]/10 text-[#0064b4] dark:bg-[#0064b4]/30 dark:text-[#0064b4]"
-          )}>
-            {status === "idle" ? "Not Clocked In" : "Currently Working"}
-            {status !== "idle" && (
-              <span className="ml-2 font-mono">{formatTime(elapsedTime)}</span>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      <OvertimeNotificationDialog
+        open={overtimeDialogOpen}
+        onOpenChange={setOvertimeDialogOpen}
+        currentHours={hoursWorked}
+        maxHours={maxHoursBeforeOvertime}
+        onSubmitRequest={handleOvertimeRequest}
+        onClockOut={handleForceClockOut}
+      />
+    </>
   );
 }

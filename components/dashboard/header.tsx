@@ -10,10 +10,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "next-themes";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { useState } from "react";
 import Image from "next/image";
+import { useClerk, useUser } from "@clerk/nextjs";
 
 interface DashboardHeaderProps {
   userRole: "admin" | "employee";
@@ -22,15 +23,43 @@ interface DashboardHeaderProps {
 export function DashboardHeader({ userRole }: DashboardHeaderProps) {
   const { setTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const currentTime = new Date().toLocaleTimeString([], { 
-    hour: '2-digit', 
-    minute: '2-digit'
-  });
+  const { signOut } = useClerk();
+  const { user } = useUser();
+
+  const handleLogout = () => {
+    signOut();
+  };
+
+  const getUserInitials = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName[0]}${user.lastName[0]}`;
+    }
+    if (user?.emailAddresses[0]?.emailAddress) {
+      const email = user.emailAddresses[0].emailAddress;
+      return email.substring(0, 2).toUpperCase();
+    }
+    return userRole === "admin" ? "AD" : "EM";
+  };
+
+  const getUserName = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName} ${user.lastName}`;
+    }
+    if (user?.firstName) {
+      return user.firstName;
+    }
+    return userRole === "admin" ? "Admin User" : "Employee";
+  };
+
+  const getUserEmail = () => {
+    return user?.emailAddresses[0]?.emailAddress || 
+           (userRole === "admin" ? "admin@letsinsure.hr" : "employee@letsinsure.hr");
+  };
 
   return (
     <>
       <header className="h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10">
-        <div className="container h-full px-4 flex items-center justify-between">
+        <div className="h-full px-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Image
               src="/image.png"
@@ -41,7 +70,7 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
             />
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="icon" className="relative">
               <Bell className="h-4 w-4" />
               <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-[#ff9211] border-2 border-background"></span>
@@ -72,8 +101,9 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-[#0064b4]/10 text-[#0064b4]">
-                      {userRole === "admin" ? "AD" : "JD"}
+                    <AvatarImage src={user?.imageUrl} alt={getUserName()} />
+                    <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3]">
+                      {getUserInitials()}
                     </AvatarFallback>
                   </Avatar>
                 </Button>
@@ -82,10 +112,10 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
                 <div className="flex items-center justify-start gap-2 p-2">
                   <div className="flex flex-col space-y-1 leading-none">
                     <p className="font-medium">
-                      {userRole === "admin" ? "Admin User" : "John Doe"}
+                      {getUserName()}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {userRole === "admin" ? "admin@letsinsure.hr" : "john.doe@letsinsure.hr"}
+                      {getUserEmail()}
                     </p>
                   </div>
                 </div>
@@ -95,7 +125,7 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
                   <span>Settings</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={handleLogout}>
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Log out</span>
                 </DropdownMenuItem>

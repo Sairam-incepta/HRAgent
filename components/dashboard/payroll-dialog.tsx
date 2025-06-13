@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Download } from "lucide-react";
+import { CreditCard, Download, FileText } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 
 interface PayrollDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  employeeName?: string;
+  employeeName?: string | null;
 }
 
 export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialogProps) {
@@ -42,16 +44,32 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
     onOpenChange(false);
   };
 
+  const samplePayrollData = {
+    employeeName: employeeName || "John Doe",
+    employeeId: "EMP001",
+    payPeriod: "May 1-15, 2025",
+    department: "Sales",
+    position: "Sales Representative",
+    regularHours: 80,
+    overtimeHours: 5,
+    hourlyRate: 25.00,
+    overtimeRate: 37.50,
+    grossPay: 2187.50,
+    netPay: 2187.50 // No deductions, so net pay equals gross pay
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Generate Payroll Report</DialogTitle>
+          <DialogTitle>
+            {isGenerated ? "Payroll Report" : "Generate Payroll Report"}
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-4">
           {!isGenerating && !isGenerated ? (
             <div className="text-center space-y-4">
-              <CreditCard className="mx-auto h-12 w-12 text-teal-600" />
+              <CreditCard className="mx-auto h-12 w-12 text-[#005cb3]" />
               <p className="text-lg font-medium">
                 {employeeName ? `Generate payroll for ${employeeName}` : 'Generate payroll report'}
               </p>
@@ -60,7 +78,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
               </p>
               <Button 
                 onClick={handleGenerate}
-                className="w-full bg-teal-600 hover:bg-teal-700"
+                className="w-full bg-[#005cb3] hover:bg-[#005cb3]/90"
               >
                 Generate Report
               </Button>
@@ -68,30 +86,90 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
           ) : isGenerating ? (
             <div className="space-y-4">
               <p className="text-center">Generating payroll report...</p>
-              <Progress value={progress} />
+              <Progress value={progress} className="[&>div]:bg-[#005cb3]" />
               <p className="text-sm text-center text-muted-foreground">
                 Please wait while we process the data
               </p>
             </div>
           ) : (
-            <div className="text-center space-y-4">
-              <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 mx-auto flex items-center justify-center">
-                <Download className="h-6 w-6 text-green-600 dark:text-green-400" />
+            <div className="space-y-6">
+              {/* Header */}
+              <div className="text-center space-y-2">
+                <div className="h-12 w-12 rounded-full bg-[#005cb3]/10 mx-auto flex items-center justify-center">
+                  <FileText className="h-6 w-6 text-[#005cb3]" />
+                </div>
+                <h3 className="text-lg font-semibold">Payroll Report Generated</h3>
+                <p className="text-sm text-muted-foreground">Pay Period: {samplePayrollData.payPeriod}</p>
               </div>
-              <p className="text-lg font-medium">Report Generated!</p>
-              <p className="text-sm text-muted-foreground">
-                Your payroll report is ready to download
-              </p>
+
+              {/* Employee Info */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Employee Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Name:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.employeeName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Employee ID:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.employeeId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Department:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.department}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Position:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.position}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Hours & Earnings */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Hours & Earnings</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Regular Hours:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.regularHours} hrs @ ${samplePayrollData.hourlyRate}/hr</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Overtime Hours:</span>
+                    <span className="text-sm font-medium">{samplePayrollData.overtimeHours} hrs @ ${samplePayrollData.overtimeRate}/hr</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between font-medium">
+                    <span className="text-sm">Gross Pay:</span>
+                    <span className="text-sm">${samplePayrollData.grossPay.toFixed(2)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Net Pay */}
+              <Card className="bg-[#005cb3]/5 border-[#005cb3]/20">
+                <CardContent className="pt-6">
+                  <div className="flex justify-between items-center">
+                    <span className="text-lg font-semibold">Net Pay:</span>
+                    <span className="text-2xl font-bold text-[#005cb3]">${samplePayrollData.netPay.toFixed(2)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Actions */}
               <div className="space-y-2">
                 <Button 
-                  className="w-full bg-teal-600 hover:bg-teal-700"
+                  className="w-full bg-[#005cb3] hover:bg-[#005cb3]/90"
                   onClick={() => {
                     // Handle download here
                     handleClose();
                   }}
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  Download Report
+                  Download PDF Report
                 </Button>
                 <Button 
                   variant="outline" 

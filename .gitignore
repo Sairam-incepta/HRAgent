@@ -399,3 +399,6 @@ FodyWeavers.xsd
 
 .bolt/
 .next/
+.env.local
+.new/
+.temp/

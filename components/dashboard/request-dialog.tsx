@@ -156,7 +156,7 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" className="bg-teal-600 hover:bg-teal-700">
+            <Button type="submit" className="bg-[#005cb3] hover:bg-[#005cb3]/90">
               Submit Request
             </Button>
           </div>

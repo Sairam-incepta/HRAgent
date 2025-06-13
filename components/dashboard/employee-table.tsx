@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useUser } from "@clerk/nextjs";
 import {
   Table,
   TableBody,
@@ -12,87 +13,115 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Search, MoreHorizontal, Plus, Filter, CreditCard } from "lucide-react";
+import { Search, Plus, Filter, CreditCard, Eye } from "lucide-react";
 import { EmployeeDetailsDialog } from "./employee-details-dialog";
+import { AddEmployeeDialog } from "./add-employee-dialog";
+import { PayrollDialog } from "./payroll-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { getEmployees } from "@/lib/database";
+import type { Employee } from "@/lib/supabase";
 
-interface Employee {
-  id: string;
-  name: string;
-  email: string;
-  department: string;
-  position: string;
-  status: "active" | "inactive" | "on leave";
+interface EmployeeTableProps {
+  showInOverview?: boolean;
 }
 
-const dummyEmployees: Employee[] = [
-  {
-    id: "1",
-    name: "John Doe",
-    email: "john.doe@company.com",
-    department: "Sales",
-    position: "Sales Representative",
-    status: "active",
-  },
-  {
-    id: "2",
-    name: "Jane Smith",
-    email: "jane.smith@company.com",
-    department: "Customer Service",
-    position: "Customer Service Representative",
-    status: "active",
-  },
-  {
-    id: "3",
-    name: "Robert Johnson",
-    email: "robert.johnson@company.com",
-    department: "Sales",
-    position: "Sales Representative",
-    status: "active",
-  },
-  {
-    id: "4",
-    name: "Lisa Wilson",
-    email: "lisa.wilson@company.com",
-    department: "Account Management",
-    position: "Account Manager",
-    status: "inactive",
-  },
-  {
-    id: "5",
-    name: "Michael Brown",
-    email: "michael.brown@company.com",
-    department: "IT",
-    position: "IT Specialist",
-    status: "on leave",
-  },
-];
-
-export function EmployeeTable() {
+export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
+  const { user } = useUser();
   const [searchTerm, setSearchTerm] = useState("");
-  const [employees] = useState<Employee[]>(dummyEmployees);
+  const [statusFilter, setStatusFilter] = useState(showInOverview ? "active" : "all");
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [addEmployeeOpen, setAddEmployeeOpen] = useState(false);
+  const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
+  const [payrollEmployee, setPayrollEmployee] = useState<string | null>(null);
 
-  const filteredEmployees = employees.filter((employee) =>
-    employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.position.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    loadEmployees();
+  }, []);
+
+  const loadEmployees = async () => {
+    try {
+      const data = await getEmployees();
+      setEmployees(data);
+    } catch (error) {
+      console.error('Error loading employees:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredEmployees = employees.filter((employee) => {
+    const matchesSearch = 
+      employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.position.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === "all" || employee.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
 
   const handleViewDetails = (employee: Employee) => {
     setSelectedEmployee(employee);
     setDetailsOpen(true);
   };
+
+  const handleGeneratePayroll = (employee: Employee) => {
+    setPayrollEmployee(employee.name);
+    setPayrollDialogOpen(true);
+  };
+
+  const handleAddEmployee = async (newEmployee: {
+    name: string;
+    email: string;
+    department: string;
+    position: string;
+    status: "active" | "inactive" | "on leave";
+    max_hours_before_overtime: number;
+    hourly_rate: number;
+  }) => {
+    // For now, just show a message that manual creation is needed
+    console.log('Employee creation requested:', newEmployee);
+    // In a real implementation, you would call the database function here
+    // but for now we're skipping automatic creation due to RLS constraints
+  };
+
+  // Helper function to display status with proper formatting
+  const getStatusDisplay = (status: string) => {
+    switch (status) {
+      case 'active': return 'Active';
+      case 'inactive': return 'Inactive';
+      case 'on_leave': return 'On Leave';
+      default: return status;
+    }
+  };
+
+  // Helper function to get status badge color
+  const getStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'active': 
+        return "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]";
+      case 'on_leave': 
+        return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
+      case 'inactive':
+      default:
+        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400";
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-4">Loading employees...</div>;
+  }
 
   return (
     <>
@@ -109,14 +138,28 @@ export function EmployeeTable() {
             />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="h-10">
-              <Filter className="mr-2 h-4 w-4" />
-              Filter
-            </Button>
-            <Button size="sm" className="h-10 bg-teal-600 hover:bg-teal-700">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Employee
-            </Button>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[140px]">
+                <Filter className="mr-2 h-4 w-4" />
+                <SelectValue placeholder="Filter" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+                <SelectItem value="on_leave">On Leave</SelectItem>
+              </SelectContent>
+            </Select>
+            {!showInOverview && (
+              <Button 
+                size="sm" 
+                className="h-10 bg-[#005cb3] hover:bg-[#005cb3]/90"
+                onClick={() => setAddEmployeeOpen(true)}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Employee
+              </Button>
+            )}
           </div>
         </div>
 
@@ -127,6 +170,8 @@ export function EmployeeTable() {
                 <TableHead>Name</TableHead>
                 <TableHead>Department</TableHead>
                 <TableHead className="hidden md:table-cell">Position</TableHead>
+                <TableHead className="hidden lg:table-cell">Overtime Limit</TableHead>
+                <TableHead className="hidden lg:table-cell">Hourly Rate</TableHead>
                 <TableHead className="hidden md:table-cell">Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -136,8 +181,7 @@ export function EmployeeTable() {
                 filteredEmployees.map((employee) => (
                   <TableRow 
                     key={employee.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => handleViewDetails(employee)}
+                    className="hover:bg-muted/50"
                   >
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
@@ -154,55 +198,48 @@ export function EmployeeTable() {
                     </TableCell>
                     <TableCell>{employee.department}</TableCell>
                     <TableCell className="hidden md:table-cell">{employee.position}</TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      <span className="text-sm">{employee.max_hours_before_overtime}h</span>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      <span className="text-sm">${employee.hourly_rate}/hr</span>
+                    </TableCell>
                     <TableCell className="hidden md:table-cell">
                       <Badge 
                         variant="outline"
-                        className={
-                          employee.status === "active" 
-                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                            : employee.status === "on leave" 
-                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" 
-                            : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
-                        }
+                        className={getStatusBadgeClass(employee.status)}
                       >
-                        {employee.status === "active" 
-                          ? "Active" 
-                          : employee.status === "on leave" 
-                          ? "On Leave" 
-                          : "Inactive"}
+                        {getStatusDisplay(employee.status)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => handleViewDetails(employee)}>
-                            View Profile
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>Edit Details</DropdownMenuItem>
-                          <DropdownMenuItem>View Time Logs</DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <CreditCard className="mr-2 h-4 w-4" />
-                            Generate Payroll
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive">
-                            Deactivate Account
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <div className="flex justify-end gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleViewDetails(employee)}
+                          className="h-8"
+                        >
+                          <Eye className="mr-1 h-3 w-3" />
+                          Details
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleGeneratePayroll(employee)}
+                          className="h-8"
+                        >
+                          <CreditCard className="mr-1 h-3 w-3" />
+                          Payroll
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center">
-                    No employees found.
+                  <TableCell colSpan={7} className="h-24 text-center">
+                    {employees.length === 0 ? "No employees found in the system." : "No employees found matching your filters."}
                   </TableCell>
                 </TableRow>
               )}
@@ -218,6 +255,20 @@ export function EmployeeTable() {
           employee={selectedEmployee}
         />
       )}
+
+      {!showInOverview && (
+        <AddEmployeeDialog
+          open={addEmployeeOpen}
+          onOpenChange={setAddEmployeeOpen}
+          onAddEmployee={handleAddEmployee}
+        />
+      )}
+
+      <PayrollDialog
+        open={payrollDialogOpen}
+        onOpenChange={setPayrollDialogOpen}
+        employeeName={payrollEmployee}
+      />
     </>
   );
 }
