@@ -56,7 +56,7 @@ export function ChatInterface() {
             id: "welcome",
             content: userRole === 'admin' 
               ? "Hello Admin! I'm your Let's Insure Admin Assistant. I can help you:\n\n👥 Analyze employee performance and metrics\n📊 Review company-wide sales data\n💼 Manage overtime requests and approvals\n📈 Track department performance\n🎯 Monitor KPIs and business insights\n💰 Analyze payroll and compensation data\n\nWhat would you like to know about your team or company performance today?"
-              : "Hello! I'm your Let's Insure Employee Assistant. I can help you:\n\n📊 Track policy sales and performance\n⏰ Log your hours and time\n⭐ Record client reviews\n📝 Create daily summaries\n🎯 View your performance metrics\n📈 Monitor your sales progress\n\nJust tell me what you'd like to do, or try one of the quick actions below!",
+              : "Hello! I'm your Let's Insure Employee Assistant. I can help you:\n\n📊 Track policy sales and performance\n⏰ Log your hours\n⭐ Record client reviews\n📝 Create daily summaries\n🎯 View your performance metrics\n\nJust tell me what you'd like to do, or try one of the quick actions below!",
             sender: "bot",
             timestamp: new Date(),
           };
@@ -69,7 +69,7 @@ export function ChatInterface() {
           id: "welcome",
           content: userRole === 'admin' 
             ? "Hello Admin! I'm your Let's Insure Admin Assistant. I can help you:\n\n👥 Analyze employee performance and metrics\n📊 Review company-wide sales data\n💼 Manage overtime requests and approvals\n📈 Track department performance\n🎯 Monitor KPIs and business insights\n💰 Analyze payroll and compensation data\n\nWhat would you like to know about your team or company performance today?"
-            : "Hello! I'm your Let's Insure Employee Assistant. I can help you:\n\n📊 Track policy sales and performance\n⏰ Log your hours and time\n⭐ Record client reviews\n📝 Create daily summaries\n🎯 View your performance metrics\n📈 Monitor your sales progress\n\nJust tell me what you'd like to do, or try one of the quick actions below!",
+            : "Hello! I'm your Let's Insure Employee Assistant. I can help you:\n\n📊 Track policy sales and performance\n⏰ Log your hours\n⭐ Record client reviews\n📝 Create daily summaries\n🎯 View your performance metrics\n\nJust tell me what you'd like to do, or try one of the quick actions below!",
           sender: "bot",
           timestamp: new Date(),
         };
@@ -203,7 +203,7 @@ export function ChatInterface() {
     setInput(action);
   };
 
-  // Quick actions based on user role (NO bonus-related actions for employees)
+  // Quick actions based on user role
   const getQuickActions = () => {
     if (userRole === 'admin') {
       return [
@@ -224,8 +224,8 @@ export function ChatInterface() {
         },
         {
           icon: TrendingUp,
-          label: "Payroll Summary",
-          action: "Show me payroll summary"
+          label: "Sales Overview",
+          action: "Show me recent policy sales"
         }
       ];
     } else {
@@ -246,9 +246,9 @@ export function ChatInterface() {
           action: "Create my daily summary"
         },
         {
-          icon: FileText,
+          icon: BarChart,
           label: "View Performance",
-          action: "Show my sales performance"
+          action: "Show my performance metrics"
         }
       ];
     }

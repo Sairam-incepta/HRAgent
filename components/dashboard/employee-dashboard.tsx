@@ -75,7 +75,7 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
 
-  // Employee performance data (WITHOUT bonus information)
+  // Employee performance data (NO BONUS INFORMATION)
   const [performanceData, setPerformanceData] = useState({
     totalPolicies: 0,
     totalSales: 0,
@@ -99,7 +99,7 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
     return "Employee";
   };
 
-  // Load employee performance data (WITHOUT bonus)
+  // Load employee performance data (NO BONUS INFORMATION)
   useEffect(() => {
     const loadPerformanceData = async () => {
       if (!user?.id) return;
@@ -220,7 +220,7 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
         </p>
       </div>
 
-      {/* Performance Overview Cards (WITHOUT bonus) */}
+      {/* Performance Overview Cards (NO BONUS CARD) */}
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -247,7 +247,7 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             {performanceData.loading ? (

@@ -27,7 +27,6 @@ const extractDataFromResponse = (message: string, dataType: string) => {
   console.log('extractDataFromResponse called with:', { message, dataType });
   
   switch (dataType) {
-    case 'total_sales':
     case 'policy_amount':
       const amountMatch = message.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       return amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
@@ -145,11 +144,11 @@ export async function POST(request: NextRequest) {
 
 async function handleAdminChat(message: string, userId: string) {
   try {
-    // Get admin data for context
+    // Get admin data for context - get ALL policy sales for company-wide view
     const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([
       getEmployees(),
       getOvertimeRequests(),
-      getPolicySales()
+      getPolicySales() // This gets ALL policy sales, not just for one employee
     ]);
 
     const activeEmployees = employees.filter(emp => emp.status === 'active');
@@ -169,6 +168,11 @@ async function handleAdminChat(message: string, userId: string) {
       dept.avgRate = dept.totalRate / dept.count;
     });
 
+    // Recent policy sales (last 10)
+    const recentSales = allPolicySales
+      .sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime())
+      .slice(0, 10);
+
     const systemPrompt = `You are "Let's Insure Admin Assistant", an AI assistant for LetsInsure HR system administrators. You help HR managers and administrators manage employees, review performance, and analyze company metrics.
 
 COMPANY OVERVIEW:
@@ -177,11 +181,18 @@ COMPANY OVERVIEW:
 - Pending Requests: ${pendingRequests.length}
 - Total Company Sales: $${totalSales.toLocaleString()}
 - Total Bonuses Paid: $${totalBonuses.toLocaleString()}
+- Total Policies Sold: ${allPolicySales.length}
 
 DEPARTMENT BREAKDOWN:
 ${Array.from(departmentMap.entries()).map(([dept, data]) => 
   `- ${dept}: ${data.count} employees, avg rate $${data.avgRate.toFixed(2)}/hr`
 ).join('\n')}
+
+RECENT POLICY SALES (Last 10):
+${recentSales.map(sale => {
+  const employee = employees.find(emp => emp.clerk_user_id === sale.employee_id);
+  return `- ${sale.policy_number}: ${sale.client_name}, ${sale.policy_type}, $${sale.amount.toLocaleString()} by ${employee?.name || 'Unknown'} (${new Date(sale.sale_date).toLocaleDateString()})`;
+}).join('\n')}
 
 RECENT OVERTIME REQUESTS:
 ${pendingRequests.slice(0, 5).map(req => {
@@ -209,7 +220,7 @@ As an admin assistant, you can help with:
 - HR policy questions and guidance
 - Workforce planning and optimization
 
-Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency.`;
+Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency. You have access to real-time data including all policy sales, employee information, and recent activity.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
@@ -245,14 +256,14 @@ async function handleEmployeeChat(message: string, userId: string) {
   const employee = await getEmployee(userId);
   if (!employee) {
     return NextResponse.json({ 
-      response: "I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system. Once that's done, I'll be able to help you track your sales, bonuses, and work hours!" 
+      response: "I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system. Once that's done, I'll be able to help you track your sales and work hours!" 
     });
   }
 
   // Get current conversation state
   const conversationState = await getConversationState(userId);
 
-  // Get employee data for context
+  // Get employee data for context - ENSURE we get fresh data every time
   const [policySales, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
     getPolicySales(userId),
     getClientReviews(userId),
@@ -261,52 +272,43 @@ async function handleEmployeeChat(message: string, userId: string) {
     getDailySummaries(userId)
   ]);
 
-  // Calculate total bonus from all sources
-  const employeeBonus = await getEmployeeBonus(userId);
-  const baseBonus = employeeBonus?.total_bonus || 0;
-  const fiveStarReviews = clientReviews.filter(r => r.rating === 5).length;
-  const reviewBonus = fiveStarReviews * 10;
-  const totalBonus = baseBonus + reviewBonus;
-
   // Handle conversation flows for data collection
   if (conversationState && conversationState.current_flow !== 'none') {
     console.log('Found active conversation state:', conversationState);
     return await handleConversationFlow(conversationState, message, userId);
   }
 
-  // Calculate totals
+  // Calculate totals (but don't include bonus information)
   const totalPolicies = policySales.length;
   const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
   const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
 
-  // Create context for the AI
-  const systemPrompt = `You are "Let's Insure Employee Assistant", an AI assistant for LetsInsure HR system. You help insurance sales employees track their performance, bonuses, and answer questions about their sales data.
+  // Create context for the AI with CURRENT data (NO BONUS INFORMATION)
+  const systemPrompt = `You are "Let's Insure Employee Assistant", an AI assistant for LetsInsure HR system. You help insurance sales employees track their performance and answer questions about their sales data.
 
-EMPLOYEE DATA CONTEXT:
+EMPLOYEE DATA CONTEXT (CURRENT/LIVE DATA):
 - Employee: ${employee.name} (${employee.position} in ${employee.department})
 - Total Policies Sold: ${totalPolicies}
-- Total Sales Amount: ${totalSalesAmount.toLocaleString()}
-- Total Broker Fees: ${totalBrokerFees.toLocaleString()}
-- Total Bonus Earned: ${totalBonus.toLocaleString()} (Sales: ${baseBonus.toLocaleString()}, 5-Star Reviews: ${reviewBonus.toLocaleString()})
+- Total Sales Amount: $${totalSalesAmount.toLocaleString()}
+- Total Broker Fees: $${totalBrokerFees.toLocaleString()}
 - Hours This Week: ${employeeHours.thisWeek}
 - Hours This Month: ${employeeHours.thisMonth}
 - Cross-sold Policies: ${crossSoldPolicies.length}
-- 5-Star Reviews: ${fiveStarReviews}
 
-RECENT POLICIES SOLD:
-${policySales.slice(-5).map(sale => `- Policy ${sale.policy_number}: ${sale.client_name}, ${sale.policy_type}, Amount: ${sale.amount}, Broker Fee: ${sale.broker_fee}, Bonus: ${sale.bonus}${sale.cross_sold ? ` (Cross-sold: ${sale.cross_sold_type})` : ''}${sale.client_description ? `\n  Client: ${sale.client_description}` : ''}`).join('\n')}
+RECENT POLICIES SOLD (LIVE DATA):
+${policySales.slice(-5).map(sale => `- Policy ${sale.policy_number}: ${sale.client_name}, ${sale.policy_type}, $${sale.amount.toLocaleString()}${sale.cross_sold ? ` (Cross-sold: ${sale.cross_sold_type})` : ''}${sale.client_description ? `\n  Client: ${sale.client_description}` : ''}`).join('\n')}
 
-CLIENT REVIEWS:
-${clientReviews.map(review => `- ${review.client_name} (${review.policy_number}): ${review.rating}/5 stars - "${review.review}"${review.rating === 5 ? ' (+$10 bonus)' : ''}`).join('\n')}
+CLIENT REVIEWS (LIVE DATA):
+${clientReviews.map(review => `- ${review.client_name} (${review.policy_number}): ${review.rating}/5 stars - "${review.review}"`).join('\n')}
 
-DAILY SUMMARIES:
-${dailySummaries.slice(-3).map(summary => `- ${new Date(summary.date).toDateString()}: ${summary.hours_worked}h, ${summary.policies_sold} policies, ${summary.total_sales_amount} sales\n  Summary: ${summary.description}`).join('\n')}
+DAILY SUMMARIES (LIVE DATA):
+${dailySummaries.slice(-3).map(summary => `- ${new Date(summary.date).toDateString()}: ${summary.hours_worked}h, ${summary.policies_sold} policies, $${summary.total_sales_amount.toLocaleString()} sales\n  Summary: ${summary.description}`).join('\n')}
 
-BONUS CALCULATION RULES:
-- Broker Fee Bonus: 10% of broker fee amount over $100
-- Cross-Sell Bonus: Commission doubles on cross-sold policies
-- Life Insurance Referral: Additional $10 per referral
-- 5-Star Review Bonus: $10 per 5-star review
+IMPORTANT RESTRICTIONS:
+- NEVER mention, discuss, or reveal bonus information to employees
+- If asked about bonuses, earnings, commissions, or compensation, politely redirect to contacting HR or management
+- Focus on helping with policy tracking, client reviews, and daily summaries
+- Bonuses are confidential and handled by management
 
 INTERACTIVE CAPABILITIES:
 When users want to add new data, you should initiate conversation flows by responding with specific questions. Look for these triggers:
@@ -317,9 +319,9 @@ When users want to add new data, you should initiate conversation flows by respo
 For data entry flows, ask ONE specific question at a time:
 1. Policy Entry: Ask for policy number, client name, policy type, amount, broker fee, cross-sell info, client description
 2. Review Entry: Ask for client name, policy number, rating (1-5), review text
-3. Daily Summary: Ask for hours worked, main activities, policies sold, total sales, challenges/highlights
+3. Daily Summary: Ask for hours worked, number of policies sold, brief description of the day (NO total sales amount)
 
-Be conversational and helpful. Extract specific data points (numbers, names, amounts) from responses and confirm before saving.`;
+Be conversational and helpful. Extract specific data points (numbers, names, amounts) from responses and confirm before saving. Always provide current, up-to-date information about the employee's performance, but NEVER reveal bonus information.`;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4-turbo-preview",
@@ -455,7 +457,7 @@ async function handleConversationFlow(conversationState: any, message: string, e
     // Save the collected data
     await saveCollectedData(currentFlow, safeCollectedData, employeeId);
     await clearConversationState(employeeId);
-    response += "\n\n✅ Data saved successfully! Is there anything else I can help you with?";
+    response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
   } else {
     // Update conversation state with next question
     console.log('Updating conversation state with:', {
@@ -499,10 +501,8 @@ function getReviewEntryNextQuestion(data: any): [string, boolean] {
 
 function getDailySummaryNextQuestion(data: any): [string, boolean] {
   if (!data.hours_worked) return ['hours_worked', false];
-  if (!data.key_activities) return ['key_activities', false];
   if (!data.policies_sold) return ['policies_sold', false];
-  if (!data.total_sales) return ['total_sales', false];
-  if (!data.challenges) return ['challenges', false];
+  if (!data.description) return ['description', false];
   return ['', true];
 }
 
@@ -524,15 +524,14 @@ async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedV
     case 'broker_fee':
       const amount = parseFloat(data.policy_amount);
       if (!isNaN(amount)) {
-        const bonus = calculateBonus(amount);
-        return `Policy amount: ${amount.toLocaleString()}. Your bonus will be ${bonus.toLocaleString()}! What's the broker fee?`;
+        return `Policy amount: $${amount.toLocaleString()}. What's the broker fee?`;
       }
       return "Please provide a valid dollar amount for the policy:";
     
     case 'cross_sold':
       const fee = parseFloat(data.broker_fee);
       if (!isNaN(fee)) {
-        return `Broker fee: ${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
+        return `Broker fee: $${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
       }
       return "Please provide a valid broker fee amount:";
     
@@ -573,14 +572,7 @@ async function handleDailySummaryFlow(data: any, nextQuestion: string, extracted
   
   const responses: { [key: string]: string } = {
     'hours_worked': data.hours_worked ? `Hours worked: ${data.hours_worked}. How many policies did you sell today?` : "Please provide the number of hours you worked:",
-    'policies_sold': data.policies_sold !== undefined ? `Policies sold: ${data.policies_sold}. What was the total sales amount for today?` : "Please provide the number of policies sold:",
-    'total_sales': (() => {
-      const sales = parseFloat(data.total_sales);
-      if (!isNaN(sales)) {
-        return `Total sales: ${sales.toLocaleString()}. Finally, can you provide a brief summary of your day?`;
-      }
-      return "Please provide the total sales amount:";
-    })(),
+    'policies_sold': data.policies_sold !== undefined ? `Policies sold: ${data.policies_sold}. Finally, can you provide a brief summary of your day?` : "Please provide the number of policies sold:",
     'description': `Perfect! I have all the information for your daily summary.`,
     '': 'All information collected!'
   };
@@ -619,15 +611,19 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       break;
       
     case 'daily_summary':
+      // Calculate total sales automatically based on policies sold and average policy amount
+      const averagePolicyAmount = 1500; // Default average policy amount
+      const calculatedTotalSales = (parseInt(data.policies_sold) || 0) * averagePolicyAmount;
+      
       await addDailySummary({
         employeeId,
         date: new Date(),
         hoursWorked: parseFloat(data.hours_worked) || 0,
         policiesSold: parseInt(data.policies_sold) || 0,
-        totalSalesAmount: parseFloat(data.total_sales) || 0,
-        totalBrokerFees: 0, // We don't collect this in the flow
-        description: `Activities: ${data.key_activities || 'Not specified'}. Challenges/Highlights: ${data.challenges || 'None mentioned'}`,
-        keyActivities: data.key_activities ? data.key_activities.split(',').map((a: string) => a.trim()) : []
+        totalSalesAmount: calculatedTotalSales,
+        totalBrokerFees: calculatedTotalSales * 0.1, // 10% broker fee
+        description: data.description,
+        keyActivities: ['Sales calls', 'Client meetings', 'Policy processing']
       });
       break;
   }
