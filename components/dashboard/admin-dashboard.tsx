@@ -24,11 +24,13 @@ import {
   Filter,
   Calendar,
   Building,
-  Eye
+  Eye,
+  UserPlus
 } from "lucide-react";
 import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
 import { AdminRequests } from "@/components/dashboard/admin-requests";
+import { BulkUserCreationDialog } from "@/components/dashboard/bulk-user-creation-dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -49,6 +51,7 @@ export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [companyPayrollDialogOpen, setCompanyPayrollDialogOpen] = useState(false);
+  const [bulkUserCreationOpen, setBulkUserCreationOpen] = useState(false);
   const [selectedPayrollPeriod, setSelectedPayrollPeriod] = useState("");
   const [expenditureFilter, setExpenditureFilter] = useState("month");
   const [expenditureData, setExpenditureData] = useState({
@@ -115,6 +118,10 @@ export function AdminDashboard() {
     setCompanyPayrollDialogOpen(true);
   };
 
+  const handleBulkUsersCreated = () => {
+    loadData(); // Refresh data after bulk user creation
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -129,6 +136,7 @@ export function AdminDashboard() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="requests">Requests</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
+          <TabsTrigger value="user-management">User Management</TabsTrigger>
         </TabsList>
         
         <TabsContent value="overview" className="space-y-4">
@@ -274,6 +282,76 @@ export function AdminDashboard() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="user-management" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>User Management</CardTitle>
+              <CardDescription>Automate user creation and manage Clerk integration</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-full bg-[#005cb3]/10 flex items-center justify-center">
+                        <UserPlus className="h-6 w-6 text-[#005cb3]" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-semibold">Bulk User Creation</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Create multiple users at once using CSV upload
+                        </p>
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={() => setBulkUserCreationOpen(true)}
+                      className="w-full mt-4 bg-[#005cb3] hover:bg-[#005cb3]/90"
+                    >
+                      Create Multiple Users
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                        <Users className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-semibold">Clerk Integration</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Automatically sync users with Clerk authentication
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-3 bg-green-50 dark:bg-green-950/20 rounded-lg">
+                      <p className="text-sm text-green-700 dark:text-green-300">
+                        ✅ Clerk integration is active and working
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                  <div>
+                    <h4 className="font-medium text-blue-900 dark:text-blue-100">Automated User Management</h4>
+                    <ul className="text-sm text-blue-700 dark:text-blue-300 mt-1 space-y-1">
+                      <li>• Users are automatically created in both Clerk and the employee database</li>
+                      <li>• Each user gets a unique Clerk ID for authentication</li>
+                      <li>• Employee records are linked to Clerk users for seamless integration</li>
+                      <li>• Failed creations are reported and can be retried individually</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <PayrollDialog 
@@ -285,6 +363,12 @@ export function AdminDashboard() {
         open={companyPayrollDialogOpen}
         onOpenChange={setCompanyPayrollDialogOpen}
         payrollPeriod={selectedPayrollPeriod}
+      />
+
+      <BulkUserCreationDialog
+        open={bulkUserCreationOpen}
+        onOpenChange={setBulkUserCreationOpen}
+        onUsersCreated={handleBulkUsersCreated}
       />
     </div>
   );

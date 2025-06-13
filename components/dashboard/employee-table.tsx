@@ -14,9 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Search, Plus, Filter, CreditCard, Eye, History } from "lucide-react";
+import { Search, Plus, Filter, CreditCard, Eye, History, Edit } from "lucide-react";
 import { EmployeeDetailsDialog } from "./employee-details-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
+import { EditEmployeeDialog } from "./edit-employee-dialog";
 import { PayrollDialog } from "./payroll-dialog";
 import { EmployeePayrollHistoryDialog } from "./employee-payroll-history-dialog";
 import {
@@ -42,6 +43,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [addEmployeeOpen, setAddEmployeeOpen] = useState(false);
+  const [editEmployeeOpen, setEditEmployeeOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [payrollHistoryOpen, setPayrollHistoryOpen] = useState(false);
   const [payrollEmployee, setPayrollEmployee] = useState<string | null>(null);
@@ -84,6 +87,11 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     setDetailsOpen(true);
   };
 
+  const handleEditEmployee = (employee: Employee) => {
+    setEditingEmployee(employee);
+    setEditEmployeeOpen(true);
+  };
+
   const handleGeneratePayroll = (employee: Employee) => {
     setPayrollEmployee(employee.name);
     setPayrollDialogOpen(true);
@@ -95,6 +103,10 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   };
 
   const handleAddEmployeeSuccess = () => {
+    loadEmployees(); // Refresh the employee list
+  };
+
+  const handleEmployeeUpdated = () => {
     loadEmployees(); // Refresh the employee list
   };
 
@@ -152,7 +164,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                 <SelectItem value="on_leave">On Leave</SelectItem>
               </SelectContent>
             </Select>
-            {/* Show Add Employee button for admins and when not in overview mode */}
+            {/* Show Add Employee button for admins */}
             {isAdmin && (
               <Button 
                 size="sm" 
@@ -226,6 +238,17 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                           <Eye className="mr-1 h-3 w-3" />
                           Details
                         </Button>
+                        {isAdmin && (
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleEditEmployee(employee)}
+                            className="h-8"
+                          >
+                            <Edit className="mr-1 h-3 w-3" />
+                            Edit
+                          </Button>
+                        )}
                         <Button 
                           variant="outline" 
                           size="sm"
@@ -274,6 +297,16 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
           open={addEmployeeOpen}
           onOpenChange={setAddEmployeeOpen}
           onAddEmployee={handleAddEmployeeSuccess}
+        />
+      )}
+
+      {/* Show Edit Employee dialog for admins */}
+      {isAdmin && (
+        <EditEmployeeDialog
+          open={editEmployeeOpen}
+          onOpenChange={setEditEmployeeOpen}
+          employee={editingEmployee}
+          onEmployeeUpdated={handleEmployeeUpdated}
         />
       )}
 

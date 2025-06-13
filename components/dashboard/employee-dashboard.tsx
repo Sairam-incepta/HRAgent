@@ -23,6 +23,9 @@ import {
   ChevronUp,
   Filter,
   Search,
+  TrendingUp,
+  Star,
+  FileText
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { TimeTracker } from "@/components/dashboard/time-tracker";
@@ -41,7 +44,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { getEmployeeRequests, type Request } from "@/lib/database";
+import { useToast } from "@/hooks/use-toast";
+import { 
+  getEmployeeRequests, 
+  getPolicySales, 
+  getClientReviews, 
+  getDailySummaries,
+  type Request 
+} from "@/lib/database";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -65,6 +75,17 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
 
+  // Employee performance data (WITHOUT bonus information)
+  const [performanceData, setPerformanceData] = useState({
+    totalPolicies: 0,
+    totalSales: 0,
+    totalReviews: 0,
+    avgRating: 0,
+    loading: true
+  });
+
+  const { toast } = useToast();
+
   // Mock employee settings - in real app, this would come from database
   const employeeSettings = {
     maxHoursBeforeOvertime: 8,
@@ -77,6 +98,39 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
     }
     return "Employee";
   };
+
+  // Load employee performance data (WITHOUT bonus)
+  useEffect(() => {
+    const loadPerformanceData = async () => {
+      if (!user?.id) return;
+      
+      try {
+        const [policySales, clientReviews, dailySummaries] = await Promise.all([
+          getPolicySales(user.id),
+          getClientReviews(user.id),
+          getDailySummaries(user.id)
+        ]);
+
+        const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
+        const avgRating = clientReviews.length > 0 
+          ? clientReviews.reduce((sum, review) => sum + review.rating, 0) / clientReviews.length 
+          : 0;
+
+        setPerformanceData({
+          totalPolicies: policySales.length,
+          totalSales,
+          totalReviews: clientReviews.length,
+          avgRating,
+          loading: false
+        });
+      } catch (error) {
+        console.error('Error loading performance data:', error);
+        setPerformanceData(prev => ({ ...prev, loading: false }));
+      }
+    };
+
+    loadPerformanceData();
+  }, [user?.id]);
 
   // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
@@ -162,8 +216,77 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Welcome back, {getUserName()}</h1>
         <p className="text-muted-foreground">
-          Here's what's happening with your time tracking today.
+          Here's your performance overview and time tracking for today.
         </p>
+      </div>
+
+      {/* Performance Overview Cards (WITHOUT bonus) */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Policies Sold</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {performanceData.loading ? (
+              <div className="animate-pulse">
+                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
+                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{performanceData.totalPolicies}</div>
+                <p className="text-xs text-muted-foreground">
+                  All time
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {performanceData.loading ? (
+              <div className="animate-pulse">
+                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
+                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">${performanceData.totalSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground">
+                  Revenue generated
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Client Reviews</CardTitle>
+            <Star className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {performanceData.loading ? (
+              <div className="animate-pulse">
+                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
+                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{performanceData.totalReviews}</div>
+                <p className="text-xs text-muted-foreground">
+                  {performanceData.avgRating > 0 ? `Avg: ${performanceData.avgRating.toFixed(1)}/5` : 'No reviews yet'}
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
@@ -175,37 +298,6 @@ export function EmployeeDashboard({ initialTab = "overview" }: EmployeeDashboard
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
             hourlyRate={employeeSettings.hourlyRate}
           />
-          <Card className="w-full sm:w-auto">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                {!isOnLunch ? (
-                  <Button 
-                    onClick={handleLunchBreak}
-                    disabled={!isClockedIn}
-                    className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
-                  </Button>
-                ) : (
-                  <Button 
-                    onClick={handleLunchBreak}
-                    className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
-                  >
-                    <Check className="mr-2 h-4 w-4" /> End Lunch Break
-                  </Button>
-                )}
-                <div className={`
-                  rounded-full px-4 py-2 text-sm font-medium
-                  ${isOnLunch 
-                    ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
-                    : "bg-muted text-muted-foreground"
-                  }
-                `}>
-                  {isOnLunch ? "On Lunch Break" : "Not on Break"}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
 
