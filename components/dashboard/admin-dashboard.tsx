@@ -23,7 +23,8 @@ import {
   ChevronUp,
   Filter,
   Calendar,
-  Building
+  Building,
+  Eye
 } from "lucide-react";
 import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
@@ -109,7 +110,7 @@ export function AdminDashboard() {
 
   const currentExpenditure = expenditureData[expenditureFilter as keyof typeof expenditureData];
 
-  const handleCompanyPayrollGenerate = (period: string) => {
+  const handleCompanyPayrollView = (period: string) => {
     setSelectedPayrollPeriod(period);
     setCompanyPayrollDialogOpen(true);
   };
@@ -202,7 +203,7 @@ export function AdminDashboard() {
           <Card>
             <CardHeader>
               <CardTitle>Bi-Weekly Payroll Reports</CardTitle>
-              <CardDescription>Generate company-wide payroll reports every 2 weeks</CardDescription>
+              <CardDescription>View company-wide payroll reports every 2 weeks</CardDescription>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -219,7 +220,7 @@ export function AdminDashboard() {
                     <div 
                       key={index}
                       className="flex items-center justify-between p-4 bg-white dark:bg-card border rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-card/80 transition-colors"
-                      onClick={() => handleCompanyPayrollGenerate(payroll.period)}
+                      onClick={() => handleCompanyPayrollView(payroll.period)}
                     >
                       <div className="flex items-center gap-3">
                         {payroll.status === "current" ? (
@@ -237,6 +238,13 @@ export function AdminDashboard() {
                           <p className="text-sm text-muted-foreground">
                             {payroll.employees} employees, ${payroll.total.toLocaleString()} total expenditure
                           </p>
+                          {payroll.details && (
+                            <p className="text-xs text-muted-foreground">
+                              {Math.round(payroll.details.regularHours + payroll.details.overtimeHours)}h total, 
+                              {payroll.details.totalSales} policies sold, 
+                              ${payroll.details.totalBonuses.toLocaleString()} bonuses
+                            </p>
+                          )}
                         </div>
                       </div>
                       <Button 
@@ -244,7 +252,8 @@ export function AdminDashboard() {
                         className={payroll.status === "current" ? "bg-[#005cb3] hover:bg-[#005cb3]/90" : ""}
                         variant={payroll.status === "current" ? "default" : "outline"}
                       >
-                        Generate
+                        <Eye className="mr-1 h-3 w-3" />
+                        View
                       </Button>
                     </div>
                   ))}
@@ -257,7 +266,7 @@ export function AdminDashboard() {
                   <div>
                     <h4 className="font-medium text-blue-900 dark:text-blue-100">Bi-Weekly Payroll Schedule</h4>
                     <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                      Payroll reports are automatically generated every 2 weeks. Company expenditure is calculated based on total employee compensation.
+                      Payroll reports are automatically calculated every 2 weeks. Company expenditure includes total employee compensation, bonuses, and overtime pay.
                     </p>
                   </div>
                 </div>

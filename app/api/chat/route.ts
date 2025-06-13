@@ -15,7 +15,9 @@ import {
   updateConversationState,
   clearConversationState,
   getDailySummaries,
-  getEmployee
+  getEmployee,
+  getEmployees,
+  getOvertimeRequests
 } from '@/lib/database';
 
 // Helper function to extract structured data from user responses
@@ -40,13 +42,55 @@ const extractDataFromResponse = (message: string, dataType: string) => {
       const rating = ratingMatch ? parseInt(ratingMatch[1]) : null;
       return rating && rating >= 1 && rating <= 5 ? rating : null;
     
+    case 'policies_sold':
+      const policiesMatch = message.match(/(\d+)/);
+      return policiesMatch ? parseInt(policiesMatch[1]) : null;
+    
     case 'policy_number':
-      const policyMatch = message.match(/([A-Z]{2,4}-\d{4}-\d{3}|POL-\d{4}-\d{3}|\w+\d+)/i);
-      return policyMatch ? policyMatch[1].toUpperCase() : null;
+      const trimmed = message.trim();
+      
+      // Don't extract from conversational phrases
+      const conversationalPhrases = [
+        'i sold', 'sold a', 'new policy', 'policy today', 'yesterday',
+        'client review', 'customer feedback', 'daily summary', 'hours worked'
+      ];
+      
+      if (conversationalPhrases.some(phrase => lowerMessage.includes(phrase))) {
+        return null;
+      }
+      
+      // Accept various policy number formats
+      const policyPatterns = [
+        /^([A-Z]{2,4}[-_]?\d{4}[-_]?\d{3})$/i,     // POL-2025-001
+        /^([A-Z]{2,4}[-_]?\d{3,})$/i,              // POL-001, ABC-123
+        /^([A-Z]+\d+[A-Z]*)$/i,                    // ABC123, POL001A
+        /^(\d+[A-Z]+\d*)$/i,                       // 123ABC, 123ABC456
+      ];
+      
+      for (const pattern of policyPatterns) {
+        const match = trimmed.match(pattern);
+        if (match) {
+          return match[1].toUpperCase().replace(/[-_]/g, '-');
+        }
+      }
+      
+      // If it looks like a policy number (has both letters and numbers), accept it
+      if (trimmed.length >= 3 && /[A-Za-z]/.test(trimmed) && /\d/.test(trimmed) && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
+        return trimmed.toUpperCase();
+      }
+      
+      return null;
     
     default:
       return message.trim();
   }
+};
+
+// Helper function to determine user role
+const getUserRole = (userId: string, userEmail?: string) => {
+  const isAdmin = userEmail === 'admin@letsinsure.hr' || 
+                  userId === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+  return isAdmin ? 'admin' : 'employee';
 };
 
 export async function POST(request: NextRequest) {
@@ -60,42 +104,159 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message } = await request.json();
+    const { message, userRole } = await request.json();
 
-    // Try to get employee record - if it doesn't exist, provide helpful message
-    const employee = await getEmployee(userId);
-    if (!employee) {
-      return NextResponse.json({ 
-        response: "I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system. Once that's done, I'll be able to help you track your sales, bonuses, and work hours!" 
-      });
+    // Determine actual user role if not provided
+    const actualUserRole = userRole || getUserRole(userId);
+
+    // Handle admin vs employee differently
+    if (actualUserRole === 'admin') {
+      return await handleAdminChat(message, userId);
+    } else {
+      return await handleEmployeeChat(message, userId);
     }
 
-    // Get current conversation state
-    const conversationState = await getConversationState(userId);
+  } catch (error) {
+    console.error('OpenAI API error:', error);
+    return NextResponse.json(
+      { error: 'Failed to process chat request' },
+      { status: 500 }
+    );
+  }
+}
 
-    // Get employee data for context
-    const [policySales, employeeBonus, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
-      getPolicySales(userId),
-      getEmployeeBonus(userId),
-      getClientReviews(userId),
-      getEmployeeHours(userId),
-      getCrossSoldPolicies(userId),
-      getDailySummaries(userId)
+async function handleAdminChat(message: string, userId: string) {
+  try {
+    // Get admin data for context
+    const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([
+      getEmployees(),
+      getOvertimeRequests(),
+      getPolicySales()
     ]);
 
-    // Handle conversation flows for data collection
-    if (conversationState && conversationState.current_flow !== 'none') {
-      return await handleConversationFlow(conversationState, message, userId);
-    }
+    const activeEmployees = employees.filter(emp => emp.status === 'active');
+    const pendingRequests = allOvertimeRequests.filter(req => req.status === 'pending');
+    const totalSales = allPolicySales.reduce((sum, sale) => sum + sale.amount, 0);
+    const totalBonuses = allPolicySales.reduce((sum, sale) => sum + sale.bonus, 0);
 
-    // Calculate totals
-    const totalPolicies = policySales.length;
-    const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
-    const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
-    const totalBonus = employeeBonus?.total_bonus || 0;
+    // Department breakdown
+    const departmentMap = new Map();
+    activeEmployees.forEach(emp => {
+      if (!departmentMap.has(emp.department)) {
+        departmentMap.set(emp.department, { count: 0, avgRate: 0, totalRate: 0 });
+      }
+      const dept = departmentMap.get(emp.department);
+      dept.count += 1;
+      dept.totalRate += emp.hourly_rate;
+      dept.avgRate = dept.totalRate / dept.count;
+    });
 
-    // Create context for the AI
-    const systemPrompt = `You are "Let's Insure Assistant", an AI assistant for LetsInsure HR system. You help insurance sales employees track their performance, bonuses, and answer questions about their sales data.
+    const systemPrompt = `You are "Let's Insure Admin Assistant", an AI assistant for LetsInsure HR system administrators. You help HR managers and administrators manage employees, review performance, and analyze company metrics.
+
+COMPANY OVERVIEW:
+- Total Employees: ${employees.length}
+- Active Employees: ${activeEmployees.length}
+- Pending Requests: ${pendingRequests.length}
+- Total Company Sales: $${totalSales.toLocaleString()}
+- Total Bonuses Paid: $${totalBonuses.toLocaleString()}
+
+DEPARTMENT BREAKDOWN:
+${Array.from(departmentMap.entries()).map(([dept, data]) => 
+  `- ${dept}: ${data.count} employees, avg rate $${data.avgRate.toFixed(2)}/hr`
+).join('\n')}
+
+RECENT OVERTIME REQUESTS:
+${pendingRequests.slice(0, 5).map(req => {
+  const employee = employees.find(emp => emp.clerk_user_id === req.employee_id);
+  return `- ${employee?.name || 'Unknown'}: ${req.hours_requested}h requested, reason: ${req.reason}`;
+}).join('\n')}
+
+TOP PERFORMING EMPLOYEES (by sales):
+${employees.map(emp => {
+  const empSales = allPolicySales.filter(sale => sale.employee_id === emp.clerk_user_id);
+  const totalSales = empSales.reduce((sum, sale) => sum + sale.amount, 0);
+  return { name: emp.name, department: emp.department, sales: totalSales, count: empSales.length };
+}).filter(emp => emp.sales > 0).sort((a, b) => b.sales - a.sales).slice(0, 5).map(emp => 
+  `- ${emp.name} (${emp.department}): ${emp.count} policies, $${emp.sales.toLocaleString()}`
+).join('\n')}
+
+ADMIN CAPABILITIES:
+As an admin assistant, you can help with:
+- Employee performance analysis and insights
+- Company metrics and KPI tracking
+- Overtime request management guidance
+- Payroll and compensation analysis
+- Department performance comparisons
+- Sales performance tracking
+- HR policy questions and guidance
+- Workforce planning and optimization
+
+Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: message
+        }
+      ],
+      max_tokens: 1000,
+      temperature: 0.7,
+    });
+
+    const response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
+
+    return NextResponse.json({ response });
+
+  } catch (error) {
+    console.error('Admin chat error:', error);
+    return NextResponse.json(
+      { error: 'Failed to process admin chat request' },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleEmployeeChat(message: string, userId: string) {
+  // Try to get employee record - if it doesn't exist, provide helpful message
+  const employee = await getEmployee(userId);
+  if (!employee) {
+    return NextResponse.json({ 
+      response: "I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system. Once that's done, I'll be able to help you track your sales, bonuses, and work hours!" 
+    });
+  }
+
+  // Get current conversation state
+  const conversationState = await getConversationState(userId);
+
+  // Get employee data for context
+  const [policySales, employeeBonus, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
+    getPolicySales(userId),
+    getEmployeeBonus(userId),
+    getClientReviews(userId),
+    getEmployeeHours(userId),
+    getCrossSoldPolicies(userId),
+    getDailySummaries(userId)
+  ]);
+
+  // Handle conversation flows for data collection
+  if (conversationState && conversationState.current_flow !== 'none') {
+    return await handleConversationFlow(conversationState, message, userId);
+  }
+
+  // Calculate totals
+  const totalPolicies = policySales.length;
+  const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
+  const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
+  const totalBonus = employeeBonus?.total_bonus || 0;
+
+  // Create context for the AI
+  const systemPrompt = `You are "Let's Insure Employee Assistant", an AI assistant for LetsInsure HR system. You help insurance sales employees track their performance, bonuses, and answer questions about their sales data.
 
 EMPLOYEE DATA CONTEXT:
 - Employee: ${employee.name} (${employee.position} in ${employee.department})
@@ -135,73 +296,91 @@ For data entry flows, ask ONE specific question at a time:
 
 Be conversational and helpful. Extract specific data points (numbers, names, amounts) from responses and confirm before saving.`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ],
-      max_tokens: 1000,
-      temperature: 0.7,
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4-turbo-preview",
+    messages: [
+      {
+        role: "system",
+        content: systemPrompt
+      },
+      {
+        role: "user",
+        content: message
+      }
+    ],
+    max_tokens: 1000,
+    temperature: 0.7,
+  });
+
+  let response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
+
+  // Check if we should start a conversation flow
+  const lowerMessage = message.toLowerCase();
+  if (lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy')) {
+    await updateConversationState({
+      employeeId: userId,
+      currentFlow: 'policy_entry',
+      collectedData: {},
+      nextQuestion: 'policy_number',
+      lastUpdated: new Date()
     });
-
-    let response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
-
-    // Check if we should start a conversation flow
-    const lowerMessage = message.toLowerCase();
-    if (lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy')) {
-      await updateConversationState({
-        employeeId: userId,
-        currentFlow: 'policy_entry',
-        collectedData: {},
-        nextQuestion: 'policy_number',
-        lastUpdated: new Date()
-      });
-      response += "\n\nGreat! Let's record this new policy sale. What's the policy number?";
-    } else if (lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review')) {
-      await updateConversationState({
-        employeeId: userId,
-        currentFlow: 'review_entry',
-        collectedData: {},
-        nextQuestion: 'client_name',
-        lastUpdated: new Date()
-      });
-      response += "\n\nI'll help you record a client review. What's the client's name?";
-    } else if (lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary')) {
-      await updateConversationState({
-        employeeId: userId,
-        currentFlow: 'daily_summary',
-        collectedData: {},
-        nextQuestion: 'hours_worked',
-        lastUpdated: new Date()
-      });
-      response += "\n\nLet's create your daily summary. How many hours did you work today?";
-    }
-
-    return NextResponse.json({ response });
-
-  } catch (error) {
-    console.error('OpenAI API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to process chat request' },
-      { status: 500 }
-    );
+    response += "\n\nGreat! Let's record this new policy sale. What's the policy number? (e.g., POL-2025-001, ABC123, etc.)";
+  } else if (lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review')) {
+    await updateConversationState({
+      employeeId: userId,
+      currentFlow: 'review_entry',
+      collectedData: {},
+      nextQuestion: 'client_name',
+      lastUpdated: new Date()
+    });
+    response += "\n\nI'll help you record a client review. What's the client's name?";
+  } else if (lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary')) {
+    await updateConversationState({
+      employeeId: userId,
+      currentFlow: 'daily_summary',
+      collectedData: {},
+      nextQuestion: 'hours_worked',
+      lastUpdated: new Date()
+    });
+    response += "\n\nLet's create your daily summary. How many hours did you work today?";
   }
+
+  return NextResponse.json({ response });
 }
 
 async function handleConversationFlow(conversationState: any, message: string, employeeId: string) {
   const { current_flow: currentFlow, collected_data: collectedData, next_question: nextQuestion } = conversationState;
   
+  // For debugging
+  console.log('Current flow:', currentFlow);
+  console.log('Next question:', nextQuestion);
+  console.log('Collected data:', collectedData);
+  console.log('User message:', message);
+  
   // Extract data based on the current question
   let extractedValue = extractDataFromResponse(message, nextQuestion);
   
-  // Store the extracted data
+  // Special handling for policy_number validation
+  if (nextQuestion === 'policy_number' && !extractedValue) {
+    const trimmed = message.trim();
+    
+    // If it's a reasonable length and doesn't look like a typical name/phrase, accept it
+    if (trimmed.length >= 3 && trimmed.length <= 20 && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
+      // Additional check: should not be a common name or word
+      const commonWords = ['deltagroup', 'group', 'company', 'client', 'customer', 'insurance'];
+      if (!commonWords.includes(trimmed.toLowerCase())) {
+        extractedValue = trimmed.toUpperCase();
+      }
+    }
+    
+    if (!extractedValue) {
+      return NextResponse.json({ 
+        response: "Please provide a valid policy number (e.g., POL-2025-001):" 
+      });
+    }
+  }
+  
+  // Store the extracted data with the correct key
   collectedData[nextQuestion] = extractedValue || message.trim();
   
   let response = "";
@@ -210,18 +389,18 @@ async function handleConversationFlow(conversationState: any, message: string, e
 
   switch (currentFlow) {
     case 'policy_entry':
-      response = await handlePolicyEntryFlow(collectedData, nextQuestion, extractedValue, message);
       [nextQuestionKey, isComplete] = getPolicyEntryNextQuestion(collectedData);
+      response = await handlePolicyEntryFlow(collectedData, nextQuestionKey, extractedValue, message);
       break;
       
     case 'review_entry':
-      response = await handleReviewEntryFlow(collectedData, nextQuestion, extractedValue, message);
       [nextQuestionKey, isComplete] = getReviewEntryNextQuestion(collectedData);
+      response = await handleReviewEntryFlow(collectedData, nextQuestionKey, extractedValue, message);
       break;
       
     case 'daily_summary':
-      response = await handleDailySummaryFlow(collectedData, nextQuestion, extractedValue, message);
       [nextQuestionKey, isComplete] = getDailySummaryNextQuestion(collectedData);
+      response = await handleDailySummaryFlow(collectedData, nextQuestionKey, extractedValue, message);
       break;
   }
 
@@ -272,61 +451,80 @@ function getDailySummaryNextQuestion(data: any): [string, boolean] {
   return ['', true];
 }
 
-async function handlePolicyEntryFlow(data: any, currentQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
-  switch (currentQuestion) {
-    case 'policy_number':
-      return extractedValue ? `Got it! Policy number: ${extractedValue}. What's the client's name?` : "I need a valid policy number. Please provide the policy number:";
+async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  // Determine response based on what we're asking for next
+  switch (nextQuestion) {
     case 'client_name':
-      return `Client name: ${data.client_name}. What type of policy is this? (e.g., Auto, Home, Life, etc.)`;
+      return `Perfect! Policy number: ${data.policy_number}. What's the client's name?`;
+    
     case 'policy_type':
-      return `Policy type: ${data.policy_type}. What's the policy amount in dollars?`;
+      return `Client name: ${data.client_name}. What type of policy is this? (e.g., Auto, Home, Life, etc.)`;
+    
     case 'policy_amount':
-      if (!extractedValue) return "Please provide a valid dollar amount for the policy:";
-      const bonus = calculateBonus(extractedValue);
-      return `Policy amount: $${extractedValue.toLocaleString()}. Your bonus will be $${bonus.toLocaleString()}! What's the broker fee?`;
+      return `Policy type: ${data.policy_type}. What's the policy amount in dollars?`;
+    
     case 'broker_fee':
-      return extractedValue ? `Broker fee: $${extractedValue.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)` : "Please provide a valid broker fee amount:";
+      const amount = parseFloat(data.policy_amount);
+      if (!isNaN(amount)) {
+        const bonus = calculateBonus(amount);
+        return `Policy amount: ${amount.toLocaleString()}. Your bonus will be ${bonus.toLocaleString()}! What's the broker fee?`;
+      }
+      return "Please provide a valid dollar amount for the policy:";
+    
     case 'cross_sold':
-      const crossSold = originalMessage.toLowerCase().includes('yes');
-      data.cross_sold = crossSold ? 'yes' : 'no';
-      return crossSold ? "Great! What type of policy did you cross-sell?" : "No problem! Finally, can you provide a brief description of the client or policy details?";
+      const fee = parseFloat(data.broker_fee);
+      if (!isNaN(fee)) {
+        return `Broker fee: ${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
+      }
+      return "Please provide a valid broker fee amount:";
+    
     case 'cross_sold_type':
-      return `Cross-sold policy type: ${data.cross_sold_type}. Finally, can you provide a brief description of the client or policy details?`;
+      return "Great! What type of policy did you cross-sell?";
+    
     case 'client_description':
-      return `Perfect! I have all the information needed to record this policy sale.`;
+      if (data.cross_sold === 'yes' && data.cross_sold_type) {
+        return `Cross-sold policy type: ${data.cross_sold_type}. Finally, can you provide a brief description of the client or policy details?`;
+      }
+      return "No problem! Finally, can you provide a brief description of the client or policy details?";
+    
+    case '':
+      return "Perfect! I have all the information needed to record this policy sale.";
+    
     default:
-      return "I'm not sure what information I need next. Let me start over.";
+      return "I'm processing your information...";
   }
 }
 
-async function handleReviewEntryFlow(data: any, currentQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
-  switch (currentQuestion) {
-    case 'client_name':
-      return `Client name: ${data.client_name}. What's the policy number for this review?`;
-    case 'policy_number':
-      return extractedValue ? `Policy number: ${extractedValue}. What rating did the client give? (1-5 stars)` : "Please provide a valid policy number:";
-    case 'rating':
-      return extractedValue ? `Rating: ${extractedValue}/5 stars. What did the client say in their review?` : "Please provide a rating from 1 to 5:";
-    case 'review_text':
-      return `Perfect! I have all the review information.`;
-    default:
-      return "I'm not sure what information I need next. Let me start over.";
-  }
+async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  const responses: { [key: string]: string } = {
+    'client_name': `Client name: ${data.client_name}. What's the policy number for this review?`,
+    'policy_number': `Policy number: ${data.policy_number}. What rating did the client give? (1-5 stars)`,
+    'rating': data.rating ? `Rating: ${data.rating}/5 stars. What did the client say in their review?` : "Please provide a rating from 1 to 5:",
+    'review_text': `Perfect! I have all the review information.`,
+    '': 'All information collected!'
+  };
+
+  const lastCollectedKey = Object.keys(data).pop() || '';
+  return responses[lastCollectedKey] || responses[nextQuestion] || "I'm processing your information...";
 }
 
-async function handleDailySummaryFlow(data: any, currentQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
-  switch (currentQuestion) {
-    case 'hours_worked':
-      return extractedValue ? `Hours worked: ${extractedValue}. How many policies did you sell today?` : "Please provide the number of hours you worked:";
-    case 'policies_sold':
-      return extractedValue ? `Policies sold: ${extractedValue}. What was the total sales amount for today?` : "Please provide the number of policies sold:";
-    case 'total_sales':
-      return extractedValue ? `Total sales: $${extractedValue.toLocaleString()}. Finally, can you provide a brief summary of your day?` : "Please provide the total sales amount:";
-    case 'description':
-      return `Perfect! I have all the information for your daily summary.`;
-    default:
-      return "I'm not sure what information I need next. Let me start over.";
-  }
+async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+  const responses: { [key: string]: string } = {
+    'hours_worked': data.hours_worked ? `Hours worked: ${data.hours_worked}. How many policies did you sell today?` : "Please provide the number of hours you worked:",
+    'policies_sold': data.policies_sold !== undefined ? `Policies sold: ${data.policies_sold}. What was the total sales amount for today?` : "Please provide the number of policies sold:",
+    'total_sales': (() => {
+      const sales = parseFloat(data.total_sales);
+      if (!isNaN(sales)) {
+        return `Total sales: $${sales.toLocaleString()}. Finally, can you provide a brief summary of your day?`;
+      }
+      return "Please provide the total sales amount:";
+    })(),
+    'description': `Perfect! I have all the information for your daily summary.`,
+    '': 'All information collected!'
+  };
+
+  const lastCollectedKey = Object.keys(data).pop() || '';
+  return responses[lastCollectedKey] || responses[nextQuestion] || "I'm processing your information...";
 }
 
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {
@@ -336,8 +534,8 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
         policyNumber: data.policy_number,
         clientName: data.client_name,
         policyType: data.policy_type,
-        amount: data.policy_amount,
-        brokerFee: data.broker_fee,
+        amount: parseFloat(data.policy_amount) || 0,
+        brokerFee: parseFloat(data.broker_fee) || 0,
         employeeId,
         saleDate: new Date(),
         crossSold: data.cross_sold === 'yes',
@@ -351,7 +549,7 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       await addClientReview({
         clientName: data.client_name,
         policyNumber: data.policy_number,
-        rating: data.rating,
+        rating: parseInt(data.rating) || 5,
         review: data.review_text,
         reviewDate: new Date(),
         employeeId
@@ -362,10 +560,10 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       await addDailySummary({
         employeeId,
         date: new Date(),
-        hoursWorked: data.hours_worked,
-        policiesSold: data.policies_sold,
-        totalSalesAmount: data.total_sales,
-        totalBrokerFees: data.total_sales * 0.1, // Assuming 10% broker fee
+        hoursWorked: parseFloat(data.hours_worked) || 0,
+        policiesSold: parseInt(data.policies_sold) || 0,
+        totalSalesAmount: parseFloat(data.total_sales) || 0,
+        totalBrokerFees: (parseFloat(data.total_sales) || 0) * 0.1, // Assuming 10% broker fee
         description: data.description,
         keyActivities: ['Sales calls', 'Client meetings', 'Policy processing']
       });

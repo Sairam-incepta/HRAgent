@@ -14,10 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Search, Plus, Filter, CreditCard, Eye } from "lucide-react";
+import { Search, Plus, Filter, CreditCard, Eye, History } from "lucide-react";
 import { EmployeeDetailsDialog } from "./employee-details-dialog";
 import { AddEmployeeDialog } from "./add-employee-dialog";
 import { PayrollDialog } from "./payroll-dialog";
+import { EmployeePayrollHistoryDialog } from "./employee-payroll-history-dialog";
 import {
   Select,
   SelectContent,
@@ -42,7 +43,14 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [addEmployeeOpen, setAddEmployeeOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
+  const [payrollHistoryOpen, setPayrollHistoryOpen] = useState(false);
   const [payrollEmployee, setPayrollEmployee] = useState<string | null>(null);
+  const [historyEmployeeId, setHistoryEmployeeId] = useState<string | null>(null);
+
+  // Check if user is admin
+  const isAdmin = user?.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
+                  user?.publicMetadata?.role === 'admin' ||
+                  user?.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
 
   useEffect(() => {
     loadEmployees();
@@ -81,19 +89,13 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     setPayrollDialogOpen(true);
   };
 
-  const handleAddEmployee = async (newEmployee: {
-    name: string;
-    email: string;
-    department: string;
-    position: string;
-    status: "active" | "inactive" | "on leave";
-    max_hours_before_overtime: number;
-    hourly_rate: number;
-  }) => {
-    // For now, just show a message that manual creation is needed
-    console.log('Employee creation requested:', newEmployee);
-    // In a real implementation, you would call the database function here
-    // but for now we're skipping automatic creation due to RLS constraints
+  const handleViewPayrollHistory = (employee: Employee) => {
+    setHistoryEmployeeId(employee.clerk_user_id);
+    setPayrollHistoryOpen(true);
+  };
+
+  const handleAddEmployeeSuccess = () => {
+    loadEmployees(); // Refresh the employee list
   };
 
   // Helper function to display status with proper formatting
@@ -150,7 +152,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                 <SelectItem value="on_leave">On Leave</SelectItem>
               </SelectContent>
             </Select>
-            {!showInOverview && (
+            {/* Show Add Employee button for admins and when not in overview mode */}
+            {isAdmin && (
               <Button 
                 size="sm" 
                 className="h-10 bg-[#005cb3] hover:bg-[#005cb3]/90"
@@ -213,7 +216,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-1">
                         <Button 
                           variant="outline" 
                           size="sm"
@@ -231,6 +234,15 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                         >
                           <CreditCard className="mr-1 h-3 w-3" />
                           Payroll
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleViewPayrollHistory(employee)}
+                          className="h-8"
+                        >
+                          <History className="mr-1 h-3 w-3" />
+                          History
                         </Button>
                       </div>
                     </TableCell>
@@ -256,11 +268,12 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
         />
       )}
 
-      {!showInOverview && (
+      {/* Show Add Employee dialog for admins */}
+      {isAdmin && (
         <AddEmployeeDialog
           open={addEmployeeOpen}
           onOpenChange={setAddEmployeeOpen}
-          onAddEmployee={handleAddEmployee}
+          onAddEmployee={handleAddEmployeeSuccess}
         />
       )}
 
@@ -268,6 +281,12 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
         open={payrollDialogOpen}
         onOpenChange={setPayrollDialogOpen}
         employeeName={payrollEmployee}
+      />
+
+      <EmployeePayrollHistoryDialog
+        open={payrollHistoryOpen}
+        onOpenChange={setPayrollHistoryOpen}
+        employeeId={historyEmployeeId}
       />
     </>
   );
