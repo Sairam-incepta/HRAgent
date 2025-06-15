@@ -3,9 +3,14 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Download, FileText } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CreditCard, Download, FileText, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { getPolicySales, getEmployee } from "@/lib/database";
 
 interface PayrollDialogProps {
   open: boolean;
@@ -16,6 +21,9 @@ interface PayrollDialogProps {
 export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialogProps) {
   const [payrollData, setPayrollData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [highValuePolicies, setHighValuePolicies] = useState<any[]>([]);
+  const [customBonuses, setCustomBonuses] = useState<{[key: string]: number}>({});
+  const { toast } = useToast();
 
   useEffect(() => {
     if (open && employeeName) {
@@ -26,8 +34,22 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
   const loadPayrollData = async () => {
     setLoading(true);
     
-    // Simulate quick data loading
-    setTimeout(() => {
+    try {
+      // In a real implementation, you'd find the employee by name and get their data
+      // For now, we'll simulate this with sample data and check for high-value policies
+      
+      // Get policies over $5000 for manual bonus setting
+      const policies = await getPolicySales(); // Get all policies to find high-value ones
+      const highValuePols = policies.filter(policy => policy.amount > 5000);
+      setHighValuePolicies(highValuePols);
+      
+      // Initialize custom bonuses for high-value policies
+      const initialCustomBonuses: {[key: string]: number} = {};
+      highValuePols.forEach(policy => {
+        initialCustomBonuses[policy.id] = policy.bonus; // Start with current bonus
+      });
+      setCustomBonuses(initialCustomBonuses);
+      
       setPayrollData({
         employeeName: employeeName || "John Doe",
         employeeId: "EMP001",
@@ -39,20 +61,55 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         hourlyRate: 25.00,
         overtimeRate: 37.50,
         grossPay: 2187.50,
-        netPay: 2187.50 // No deductions, so net pay equals gross pay
+        netPay: 2187.50,
+        standardBonuses: 450.00, // Bonuses from policies under $5000
+        customBonusTotal: Object.values(initialCustomBonuses).reduce((sum, bonus) => sum + bonus, 0)
       });
+    } catch (error) {
+      console.error('Error loading payroll data:', error);
+    } finally {
       setLoading(false);
-    }, 300); // Reduced from 5 seconds to 300ms
+    }
+  };
+
+  const handleCustomBonusChange = (policyId: string, bonus: number) => {
+    setCustomBonuses(prev => ({
+      ...prev,
+      [policyId]: bonus
+    }));
+    
+    // Update total custom bonus in payroll data
+    const newCustomBonusTotal = Object.values({
+      ...customBonuses,
+      [policyId]: bonus
+    }).reduce((sum, b) => sum + b, 0);
+    
+    setPayrollData((prev: any) => ({
+      ...prev,
+      customBonusTotal: newCustomBonusTotal,
+      grossPay: prev.grossPay - prev.customBonusTotal + newCustomBonusTotal,
+      netPay: prev.netPay - prev.customBonusTotal + newCustomBonusTotal
+    }));
   };
 
   const handleClose = () => {
     setPayrollData(null);
+    setHighValuePolicies([]);
+    setCustomBonuses({});
     onOpenChange(false);
+  };
+
+  const handleGeneratePayroll = () => {
+    toast({
+      title: "Payroll Generated",
+      description: `Payroll for ${employeeName} has been generated with custom bonuses applied.`,
+    });
+    handleClose();
   };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Employee Payroll Report</DialogTitle>
         </DialogHeader>
@@ -98,6 +155,55 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                 </CardContent>
               </Card>
 
+              {/* High-Value Policies Bonus Management */}
+              {highValuePolicies.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      High-Value Policies (Over $5,000)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Set custom bonuses for policies over $5,000. Default calculation may not apply.
+                    </p>
+                    {highValuePolicies.map((policy) => (
+                      <div key={policy.id} className="border rounded-lg p-3 space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-medium">{policy.policy_number}</h4>
+                            <p className="text-sm text-muted-foreground">{policy.client_name}</p>
+                            <p className="text-sm text-muted-foreground">{policy.policy_type}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium text-lg">${policy.amount.toLocaleString()}</p>
+                            <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                              High Value
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor={`bonus-${policy.id}`} className="text-sm">Custom Bonus:</Label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">$</span>
+                            <Input
+                              id={`bonus-${policy.id}`}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={customBonuses[policy.id] || 0}
+                              onChange={(e) => handleCustomBonusChange(policy.id, parseFloat(e.target.value) || 0)}
+                              className="w-24"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Hours & Earnings */}
               <Card>
                 <CardHeader className="pb-3">
@@ -111,6 +217,14 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Overtime Hours:</span>
                     <span className="text-sm font-medium">{payrollData.overtimeHours} hrs @ ${payrollData.overtimeRate}/hr</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Standard Bonuses:</span>
+                    <span className="text-sm font-medium">${payrollData.standardBonuses.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">High-Value Policy Bonuses:</span>
+                    <span className="text-sm font-medium">${payrollData.customBonusTotal.toFixed(2)}</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between font-medium">
@@ -134,13 +248,10 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
               <div className="space-y-2">
                 <Button 
                   className="w-full bg-[#005cb3] hover:bg-[#005cb3]/90"
-                  onClick={() => {
-                    // Handle download here
-                    handleClose();
-                  }}
+                  onClick={handleGeneratePayroll}
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  Download PDF Report
+                  Generate Payroll Report
                 </Button>
                 <Button 
                   variant="outline" 

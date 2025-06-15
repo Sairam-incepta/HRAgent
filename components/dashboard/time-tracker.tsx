@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Play, Square, Coffee, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
+import { DailySummaryRequiredDialog } from "./daily-summary-required-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +51,7 @@ export function TimeTracker({
   const [pausedTime, setPausedTime] = useState(0);
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
   const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
+  const [dailySummaryDialogOpen, setDailySummaryDialogOpen] = useState(false);
   
   // Confirmation dialog states
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
@@ -216,6 +218,12 @@ export function TimeTracker({
   };
 
   const confirmClockOut = () => {
+    // Always require daily summary when clocking out (regardless of hours worked)
+    setDailySummaryDialogOpen(true);
+    setClockOutConfirmOpen(false);
+  };
+
+  const performClockOut = () => {
     const payInfo = calculatePay(elapsedTime);
     
     setStatus("idle");
@@ -279,12 +287,17 @@ export function TimeTracker({
 
   const handleForceClockOut = () => {
     const payInfo = calculatePay(elapsedTime);
-    confirmClockOut();
+    performClockOut();
     
     toast({
       title: "Automatically Clocked Out",
       description: `You've been paid overtime for ${payInfo.overtimeHours.toFixed(1)} hours: $${payInfo.overtimePay.toFixed(2)}`,
     });
+  };
+
+  const handleDailySummaryComplete = () => {
+    setDailySummaryDialogOpen(false);
+    performClockOut();
   };
 
   const pauseTimer = () => {
@@ -451,6 +464,9 @@ export function TimeTracker({
                   )}
                 </div>
               </div>
+              <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
+                <strong>Note:</strong> You'll be asked to complete a daily summary before clocking out.
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -523,6 +539,13 @@ export function TimeTracker({
         maxHours={maxHoursBeforeOvertime}
         onSubmitRequest={handleOvertimeRequest}
         onClockOut={handleForceClockOut}
+      />
+
+      <DailySummaryRequiredDialog
+        open={dailySummaryDialogOpen}
+        onOpenChange={setDailySummaryDialogOpen}
+        hoursWorked={hoursWorked}
+        onComplete={handleDailySummaryComplete}
       />
     </>
   );

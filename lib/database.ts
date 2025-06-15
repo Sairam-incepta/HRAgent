@@ -9,10 +9,28 @@ import type {
   OvertimeRequest
 } from './supabase';
 
-// Helper function to calculate bonus
-export const calculateBonus = (policyAmount: number): number => {
-  if (policyAmount <= 100) return 0;
-  return Math.round((policyAmount - 100) * 0.1 * 100) / 100;
+// Helper function to calculate bonus based on broker fees (not policy amount)
+export const calculateBonus = (brokerFee: number, isCrossSold: boolean = false): number => {
+  if (brokerFee <= 100) return 0;
+  const baseBonus = Math.round((brokerFee - 100) * 0.1 * 100) / 100;
+  
+  // Double commission for cross-sold policies
+  return isCrossSold ? baseBonus * 2 : baseBonus;
+};
+
+// Helper function to calculate life insurance referral bonus
+export const calculateLifeInsuranceReferralBonus = (policyType: string, crossSoldType?: string): number => {
+  // $10 for life insurance referrals (separate from cross-sell)
+  if (policyType.toLowerCase().includes('life') || 
+      (crossSoldType && crossSoldType.toLowerCase().includes('life'))) {
+    return 10.00;
+  }
+  return 0;
+};
+
+// Helper function to calculate 5-star review bonus
+export const calculateReviewBonus = (rating: number): number => {
+  return rating === 5 ? 10.00 : 0;
 };
 
 // Policy Sales Functions
@@ -29,7 +47,10 @@ export const addPolicySale = async (sale: {
   crossSoldTo?: string;
   clientDescription?: string;
 }): Promise<PolicySale | null> => {
-  const bonus = calculateBonus(sale.amount);
+  // Calculate bonuses based on new rules
+  const brokerFeeBonus = calculateBonus(sale.brokerFee, sale.crossSold);
+  const lifeInsuranceBonus = calculateLifeInsuranceReferralBonus(sale.policyType, sale.crossSoldType);
+  const totalBonus = brokerFeeBonus + lifeInsuranceBonus;
   
   const { data, error } = await supabase
     .from('policy_sales')
@@ -39,7 +60,7 @@ export const addPolicySale = async (sale: {
       policy_type: sale.policyType,
       amount: sale.amount,
       broker_fee: sale.brokerFee,
-      bonus,
+      bonus: totalBonus,
       employee_id: sale.employeeId,
       sale_date: sale.saleDate.toISOString(),
       cross_sold: sale.crossSold || false,
@@ -56,7 +77,7 @@ export const addPolicySale = async (sale: {
   }
 
   // Update employee bonus
-  await updateEmployeeBonus(sale.employeeId, bonus);
+  await updateEmployeeBonus(sale.employeeId, totalBonus);
   
   return data;
 };
@@ -92,6 +113,49 @@ export const getCrossSoldPolicies = async (employeeId: string): Promise<PolicySa
   }
 
   return data || [];
+};
+
+// New function to get today's policy sales for an employee
+export const getTodayPolicySales = async (employeeId: string): Promise<PolicySale[]> => {
+  const today = new Date();
+  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+  const { data, error } = await supabase
+    .from('policy_sales')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .gte('sale_date', startOfDay.toISOString())
+    .lt('sale_date', endOfDay.toISOString())
+    .order('sale_date', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching today\'s policy sales:', error);
+    return [];
+  }
+
+  return data || [];
+};
+
+// New function to get today's time tracking data for an employee
+export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalHours: number; clockedIn: boolean }> => {
+  // For now, we'll simulate this data since we don't have a time_logs table yet
+  // In a real implementation, you would query actual time tracking data
+  
+  // This would typically come from a time_logs table or similar
+  // For now, we'll return a reasonable default based on current time
+  const currentHour = new Date().getHours();
+  let estimatedHours = 0;
+  
+  // Simple estimation: if it's after 9 AM, assume they've been working
+  if (currentHour >= 9) {
+    estimatedHours = Math.min(currentHour - 9, 8); // Max 8 hours
+  }
+  
+  return {
+    totalHours: estimatedHours,
+    clockedIn: currentHour >= 9 && currentHour <= 17 // Assume working hours 9-5
+  };
 };
 
 // Employee Bonus Functions
@@ -138,7 +202,7 @@ export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonu
   return data;
 };
 
-// Client Review Functions
+// Client Review Functions - Updated to include 5-star review bonus
 export const addClientReview = async (review: {
   clientName: string;
   policyNumber: string;
@@ -163,6 +227,12 @@ export const addClientReview = async (review: {
   if (error) {
     console.error('Error adding client review:', error);
     return null;
+  }
+
+  // Add 5-star review bonus
+  const reviewBonus = calculateReviewBonus(review.rating);
+  if (reviewBonus > 0) {
+    await updateEmployeeBonus(review.employeeId, reviewBonus);
   }
 
   return data;

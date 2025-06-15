@@ -10,7 +10,8 @@ import { Loader2 } from "lucide-react";
 
 export default function DashboardPage() {
   const { user, isLoaded } = useUser();
-  const [userRole, setUserRole] = useState<"admin" | "employee">("employee");
+  const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
+  const [isRoleLoaded, setIsRoleLoaded] = useState(false);
 
   useEffect(() => {
     if (isLoaded && user) {
@@ -18,11 +19,22 @@ export default function DashboardPage() {
       const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
                      user.publicMetadata?.role === 'admin' ||
                      user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui'; // Admin Clerk ID
+      
       setUserRole(isAdmin ? "admin" : "employee");
+      setIsRoleLoaded(true);
     }
   }, [isLoaded, user]);
 
-  if (!isLoaded) {
+  if (!isLoaded || !isRoleLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
+  // Don't render anything until we have a confirmed role
+  if (!userRole) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -41,10 +53,12 @@ export default function DashboardPage() {
             <AdminDashboard />
           )}
         </main>
-        {/* Chat interface for both admin and employee - Made wider */}
-        <div className="w-[700px] border-l hidden lg:block overflow-y-auto bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <ChatInterface />
-        </div>
+        {/* Chat interface - Only show when role is confirmed */}
+        {userRole && (
+          <div className="w-[700px] border-l hidden lg:block overflow-y-auto bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <ChatInterface />
+          </div>
+        )}
       </div>
     </div>
   );

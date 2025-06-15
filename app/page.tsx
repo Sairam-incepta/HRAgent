@@ -19,14 +19,37 @@ export default function Home() {
     }
   }, [isLoaded, isSignedIn, router]);
 
+  // Clear any cached authentication state on page load
+  useEffect(() => {
+    // Force a clean state by clearing any cached data
+    if (typeof window !== 'undefined') {
+      // Clear any localStorage auth tokens that might persist
+      const keysToRemove = Object.keys(localStorage).filter(key => 
+        key.includes('clerk') || key.includes('auth') || key.includes('session')
+      );
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+    }
+  }, []);
+
   // Show loading while Clerk is initializing
   if (!isLoaded) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-[#005cb3]" />
+          <p className="text-muted-foreground">Loading LetsInsure HR...</p>
+        </div>
       </div>
     );
   }
 
-  return null;
+  // Show loading while redirecting
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-background">
+      <div className="text-center space-y-4">
+        <Loader2 className="h-8 w-8 animate-spin mx-auto text-[#005cb3]" />
+        <p className="text-muted-foreground">Redirecting...</p>
+      </div>
+    </div>
+  );
 }

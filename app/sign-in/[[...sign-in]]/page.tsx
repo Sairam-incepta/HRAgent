@@ -5,18 +5,20 @@ export default function SignInPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md space-y-6">
-        <div className="flex items-center justify-center mb-8">
+        {/* Logo */}
+        <div className="flex items-center justify-center">
           <Image
             src="/image.png"
             alt="LetsInsure Logo"
-            width={200}
-            height={60}
+            width={240}
+            height={100}
             className="h-12 w-auto"
           />
         </div>
         
+        {/* Sign in card with welcome text inside */}
         <div className="bg-card rounded-lg border p-6">
-          <div className="text-center mb-6">
+          <div className="text-center mb-3">
             <h1 className="text-2xl font-bold">Welcome to LetsInsure HR</h1>
             <p className="text-muted-foreground mt-2">
               Sign in to access your dashboard
@@ -37,15 +39,6 @@ export default function SignInPage() {
             }}
             redirectUrl="/dashboard"
           />
-          
-          <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
-            <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Demo Accounts</h4>
-            <div className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-              <p><strong>Admin:</strong> admin@letsinsure.hr</p>
-              <p><strong>Employee:</strong> employee@letsinsure.hr</p>
-              <p className="text-xs mt-2 opacity-75">Use any password for demo accounts</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>

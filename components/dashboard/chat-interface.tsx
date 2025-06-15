@@ -20,27 +20,30 @@ type Message = {
 const MAX_MESSAGES = 35;
 
 export function ChatInterface() {
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Determine user role for separate chat histories
-  const getUserRole = () => {
-    if (!user) return 'employee';
-    const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
-                   user.publicMetadata?.role === 'admin' ||
-                   user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
-    return isAdmin ? 'admin' : 'employee';
-  };
+  // Determine user role
+  useEffect(() => {
+    if (isLoaded && user) {
+      const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
+                     user.publicMetadata?.role === 'admin' ||
+                     user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+      setUserRole(isAdmin ? 'admin' : 'employee');
+    }
+  }, [isLoaded, user]);
 
-  const userRole = getUserRole();
-  const STORAGE_KEY = `letsinsure_chat_messages_${userRole}_${user?.id || 'anonymous'}`;
+  const STORAGE_KEY = userRole ? `letsinsure_chat_messages_${userRole}_${user?.id || 'anonymous'}` : null;
 
   // Load messages from localStorage on component mount
   useEffect(() => {
+    if (!STORAGE_KEY || !userRole) return;
+
     const loadMessages = () => {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
@@ -82,7 +85,7 @@ export function ChatInterface() {
 
   // Save messages to localStorage whenever messages change
   useEffect(() => {
-    if (messages.length > 0) {
+    if (messages.length > 0 && STORAGE_KEY) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
       } catch (error) {
@@ -111,7 +114,7 @@ export function ChatInterface() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
+    if (!input.trim() || isTyping || !userRole) return;
 
     // Add user message
     const userMessage: Message = {
@@ -253,6 +256,15 @@ export function ChatInterface() {
       ];
     }
   };
+
+  // Don't render chat until we have a confirmed role
+  if (!userRole || !isLoaded) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   const quickActions = getQuickActions();
 

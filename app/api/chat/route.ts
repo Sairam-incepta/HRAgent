@@ -17,7 +17,9 @@ import {
   getDailySummaries,
   getEmployee,
   getEmployees,
-  getOvertimeRequests
+  getOvertimeRequests,
+  getTodayTimeTracking,
+  getTodayPolicySales
 } from '@/lib/database';
 
 // Helper function to extract structured data from user responses
@@ -121,10 +123,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, userRole } = await request.json();
+    const { message, userRole, isDailySummarySubmission } = await request.json();
 
     // Determine actual user role if not provided
     const actualUserRole = userRole || getUserRole(userId);
+
+    // Handle daily summary submission directly
+    if (isDailySummarySubmission) {
+      return await handleDailySummarySubmission(message, userId);
+    }
 
     // Handle admin vs employee differently
     if (actualUserRole === 'admin') {
@@ -137,6 +144,43 @@ export async function POST(request: NextRequest) {
     console.error('OpenAI API error:', error);
     return NextResponse.json(
       { error: 'Failed to process chat request' },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleDailySummarySubmission(description: string, employeeId: string) {
+  try {
+    // Get today's data automatically from the database
+    const [todayTimeTracking, todayPolicies] = await Promise.all([
+      getTodayTimeTracking(employeeId),
+      getTodayPolicySales(employeeId)
+    ]);
+    
+    // Calculate values from actual data
+    const hoursWorked = todayTimeTracking.totalHours || 0;
+    const policiesSold = todayPolicies.length;
+    const totalSalesAmount = todayPolicies.reduce((sum, policy) => sum + policy.amount, 0);
+    const totalBrokerFees = todayPolicies.reduce((sum, policy) => sum + policy.broker_fee, 0);
+    
+    await addDailySummary({
+      employeeId,
+      date: new Date(),
+      hoursWorked,
+      policiesSold,
+      totalSalesAmount,
+      totalBrokerFees,
+      description: description.trim(),
+      keyActivities: ['Work activities', 'Client interactions', 'Administrative tasks']
+    });
+
+    return NextResponse.json({ 
+      response: "Daily summary submitted successfully! You can now clock out." 
+    });
+  } catch (error) {
+    console.error('Error submitting daily summary:', error);
+    return NextResponse.json(
+      { error: 'Failed to submit daily summary' },
       { status: 500 }
     );
   }
@@ -173,6 +217,9 @@ async function handleAdminChat(message: string, userId: string) {
       .sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime())
       .slice(0, 10);
 
+    // High-value policies (over $5000) for bonus management
+    const highValuePolicies = allPolicySales.filter(sale => sale.amount > 5000);
+
     const systemPrompt = `You are "Let's Insure Admin Assistant", an AI assistant for LetsInsure HR system administrators. You help HR managers and administrators manage employees, review performance, and analyze company metrics.
 
 COMPANY OVERVIEW:
@@ -182,6 +229,7 @@ COMPANY OVERVIEW:
 - Total Company Sales: $${totalSales.toLocaleString()}
 - Total Bonuses Paid: $${totalBonuses.toLocaleString()}
 - Total Policies Sold: ${allPolicySales.length}
+- High-Value Policies (>$5K): ${highValuePolicies.length}
 
 DEPARTMENT BREAKDOWN:
 ${Array.from(departmentMap.entries()).map(([dept, data]) => 
@@ -192,6 +240,12 @@ RECENT POLICY SALES (Last 10):
 ${recentSales.map(sale => {
   const employee = employees.find(emp => emp.clerk_user_id === sale.employee_id);
   return `- ${sale.policy_number}: ${sale.client_name}, ${sale.policy_type}, $${sale.amount.toLocaleString()} by ${employee?.name || 'Unknown'} (${new Date(sale.sale_date).toLocaleDateString()})`;
+}).join('\n')}
+
+HIGH-VALUE POLICIES (Over $5,000):
+${highValuePolicies.map(sale => {
+  const employee = employees.find(emp => emp.clerk_user_id === sale.employee_id);
+  return `- ${sale.policy_number}: $${sale.amount.toLocaleString()} by ${employee?.name || 'Unknown'} - Current bonus: $${sale.bonus}`;
 }).join('\n')}
 
 RECENT OVERTIME REQUESTS:
@@ -214,16 +268,21 @@ As an admin assistant, you can help with:
 - Employee performance analysis and insights
 - Company metrics and KPI tracking
 - Overtime request management guidance
-- Payroll and compensation analysis
+- Payroll and compensation analysis (including high-value policy bonus management)
 - Department performance comparisons
 - Sales performance tracking
 - HR policy questions and guidance
 - Workforce planning and optimization
 
+SPECIAL NOTES:
+- Policies over $5,000 require manual bonus setting during payroll generation
+- High-value policies are flagged for admin review to ensure appropriate compensation
+- Standard bonus calculation (10% after first $100) may not apply to high-value policies
+
 Provide strategic insights, data analysis, and administrative guidance. Focus on company-wide metrics, employee management, and operational efficiency. You have access to real-time data including all policy sales, employee information, and recent activity.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4.1",
       messages: [
         {
           role: "system",
@@ -319,12 +378,12 @@ When users want to add new data, you should initiate conversation flows by respo
 For data entry flows, ask ONE specific question at a time:
 1. Policy Entry: Ask for policy number, client name, policy type, amount, broker fee, cross-sell info, client description
 2. Review Entry: Ask for client name, policy number, rating (1-5), review text
-3. Daily Summary: Ask for hours worked, number of policies sold, brief description of the day (NO total sales amount)
+3. Daily Summary: Ask for a brief description/debrief of the day (hours and policies are calculated automatically)
 
 Be conversational and helpful. Extract specific data points (numbers, names, amounts) from responses and confirm before saving. Always provide current, up-to-date information about the employee's performance, but NEVER reveal bonus information.`;
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4-turbo-preview",
+    model: "gpt-4.1",
     messages: [
       {
         role: "system",
@@ -366,10 +425,10 @@ Be conversational and helpful. Extract specific data points (numbers, names, amo
       employeeId: userId,
       currentFlow: 'daily_summary',
       collectedData: {},
-      nextQuestion: 'hours_worked',
+      nextQuestion: 'description',
       lastUpdated: new Date()
     });
-    response += "\n\nLet's create your daily summary. How many hours did you work today?";
+    response += "\n\nLet's create your daily summary. I'll automatically calculate your hours and policies from the system. Can you provide a brief debrief of your day?";
   }
 
   return NextResponse.json({ response });
@@ -449,7 +508,7 @@ async function handleConversationFlow(conversationState: any, message: string, e
       
     case 'daily_summary':
       [nextQuestionKey, isComplete] = getDailySummaryNextQuestion(safeCollectedData);
-      response = await handleDailySummaryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
+      response = await handleDailySummaryFlow(safeCollectedData, nextQuestionKey, extractedValue, message, employeeId);
       break;
   }
 
@@ -500,8 +559,7 @@ function getReviewEntryNextQuestion(data: any): [string, boolean] {
 }
 
 function getDailySummaryNextQuestion(data: any): [string, boolean] {
-  if (!data.hours_worked) return ['hours_worked', false];
-  if (!data.policies_sold) return ['policies_sold', false];
+  // Only ask for description - everything else is calculated automatically
   if (!data.description) return ['description', false];
   return ['', true];
 }
@@ -567,18 +625,14 @@ async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedV
   return responses[lastCollectedKey] || responses[nextQuestion] || "I'm processing your information...";
 }
 
-async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeId: string): Promise<string> {
   console.log('handleDailySummaryFlow - nextQuestion:', nextQuestion, 'data:', data);
   
-  const responses: { [key: string]: string } = {
-    'hours_worked': data.hours_worked ? `Hours worked: ${data.hours_worked}. How many policies did you sell today?` : "Please provide the number of hours you worked:",
-    'policies_sold': data.policies_sold !== undefined ? `Policies sold: ${data.policies_sold}. Finally, can you provide a brief summary of your day?` : "Please provide the number of policies sold:",
-    'description': `Perfect! I have all the information for your daily summary.`,
-    '': 'All information collected!'
-  };
-
-  const lastCollectedKey = Object.keys(data).pop() || '';
-  return responses[lastCollectedKey] || responses[nextQuestion] || "I'm processing your information...";
+  if (nextQuestion === 'description') {
+    return `Perfect! I have your daily summary. I'll automatically calculate your hours worked and policies sold from the system data.`;
+  }
+  
+  return 'All information collected!';
 }
 
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {
@@ -611,19 +665,27 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       break;
       
     case 'daily_summary':
-      // Calculate total sales automatically based on policies sold and average policy amount
-      const averagePolicyAmount = 1500; // Default average policy amount
-      const calculatedTotalSales = (parseInt(data.policies_sold) || 0) * averagePolicyAmount;
+      // Get today's data automatically from the database
+      const [todayTimeTracking, todayPolicies] = await Promise.all([
+        getTodayTimeTracking(employeeId),
+        getTodayPolicySales(employeeId)
+      ]);
+      
+      // Calculate values from actual data
+      const hoursWorked = todayTimeTracking.totalHours || 0;
+      const policiesSold = todayPolicies.length;
+      const totalSalesAmount = todayPolicies.reduce((sum, policy) => sum + policy.amount, 0);
+      const totalBrokerFees = todayPolicies.reduce((sum, policy) => sum + policy.broker_fee, 0);
       
       await addDailySummary({
         employeeId,
         date: new Date(),
-        hoursWorked: parseFloat(data.hours_worked) || 0,
-        policiesSold: parseInt(data.policies_sold) || 0,
-        totalSalesAmount: calculatedTotalSales,
-        totalBrokerFees: calculatedTotalSales * 0.1, // 10% broker fee
+        hoursWorked,
+        policiesSold,
+        totalSalesAmount,
+        totalBrokerFees,
         description: data.description,
-        keyActivities: ['Sales calls', 'Client meetings', 'Policy processing']
+        keyActivities: ['Sales activities', 'Client interactions', 'Administrative tasks']
       });
       break;
   }

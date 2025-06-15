@@ -6,9 +6,8 @@ const nextConfig = {
   images: { 
     unoptimized: true 
   },
-  output: 'export',
-  trailingSlash: true,
-  distDir: 'out',
+  // Remove output: 'export' and related static export configs
+  // These are incompatible with middleware and API routes
 };
 
 module.exports = nextConfig;
