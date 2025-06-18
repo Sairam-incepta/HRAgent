@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { createEmployee } from "@/lib/database";
+import { createClerkUserAndEmployee } from "@/lib/clerk-automation";
 
 interface AddEmployeeDialogProps {
   open: boolean;
@@ -16,9 +16,11 @@ interface AddEmployeeDialogProps {
 }
 
 export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmployeeDialogProps) {
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [clerkUserId, setClerkUserId] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [department, setDepartment] = useState("");
   const [position, setPosition] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "on_leave">("active");
@@ -30,10 +32,28 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!name || !email || !clerkUserId || !department || !position) {
+    if (!firstName || !lastName || !email || !password || !confirmPassword || !department || !position) {
       toast({
         title: "Error",
         description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      toast({
+        title: "Error",
+        description: "Passwords do not match",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (password.length < 8) {
+      toast({
+        title: "Error",
+        description: "Password must be at least 8 characters long",
         variant: "destructive",
       });
       return;
@@ -60,27 +80,29 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
     setIsSubmitting(true);
 
     try {
-      const newEmployee = await createEmployee({
-        clerkUserId,
-        name,
-        email,
+      const result = await createClerkUserAndEmployee({
+        firstName,
+        lastName,
+        emailAddress: email,
+        password,
         department,
         position,
-        status,
-        maxHoursBeforeOvertime,
         hourlyRate,
+        maxHoursBeforeOvertime
       });
 
-      if (newEmployee) {
+      if (result.success) {
         toast({
-          title: "Employee Added",
-          description: `${name} has been successfully added to the system`,
+          title: "Employee Added Successfully",
+          description: `${firstName} ${lastName} has been added to both Clerk and the employee database. They can now sign in with their email and password.`,
         });
 
         // Reset form
-        setName("");
+        setFirstName("");
+        setLastName("");
         setEmail("");
-        setClerkUserId("");
+        setPassword("");
+        setConfirmPassword("");
         setDepartment("");
         setPosition("");
         setStatus("active");
@@ -96,7 +118,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
       console.error('Error creating employee:', error);
       toast({
         title: "Error",
-        description: "Failed to add employee. Please check if the Clerk User ID already exists or try again.",
+        description: "Failed to add employee. Please check if the email already exists or try again.",
         variant: "destructive",
       });
     } finally {
@@ -111,29 +133,27 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <DialogTitle>Add New Employee</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="clerkUserId">Clerk User ID *</Label>
-            <Input
-              id="clerkUserId"
-              value={clerkUserId}
-              onChange={(e) => setClerkUserId(e.target.value)}
-              placeholder="user_2y2ylH58JkmHljhJT0BXIfjHQui"
-              required
-            />
-            <p className="text-xs text-muted-foreground">
-              Get this from the Clerk Dashboard for the user
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="name">Full Name *</Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter full name"
-              required
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="firstName">First Name *</Label>
+              <Input
+                id="firstName"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="Enter first name"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lastName">Last Name *</Label>
+              <Input
+                id="lastName"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Enter last name"
+                required
+              />
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -144,6 +164,33 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Enter email address"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Password *</Label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter initial password"
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Minimum 8 characters. Employee will be prompted to change this on first login.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirm Password *</Label>
+            <Input
+              id="confirmPassword"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
               required
             />
           </div>
@@ -225,10 +272,10 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
             <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Important Notes</h4>
             <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-              <li>• The Clerk User ID must match exactly with the user's ID in Clerk</li>
+              <li>• Employee will be created in both Clerk and the employee database</li>
+              <li>• Employee can sign in immediately with their email and password</li>
+              <li>• Employee will be prompted to change password on first login</li>
               <li>• Employee will be notified when they exceed max hours per day</li>
-              <li>• Overtime is calculated at 1.5x the hourly rate</li>
-              <li>• All fields marked with * are required</li>
             </ul>
           </div>
 

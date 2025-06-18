@@ -175,12 +175,27 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                             <h4 className="font-medium">{policy.policy_number}</h4>
                             <p className="text-sm text-muted-foreground">{policy.client_name}</p>
                             <p className="text-sm text-muted-foreground">{policy.policy_type}</p>
+                            {policy.is_cross_sold_policy && (
+                              <Badge variant="outline" className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 text-xs mt-1">
+                                Cross-Sold Policy
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-right">
                             <p className="font-medium text-lg">${policy.amount.toLocaleString()}</p>
                             <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
                               High Value
                             </Badge>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Broker Fee:</span>
+                            <span className="ml-2 font-medium">${policy.broker_fee}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Current Bonus:</span>
+                            <span className="ml-2 font-medium text-[#005cb3]">${policy.bonus}</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">

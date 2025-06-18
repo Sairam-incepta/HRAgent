@@ -24,11 +24,16 @@ import {
   Filter,
   Calendar,
   Building,
-  Eye
+  Eye,
+  AlertTriangle,
+  MessageSquare,
+  UserPlus
 } from "lucide-react";
 import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
 import { AdminRequests } from "@/components/dashboard/admin-requests";
+import { HighValuePolicyNotifications } from "@/components/dashboard/high-value-policy-notifications";
+import { BulkUserCreationDialog } from "@/components/dashboard/bulk-user-creation-dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -43,12 +48,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees, getPolicySales, getPayrollPeriods, type PayrollPeriod } from "@/lib/database";
+import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotifications, type PayrollPeriod } from "@/lib/database";
 
 export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [companyPayrollDialogOpen, setCompanyPayrollDialogOpen] = useState(false);
+  const [bulkUserCreationOpen, setBulkUserCreationOpen] = useState(false);
   const [selectedPayrollPeriod, setSelectedPayrollPeriod] = useState("");
   const [expenditureFilter, setExpenditureFilter] = useState("month");
   const [expenditureData, setExpenditureData] = useState({
@@ -57,6 +63,7 @@ export function AdminDashboard() {
     year: { amount: 0, period: "2025", change: "+0%" }
   });
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
+  const [highValueNotifications, setHighValueNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -65,9 +72,10 @@ export function AdminDashboard() {
 
   const loadData = async () => {
     try {
-      const [employees, periods] = await Promise.all([
+      const [employees, periods, notifications] = await Promise.all([
         getEmployees(),
-        getPayrollPeriods()
+        getPayrollPeriods(),
+        getHighValuePolicyNotifications()
       ]);
       
       // Calculate real expenditure based on employee hourly rates
@@ -101,11 +109,28 @@ export function AdminDashboard() {
       });
 
       setPayrollPeriods(periods);
+      setHighValueNotifications(notifications);
     } catch (error) {
       console.error('Error loading admin dashboard data:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const getCurrentDate = () => {
+    return new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  const getCurrentTime = () => {
+    return new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   const currentExpenditure = expenditureData[expenditureFilter as keyof typeof expenditureData];
@@ -115,24 +140,73 @@ export function AdminDashboard() {
     setCompanyPayrollDialogOpen(true);
   };
 
+  const pendingHighValueCount = highValueNotifications.length;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
-        <p className="text-muted-foreground">
-          Manage employees, track time, and generate reports.
-        </p>
+      {/* Header with Live Date/Time */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+          <p className="text-muted-foreground">
+            Manage employees, track time, and generate reports.
+          </p>
+        </div>
+        <div className="flex flex-col items-end text-right">
+          <div className="flex items-center gap-2 text-lg font-semibold">
+            <Calendar className="h-5 w-5 text-[#005cb3]" />
+            {getCurrentDate()}
+          </div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Clock className="h-4 w-4" />
+            {getCurrentTime()}
+          </div>
+        </div>
       </div>
+
+      {/* High-Value Policy Alert */}
+      {pendingHighValueCount > 0 && (
+        <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20 hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-5 w-5" />
+              High-Value Policy Alert
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-amber-700 dark:text-amber-300">
+                  <strong>{pendingHighValueCount}</strong> policies over $5,000 require manual bonus review
+                </p>
+                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                  These employees need their bonuses manually set for high-value policies
+                </p>
+              </div>
+              <Button 
+                variant="outline" 
+                className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/30"
+              >
+                <AlertTriangle className="mr-2 h-4 w-4" />
+                Review Now
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="requests">Requests</TabsTrigger>
+          <TabsTrigger value="employee-overview">Employee Overview</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
         
         <TabsContent value="overview" className="space-y-4">
           <AdminStats />
+          
+          {/* High-Value Policy Notifications */}
+          <HighValuePolicyNotifications />
           
           {/* Expenditure Card with Filter */}
           <Card>
@@ -181,22 +255,30 @@ export function AdminDashboard() {
             </CardContent>
           </Card>
 
-          {/* Employee Table with Filter */}
+          {/* Requests Section */}
+          <AdminRequests />
+        </TabsContent>
+
+        <TabsContent value="employee-overview" className="space-y-4">
+          {/* Employee Directory */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Employee Directory</CardTitle>
                 <CardDescription>Manage and view all employees with status filters</CardDescription>
               </div>
+              <Button 
+                onClick={() => setBulkUserCreationOpen(true)}
+                className="bg-[#005cb3] hover:bg-[#005cb3]/90"
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Bulk Create Users
+              </Button>
             </CardHeader>
             <CardContent>
               <EmployeeTable showInOverview={true} />
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="requests" className="space-y-4">
-          <AdminRequests />
         </TabsContent>
         
         <TabsContent value="reports" className="space-y-4">
@@ -285,6 +367,12 @@ export function AdminDashboard() {
         open={companyPayrollDialogOpen}
         onOpenChange={setCompanyPayrollDialogOpen}
         payrollPeriod={selectedPayrollPeriod}
+      />
+
+      <BulkUserCreationDialog
+        open={bulkUserCreationOpen}
+        onOpenChange={setBulkUserCreationOpen}
+        onUsersCreated={loadData}
       />
     </div>
   );

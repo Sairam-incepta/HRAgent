@@ -1,14 +1,8 @@
 import { authMiddleware } from '@clerk/nextjs';
 
 export default authMiddleware({
-  publicRoutes: ['/sign-in'],
-  // Force users to sign in again after server restart
-  afterAuth(auth, req, evt) {
-    // Clear any cached session data
-    if (!auth.userId && req.nextUrl.pathname.startsWith('/dashboard')) {
-      return Response.redirect(new URL('/sign-in', req.url));
-    }
-  }
+  // Let Clerk handle all authentication automatically
+  // Don't make any routes public - let Clerk handle redirects
 });
 
 export const config = {

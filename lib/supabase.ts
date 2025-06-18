@@ -20,6 +20,22 @@ export interface PolicySale {
   cross_sold_type?: string;
   cross_sold_to?: string;
   client_description?: string;
+  is_cross_sold_policy?: boolean;
+  created_at: string;
+}
+
+export interface HighValuePolicyNotification {
+  id: string;
+  employee_id: string;
+  policy_number: string;
+  policy_amount: number;
+  broker_fee: number;
+  current_bonus: number;
+  is_cross_sold_policy: boolean;
+  status: 'pending' | 'reviewed';
+  admin_bonus?: number;
+  admin_notes?: string;
+  reviewed_at?: string;
   created_at: string;
 }
 

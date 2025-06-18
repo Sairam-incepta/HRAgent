@@ -6,7 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart, FileText } from "lucide-react";
+import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -19,7 +19,7 @@ type Message = {
 
 const MAX_MESSAGES = 35;
 
-export function ChatInterface() {
+export function ChatInterface({ dailySummaryPrompt, onDailySummaryPromptShown }: { dailySummaryPrompt?: string | null, onDailySummaryPromptShown?: () => void }) {
   const { user, isLoaded } = useUser();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -221,11 +221,6 @@ export function ChatInterface() {
           action: "Give me company sales analytics"
         },
         {
-          icon: FileText,
-          label: "Pending Requests",
-          action: "Show me pending overtime requests"
-        },
-        {
           icon: TrendingUp,
           label: "Sales Overview",
           action: "Show me recent policy sales"
@@ -245,13 +240,8 @@ export function ChatInterface() {
         },
         {
           icon: Clock,
-          label: "Daily Summary",
-          action: "Create my daily summary"
-        },
-        {
-          icon: BarChart,
-          label: "View Performance",
-          action: "Show my performance metrics"
+          label: "How was your day?",
+          action: "How was your day? I'd love to hear about it!"
         }
       ];
     }
@@ -268,110 +258,160 @@ export function ChatInterface() {
 
   const quickActions = getQuickActions();
 
-  return (
-    <div className="h-full flex flex-col">
-      <CardHeader className="pb-3 pt-4 px-4">
-        <CardTitle className="flex items-center gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#005cb3]"></span>
-          Let's Insure {userRole === 'admin' ? 'Admin' : 'Employee'} Assistant
-        </CardTitle>
-      </CardHeader>
-      
-      {/* Sticky Quick Action Buttons */}
-      <div className="px-4 pb-3 border-b bg-background sticky top-0 z-10">
-        <div className="grid grid-cols-2 gap-2">
-          {quickActions.map((action, index) => (
-            <Button
-              key={index}
-              variant="outline"
-              size="sm"
-              onClick={() => handleQuickAction(action.action)}
-              className="text-xs h-auto p-2 flex flex-col items-start gap-1 justify-start text-left hover:bg-[#005cb3]/5"
-            >
-              <action.icon className="h-4 w-4 text-[#005cb3] self-start" />
-              <span className="text-left font-medium">{action.label}</span>
-            </Button>
-          ))}
-        </div>
-      </div>
+  useEffect(() => {
+    if (dailySummaryPrompt && userRole === 'employee') {
+      const botMessage: Message = {
+        id: `summary-prompt-${Date.now()}`,
+        content: dailySummaryPrompt,
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => {
+        const updated = [...prev, botMessage];
+        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+        return updated;
+      });
+      onDailySummaryPromptShown?.();
+    }
+  }, [dailySummaryPrompt, userRole, onDailySummaryPromptShown]);
 
-      <CardContent className="flex-1 overflow-y-auto px-4 pb-0">
-        <div className="space-y-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                "flex items-start gap-2 max-w-[95%]",
-                message.sender === "user" ? "ml-auto flex-row-reverse" : ""
-              )}
-            >
-              <Avatar className="h-8 w-8 flex-shrink-0">
-                {message.sender === "bot" ? (
-                  <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3]">
-                    {userRole === 'admin' ? 'LA' : 'LI'}
-                  </AvatarFallback>
-                ) : (
-                  <>
-                    <AvatarImage src={user?.imageUrl} />
-                    <AvatarFallback>{getUserInitials()}</AvatarFallback>
-                  </>
-                )}
-              </Avatar>
-              <div
-                className={cn(
-                  "rounded-lg px-3 py-2 max-w-full",
-                  message.sender === "user"
-                    ? "bg-primary text-primary-foreground ml-auto"
-                    : "bg-muted"
-                )}
+  return (
+    <div className="h-full flex flex-col bg-background">
+      {/* Chat Header */}
+      <div className="p-4 border-b bg-background">
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-3 rounded-full bg-[#005cb3] animate-pulse"></div>
+          <h3 className="font-semibold">Let's Insure {userRole === 'admin' ? 'Admin' : 'Employee'} Assistant</h3>
+        </div>
+        {userRole === 'admin' && (
+          <p className="text-sm text-muted-foreground mt-1">
+            Company insights and management
+          </p>
+        )}
+      </div>
+      
+      {/* Employee Quick Action Buttons - Only for employees */}
+      {userRole === 'employee' && (
+        <div className="p-4 border-b bg-background/95 backdrop-blur">
+          <div className="grid grid-cols-3 gap-3">
+            {getQuickActions().map((action, index) => (
+              <Button
+                key={index}
+                variant="outline"
+                size="sm"
+                onClick={() => handleQuickAction(action.action)}
+                className="h-auto py-4 flex flex-col items-center gap-2 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all"
               >
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-                <p className="text-xs opacity-70 mt-1">
-                  {message.timestamp.toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </p>
-              </div>
-            </div>
-          ))}
-          
-          {isTyping && (
-            <div className="flex items-start gap-2 max-w-[95%]">
-              <Avatar className="h-8 w-8 flex-shrink-0">
-                <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3]">
+                <action.icon className="h-5 w-5 text-[#005cb3]" />
+                <span className="font-medium text-sm text-center leading-tight">{action.label}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Admin Quick Action Buttons - Only for admins */}
+      {userRole === 'admin' && (
+        <div className="p-4 border-b bg-background/95 backdrop-blur">
+          <div className="grid grid-cols-3 gap-3">
+            {getQuickActions().map((action, index) => (
+              <Button
+                key={index}
+                variant="outline"
+                size="sm"
+                onClick={() => handleQuickAction(action.action)}
+                className="h-auto py-4 flex flex-col items-center gap-2 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all"
+              >
+                <action.icon className="h-5 w-5 text-[#005cb3]" />
+                <span className="font-medium text-sm text-center leading-tight">{action.label}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={cn(
+              "flex items-start gap-3 max-w-[95%]",
+              message.sender === "user" ? "ml-auto flex-row-reverse" : ""
+            )}
+          >
+            <Avatar className="h-8 w-8 flex-shrink-0">
+              {message.sender === "bot" ? (
+                <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3] text-xs font-semibold">
                   {userRole === 'admin' ? 'LA' : 'LI'}
                 </AvatarFallback>
-              </Avatar>
-              <div className="rounded-lg px-3 py-2 bg-muted">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm">Assistant is thinking...</span>
-                </div>
+              ) : (
+                <>
+                  <AvatarImage src={user?.imageUrl} />
+                  <AvatarFallback className="text-xs font-semibold">{getUserInitials()}</AvatarFallback>
+                </>
+              )}
+            </Avatar>
+            <div
+              className={cn(
+                "rounded-lg px-4 py-3 max-w-full shadow-sm",
+                message.sender === "user"
+                  ? "bg-[#005cb3] text-white ml-auto"
+                  : "bg-muted/50 border"
+              )}
+            >
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+              <p className={cn(
+                "text-xs mt-2 opacity-70",
+                message.sender === "user" ? "text-blue-100" : "text-muted-foreground"
+              )}>
+                {message.timestamp.toLocaleTimeString([], { 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}
+              </p>
+            </div>
+          </div>
+        ))}
+        
+        {isTyping && (
+          <div className="flex items-start gap-3 max-w-[95%]">
+            <Avatar className="h-8 w-8 flex-shrink-0">
+              <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3] text-xs font-semibold">
+                {userRole === 'admin' ? 'LA' : 'LI'}
+              </AvatarFallback>
+            </Avatar>
+            <div className="rounded-lg px-4 py-3 bg-muted/50 border">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Assistant is thinking...</span>
               </div>
             </div>
-          )}
-          
-          <div ref={messagesEndRef} />
-        </div>
-      </CardContent>
-      <CardFooter className="border-t p-4">
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="border-t p-4 bg-background">
         <div className="flex w-full items-center gap-2">
           <Input
             placeholder={userRole === 'admin' 
               ? "Ask about employee performance, company metrics, or team analytics..." 
-              : "Ask about policies, add sales data, record reviews..."
+              : "Tell me about your day, add sales data, or ask for help..."
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="flex-1"
+            className="flex-1 border-muted-foreground/20 focus:border-[#005cb3] transition-colors"
             disabled={isTyping}
           />
           <Button 
             onClick={handleSend} 
             disabled={!input.trim() || isTyping} 
-            className="bg-[#005cb3] hover:bg-[#005cb3]/90"
+            className="bg-[#005cb3] hover:bg-[#004a96] px-3"
+            size="sm"
           >
             {isTyping ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -381,7 +421,7 @@ export function ChatInterface() {
             <span className="sr-only">Send</span>
           </Button>
         </div>
-      </CardFooter>
+      </div>
     </div>
   );
 }

@@ -223,7 +223,6 @@ export function EditEmployeeDialog({
             <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
               <li>• Changes will take effect immediately</li>
               <li>• Employee will be notified when they exceed max hours per day</li>
-              <li>• Overtime is calculated at 1.5x the hourly rate</li>
               <li>• All fields marked with * are required</li>
             </ul>
           </div>

@@ -428,7 +428,7 @@ Be conversational and helpful. Extract specific data points (numbers, names, amo
       nextQuestion: 'description',
       lastUpdated: new Date()
     });
-    response += "\n\nLet's create your daily summary. I'll automatically calculate your hours and policies from the system. Can you provide a brief debrief of your day?";
+    response += "\n\n🌟 Hey there! How was your day? I'd love to hear about your accomplishments, any challenges you faced, or just how things went overall. Don't worry about the technical details - I'll automatically calculate your hours and policies from the system!";
   }
 
   return NextResponse.json({ response });
@@ -516,7 +516,12 @@ async function handleConversationFlow(conversationState: any, message: string, e
     // Save the collected data
     await saveCollectedData(currentFlow, safeCollectedData, employeeId);
     await clearConversationState(employeeId);
-    response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
+    
+    if (currentFlow === 'daily_summary') {
+      response += "\n\n🎉 Thanks for sharing! Your daily summary has been recorded. You're doing great work, and I appreciate you taking the time to reflect on your day. Keep up the amazing effort! 💪";
+    } else {
+      response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
+    }
   } else {
     // Update conversation state with next question
     console.log('Updating conversation state with:', {

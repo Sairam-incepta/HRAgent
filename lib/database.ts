@@ -6,7 +6,8 @@ import type {
   DailySummary, 
   ConversationState,
   Employee,
-  OvertimeRequest
+  OvertimeRequest,
+  HighValuePolicyNotification
 } from './supabase';
 
 // Helper function to calculate bonus based on broker fees (not policy amount)
@@ -46,6 +47,7 @@ export const addPolicySale = async (sale: {
   crossSoldType?: string;
   crossSoldTo?: string;
   clientDescription?: string;
+  isCrossSoldPolicy?: boolean;
 }): Promise<PolicySale | null> => {
   // Calculate bonuses based on new rules
   const brokerFeeBonus = calculateBonus(sale.brokerFee, sale.crossSold);
@@ -66,7 +68,8 @@ export const addPolicySale = async (sale: {
       cross_sold: sale.crossSold || false,
       cross_sold_type: sale.crossSoldType,
       cross_sold_to: sale.crossSoldTo,
-      client_description: sale.clientDescription
+      client_description: sale.clientDescription,
+      is_cross_sold_policy: sale.isCrossSoldPolicy || false
     })
     .select()
     .single();
@@ -78,6 +81,18 @@ export const addPolicySale = async (sale: {
 
   // Update employee bonus
   await updateEmployeeBonus(sale.employeeId, totalBonus);
+  
+  // Create high-value policy notification if amount > $5000
+  if (sale.amount > 5000) {
+    await createHighValuePolicyNotification({
+      employeeId: sale.employeeId,
+      policyNumber: sale.policyNumber,
+      policyAmount: sale.amount,
+      brokerFee: sale.brokerFee,
+      currentBonus: totalBonus,
+      isCrossSoldPolicy: sale.isCrossSoldPolicy || false
+    });
+  }
   
   return data;
 };
@@ -666,7 +681,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         const empOvertimeHours = periodSummaries
           .filter(s => s.employee_id === emp.clerk_user_id)
           .reduce((total, s) => total + Math.max(0, s.hours_worked - 8), 0);
-        return sum + (empOvertimeHours * emp.hourly_rate * 1.5);
+        return sum + (empOvertimeHours * emp.hourly_rate * 1.0);
       }, 0);
       
       const totalSales = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
@@ -698,7 +713,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
           .reduce((total, s) => total + s.bonus, 0);
         
         dept.totalPay += (empRegularHours * emp.hourly_rate) + 
-                        (empOvertimeHours * emp.hourly_rate * 1.5) + 
+                        (empOvertimeHours * emp.hourly_rate * 1.0) + 
                         empBonuses;
       });
       
@@ -806,7 +821,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const overtimeHours = Math.max(0, totalHours - regularHours);
       
       const regularPay = regularHours * emp.hourly_rate;
-      const overtimePay = overtimeHours * emp.hourly_rate * 1.5;
+      const overtimePay = overtimeHours * emp.hourly_rate * 1.0;
       const bonuses = empSales.reduce((sum, s) => sum + s.bonus, 0);
       const totalPay = regularPay + overtimePay + bonuses;
       
@@ -912,7 +927,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       const overtimeHours = Math.max(0, totalHours - regularHours);
       
       const regularPay = regularHours * employee.hourly_rate;
-      const overtimePay = overtimeHours * employee.hourly_rate * 1.5;
+      const overtimePay = overtimeHours * employee.hourly_rate * 1.0;
       const bonuses = periodSales.reduce((sum, s) => sum + s.bonus, 0);
       const totalPay = regularPay + overtimePay + bonuses;
       
@@ -936,6 +951,150 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
     return payrollHistory;
   } catch (error) {
     console.error('Error getting employee payroll history:', error);
+    return [];
+  }
+};
+
+export const getHighValuePolicyNotifications = async (): Promise<PolicySale[]> => {
+  const { data, error } = await supabase
+    .from('policy_sales')
+    .select('*')
+    .gt('amount', 5000)
+    .order('amount', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.error('Error fetching high-value policy notifications:', error);
+    return [];
+  }
+
+  return data || [];
+};
+
+// High-Value Policy Notification Functions
+export const createHighValuePolicyNotification = async (notification: {
+  employeeId: string;
+  policyNumber: string;
+  policyAmount: number;
+  brokerFee: number;
+  currentBonus: number;
+  isCrossSoldPolicy: boolean;
+}): Promise<HighValuePolicyNotification | null> => {
+  const { data, error } = await supabase
+    .from('high_value_policy_notifications')
+    .insert({
+      employee_id: notification.employeeId,
+      policy_number: notification.policyNumber,
+      policy_amount: notification.policyAmount,
+      broker_fee: notification.brokerFee,
+      current_bonus: notification.currentBonus,
+      is_cross_sold_policy: notification.isCrossSoldPolicy,
+      status: 'pending'
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating high-value policy notification:', error);
+    return null;
+  }
+
+  return data;
+};
+
+export const getHighValuePolicyNotificationsList = async (): Promise<HighValuePolicyNotification[]> => {
+  const { data, error } = await supabase
+    .from('high_value_policy_notifications')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching high-value policy notifications:', error);
+    return [];
+  }
+
+  return data || [];
+};
+
+export const updateHighValuePolicyNotification = async (
+  notificationId: string,
+  updates: {
+    adminBonus?: number;
+    adminNotes?: string;
+    status?: 'pending' | 'reviewed';
+  }
+): Promise<HighValuePolicyNotification | null> => {
+  const updateData: any = { ...updates };
+  
+  if (updates.status === 'reviewed') {
+    updateData.reviewed_at = new Date().toISOString();
+  }
+
+  const { data, error } = await supabase
+    .from('high_value_policy_notifications')
+    .update(updateData)
+    .eq('id', notificationId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating high-value policy notification:', error);
+    return null;
+  }
+
+  return data;
+};
+
+// Get weekly summary data for an employee
+export const getWeeklySummary = async (employeeId: string): Promise<Array<{
+  date: string;
+  dayName: string;
+  hoursWorked: number;
+  policiesSold: number;
+  totalSales: number;
+  isToday: boolean;
+  isCurrentWeek: boolean;
+}>> => {
+  try {
+    const summaries = await getDailySummaries(employeeId);
+    
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
+    
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6); // End of current week (Saturday)
+    
+    // Generate array for the current week
+    const weekData = [];
+    
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(startOfWeek);
+      currentDate.setDate(startOfWeek.getDate() + i);
+      
+      const dateString = currentDate.toISOString().split('T')[0];
+      const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
+      const isToday = currentDate.toDateString() === now.toDateString();
+      const isCurrentWeek = currentDate >= startOfWeek && currentDate <= endOfWeek;
+      
+      // Find summary for this date
+      const summary = summaries.find(s => s.date === dateString);
+      
+      weekData.push({
+        date: dateString,
+        dayName,
+        hoursWorked: summary?.hours_worked || 0,
+        policiesSold: summary?.policies_sold || 0,
+        totalSales: summary?.total_sales_amount || 0,
+        isToday,
+        isCurrentWeek
+      });
+    }
+    
+    return weekData;
+  } catch (error) {
+    console.error('Error getting weekly summary:', error);
     return [];
   }
 };

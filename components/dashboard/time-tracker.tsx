@@ -3,21 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Play, Square, Coffee, Check } from "lucide-react";
+import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
-import { DailySummaryRequiredDialog } from "./daily-summary-required-dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 
@@ -25,6 +14,7 @@ interface TimeTrackerProps {
   onClockInChange?: (isClockedIn: boolean) => void;
   onLunchChange?: (isOnLunch: boolean) => void;
   onTimeUpdate?: (elapsedSeconds: number, status: TimeStatus) => void;
+  onClockOut?: (hoursWorked: number) => void;
   maxHoursBeforeOvertime?: number;
   hourlyRate?: number;
 }
@@ -42,6 +32,7 @@ export function TimeTracker({
   onClockInChange, 
   onLunchChange, 
   onTimeUpdate,
+  onClockOut,
   maxHoursBeforeOvertime = 8,
   hourlyRate = 25
 }: TimeTrackerProps) {
@@ -51,7 +42,6 @@ export function TimeTracker({
   const [pausedTime, setPausedTime] = useState(0);
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
   const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
-  const [dailySummaryDialogOpen, setDailySummaryDialogOpen] = useState(false);
   
   // Confirmation dialog states
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
@@ -174,7 +164,7 @@ export function TimeTracker({
     const overtimeHours = Math.max(0, hours - maxHoursBeforeOvertime);
     
     const regularPay = regularHours * hourlyRate;
-    const overtimePay = overtimeHours * hourlyRate * 1.5; // 1.5x rate for overtime
+    const overtimePay = overtimeHours * hourlyRate * 1.0; // 1x rate for overtime
     
     return {
       regularPay,
@@ -218,13 +208,14 @@ export function TimeTracker({
   };
 
   const confirmClockOut = () => {
-    // Always require daily summary when clocking out (regardless of hours worked)
-    setDailySummaryDialogOpen(true);
+    // Clock out immediately without requiring daily summary popup
+    performClockOut();
     setClockOutConfirmOpen(false);
   };
 
   const performClockOut = () => {
     const payInfo = calculatePay(elapsedTime);
+    const hoursWorked = elapsedTime / 3600;
     
     setStatus("idle");
     setStartTime(null);
@@ -246,6 +237,8 @@ export function TimeTracker({
       title: "Clocked Out",
       description,
     });
+
+    onClockOut?.(hoursWorked);
   };
 
   const confirmStartLunch = () => {
@@ -293,11 +286,6 @@ export function TimeTracker({
       title: "Automatically Clocked Out",
       description: `You've been paid overtime for ${payInfo.overtimeHours.toFixed(1)} hours: $${payInfo.overtimePay.toFixed(2)}`,
     });
-  };
-
-  const handleDailySummaryComplete = () => {
-    setDailySummaryDialogOpen(false);
-    performClockOut();
   };
 
   const pauseTimer = () => {
@@ -420,38 +408,38 @@ export function TimeTracker({
       )}
 
       {/* Clock In Confirmation Dialog */}
-      <AlertDialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Clock In</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Clock In</DialogTitle>
+            <DialogDescription>
               Are you sure you want to clock in and start tracking your work time?
               {elapsedTime > 0 && (
                 <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
                   You have {formatTime(elapsedTime)} of work time from earlier today that will continue.
                 </div>
               )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClockInConfirmOpen(false)}>Cancel</Button>
+            <Button 
               onClick={confirmClockIn}
               className="bg-[#005cb3] hover:bg-[#005cb3]/90"
             >
               <Play className="mr-2 h-4 w-4" />
               Clock In
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Clock Out Confirmation Dialog */}
-      <AlertDialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Clock Out</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Clock Out</DialogTitle>
+            <DialogDescription>
               Are you sure you want to clock out? Your work session will end.
               <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
                 <div className="text-sm space-y-1">
@@ -464,89 +452,103 @@ export function TimeTracker({
                   )}
                 </div>
               </div>
-              <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
-                <strong>Note:</strong> You'll be asked to complete a daily summary before clocking out.
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClockOutConfirmOpen(false)}>Cancel</Button>
+            <Button 
               onClick={confirmClockOut}
               className="bg-red-600 hover:bg-red-700"
             >
               <Square className="mr-2 h-4 w-4" />
               Clock Out
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Start Lunch Confirmation Dialog */}
-      <AlertDialog open={lunchStartConfirmOpen} onOpenChange={setLunchStartConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Start Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={lunchStartConfirmOpen} onOpenChange={setLunchStartConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Start Lunch Break</DialogTitle>
+            <DialogDescription>
               Are you sure you want to start your lunch break? Your work timer will be paused.
               <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-sm">
                 Current work time: {formatTime(elapsedTime)}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLunchStartConfirmOpen(false)}>Cancel</Button>
+            <Button 
               onClick={confirmStartLunch}
               className="bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black"
             >
               <Coffee className="mr-2 h-4 w-4" />
               Start Lunch
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* End Lunch Confirmation Dialog */}
-      <AlertDialog open={lunchEndConfirmOpen} onOpenChange={setLunchEndConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>End Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={lunchEndConfirmOpen} onOpenChange={setLunchEndConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>End Lunch Break</DialogTitle>
+            <DialogDescription>
               Are you sure you want to end your lunch break and resume work? Your timer will continue from where it was paused.
               <div className="mt-2 p-2 bg-green-50 dark:bg-green-950/20 rounded text-sm">
                 Work time when paused: {formatTime(elapsedTime)}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLunchEndConfirmOpen(false)}>Cancel</Button>
+            <Button 
               onClick={confirmEndLunch}
               className="bg-[#005cb3] hover:bg-[#005cb3]/90"
             >
               <Check className="mr-2 h-4 w-4" />
               End Lunch
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <OvertimeNotificationDialog
-        open={overtimeDialogOpen}
-        onOpenChange={setOvertimeDialogOpen}
-        currentHours={hoursWorked}
-        maxHours={maxHoursBeforeOvertime}
-        onSubmitRequest={handleOvertimeRequest}
-        onClockOut={handleForceClockOut}
-      />
-
-      <DailySummaryRequiredDialog
-        open={dailySummaryDialogOpen}
-        onOpenChange={setDailySummaryDialogOpen}
-        hoursWorked={hoursWorked}
-        onComplete={handleDailySummaryComplete}
-      />
+      <Dialog open={overtimeDialogOpen} onOpenChange={setOvertimeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Overtime Notification</DialogTitle>
+            <DialogDescription>
+              You've worked {hoursWorked.toFixed(1)} hours today.
+              {isInOvertime && (
+                <div className="mt-2 p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-sm">
+                  You've worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
+                </div>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOvertimeDialogOpen(false)}>Cancel</Button>
+            <Button 
+              onClick={() => handleOvertimeRequest("Overtime request")}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              <AlertTriangle className="mr-2 h-4 w-4" />
+              Request Overtime
+            </Button>
+            <Button 
+              onClick={handleForceClockOut}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Clock className="mr-2 h-4 w-4" />
+              Clock Out
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
