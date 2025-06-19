@@ -1,4 +1,23 @@
 import { NextResponse } from 'next/server';
+
+// Clean up markdown formatting - selective bold formatting
+function cleanMarkdownResponse(response: string): string {
+  return response
+    // Convert markdown to HTML
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
+    .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
+    .replace(/_(.*?)_/g, '<em>$1</em>')                // _italic_ -> <em>
+    // Clean up bullet points
+    .replace(/^\s*-\s*/gm, '• ')
+    // Clean up excessive line breaks
+    .replace(/\n\n\n+/g, '\n\n')
+    // Add selective bold formatting for important data only
+    .replace(/(\$[\d,]+)/g, '<strong>$1</strong>')                    // Dollar amounts
+    .replace(/(\d+)\s+(policies?|sales?|employees?)/gi, '<strong>$1</strong> $2') // Counts
+    .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
+    .trim();
+}
 import { 
   updateConversationState,
   clearConversationState,
@@ -196,7 +215,7 @@ export async function handleConversationFlow(conversationState: any, message: st
     });
   }
 
-  return NextResponse.json({ response });
+  return NextResponse.json({ response: cleanMarkdownResponse(response) });
 }
 
 function getPolicyEntryNextQuestion(data: any): [string, boolean] {

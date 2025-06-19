@@ -7,6 +7,25 @@ import {
 } from '@/lib/database';
 import { buildAdminSystemPrompt } from './system-prompts';
 
+// Clean up markdown formatting - selective bold formatting
+function cleanMarkdownResponse(response: string): string {
+  return response
+    // Convert markdown to HTML
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
+    .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
+    .replace(/_(.*?)_/g, '<em>$1</em>')                // _italic_ -> <em>
+    // Clean up bullet points
+    .replace(/^\s*-\s*/gm, '• ')
+    // Clean up excessive line breaks
+    .replace(/\n\n\n+/g, '\n\n')
+    // Add selective bold formatting for important data only
+    .replace(/(\$[\d,]+)/g, '<strong>$1</strong>')                    // Dollar amounts
+    .replace(/(\d+)\s+(policies?|sales?|employees?)/gi, '<strong>$1</strong> $2') // Counts
+    .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
+    .trim();
+}
+
 export async function handleAdminChat(message: string, userId: string) {
   try {
     // Get admin data for context - get ALL policy sales for company-wide view
@@ -45,8 +64,9 @@ export async function handleAdminChat(message: string, userId: string) {
       temperature: 0.7,
     });
 
-    const response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
-    return NextResponse.json({ response });
+    const rawResponse = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
+    const cleanedResponse = cleanMarkdownResponse(rawResponse);
+    return NextResponse.json({ response: cleanedResponse });
 
   } catch (error) {
     console.error('Admin chat error:', error);

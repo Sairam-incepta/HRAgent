@@ -51,67 +51,70 @@ export function AdminStats() {
       {loading ? (
         // Loading state
         Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="bg-card rounded-lg border p-4">
-            <div className="animate-pulse space-y-2">
-              <div className="h-4 bg-muted rounded w-1/2"></div>
-              <div className="h-6 bg-muted rounded w-1/3"></div>
+          <div key={i} className="bg-card rounded-lg border p-4 h-20">
+            <div className="animate-pulse flex items-center justify-between h-full">
+              <div className="flex flex-col justify-center space-y-2 flex-1">
+                <div className="h-3 bg-muted rounded w-2/3"></div>
+                <div className="h-6 bg-muted rounded w-1/3"></div>
+              </div>
+              <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
             </div>
           </div>
         ))
       ) : (
         <>
           {/* Total Employees */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Employees</p>
-                <p className="text-xl font-semibold text-foreground">{stats.totalEmployees}</p>
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+            <div className="flex items-center justify-between h-full">
+              <div className="flex flex-col justify-center min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground leading-tight truncate">Total Employees</p>
+                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.totalEmployees}</p>
               </div>
-              <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+              <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                 <Users className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
               </div>
             </div>
           </div>
 
           {/* Active Employees */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Currently Active</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-xl font-semibold text-foreground">{stats.activeEmployees}</p>
-                  <span className="text-sm text-muted-foreground">
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+            <div className="flex items-center justify-between h-full">
+              <div className="flex flex-col justify-center min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground leading-tight truncate">Currently Active</p>
+                <div className="flex items-baseline gap-1">
+                  <p className="text-2xl font-semibold text-foreground leading-tight">{stats.activeEmployees}</p>
+                  <span className="text-xs text-muted-foreground">
                     ({stats.totalEmployees > 0 ? Math.round((stats.activeEmployees / stats.totalEmployees) * 100) : 0}%)
                   </span>
                 </div>
               </div>
-              <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+              <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                 <Clock className="h-4 w-4 text-green-600 dark:text-green-400" />
               </div>
             </div>
           </div>
 
           {/* Pending Requests */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Pending Requests</p>
-                <p className="text-xl font-semibold text-foreground">{stats.pendingRequests}</p>
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+            <div className="flex items-center justify-between h-full">
+              <div className="flex flex-col justify-center min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground leading-tight truncate">Pending Requests</p>
+                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.pendingRequests}</p>
               </div>
-              <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+              <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                 <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
               </div>
             </div>
           </div>
 
           {/* Total Policy Sales */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Policy Sales</p>
-                <p className="text-xl font-semibold text-foreground">{stats.totalPolicies}</p>
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+            <div className="flex items-center justify-between h-full">
+              <div className="flex flex-col justify-center min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground leading-tight truncate">Total Policy Sales</p>
+                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.totalPolicies}</p>
               </div>
-              <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+              <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                 <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
               </div>
             </div>

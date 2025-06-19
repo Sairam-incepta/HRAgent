@@ -13,6 +13,25 @@ import {
 import { buildEmployeeSystemPrompt } from './system-prompts';
 import { handleConversationFlow } from './conversation-flows';
 
+// Clean up markdown formatting - selective bold formatting
+function cleanMarkdownResponse(response: string): string {
+  return response
+    // Convert markdown to HTML
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
+    .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
+    .replace(/_(.*?)_/g, '<em>$1</em>')                // _italic_ -> <em>
+    // Clean up bullet points
+    .replace(/^\s*-\s*/gm, '• ')
+    // Clean up excessive line breaks
+    .replace(/\n\n\n+/g, '\n\n')
+    // Add selective bold formatting for important data only
+    .replace(/(\$[\d,]+)/g, '<strong>$1</strong>')                    // Dollar amounts
+    .replace(/(\d+)\s+(policies?|sales?|employees?)/gi, '<strong>$1</strong> $2') // Counts
+    .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
+    .trim();
+}
+
 export async function handleEmployeeChat(message: string, userId: string) {
   // Try to get employee record - if it doesn't exist, provide helpful message
   const employee = await getEmployee(userId);
@@ -74,7 +93,8 @@ export async function handleEmployeeChat(message: string, userId: string) {
     temperature: 0.7,
   });
 
-  let response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
+  let rawResponse = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
+  let response = cleanMarkdownResponse(rawResponse);
 
   // Check if we should start a conversation flow
   const lowerMessage = message.toLowerCase();

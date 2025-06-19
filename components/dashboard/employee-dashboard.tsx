@@ -301,56 +301,59 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         {performanceData.loading ? (
           // Loading state
           Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="bg-card rounded-lg border p-4">
-              <div className="animate-pulse space-y-2">
-                <div className="h-4 bg-muted rounded w-1/2"></div>
-                <div className="h-6 bg-muted rounded w-1/3"></div>
+            <div key={i} className="bg-card rounded-lg border p-4 h-20">
+              <div className="animate-pulse flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center space-y-2 flex-1">
+                  <div className="h-3 bg-muted rounded w-2/3"></div>
+                  <div className="h-6 bg-muted rounded w-1/3"></div>
+                </div>
+                <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
               </div>
             </div>
           ))
         ) : (
           <>
             {/* Policies Sold */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Policies Sold</p>
-                  <p className="text-xl font-semibold text-foreground">{performanceData.totalPolicies}</p>
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Policies Sold</p>
+                  <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalPolicies}</p>
                 </div>
-                <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                   <TrendingUp className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
                 </div>
               </div>
             </div>
 
             {/* Total Sales */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Revenue from Sales</p>
-                  <p className="text-xl font-semibold text-foreground">${performanceData.totalSales.toLocaleString()}</p>
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Revenue from Sales</p>
+                  <p className="text-2xl font-semibold text-foreground leading-tight">${performanceData.totalSales.toLocaleString()}</p>
                 </div>
-                <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                   <TrendingUp className="h-4 w-4 text-green-600 dark:text-green-400" />
                 </div>
               </div>
             </div>
 
             {/* Client Reviews */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Reviews</p>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xl font-semibold text-foreground">{performanceData.totalReviews}</p>
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Reviews</p>
+                  <div className="flex items-baseline gap-1">
+                    <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalReviews}</p>
                     {performanceData.avgRating > 0 && (
-                      <span className="text-sm text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         ({performanceData.avgRating.toFixed(1)}★)
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+                <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                   <Star className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                 </div>
               </div>
@@ -375,7 +378,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
       <Card className="hover:shadow-md transition-shadow">
         <CardHeader>
-          <CardTitle>Today's Hours</CardTitle>
+          <CardTitle>Today&apos;s Hours</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -399,8 +402,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
                     : currentElapsedTime / 3600 > employeeSettings.maxHoursBeforeOvertime
-                    ? "You're in overtime - earning 1x rate"
-                    : "You'll be notified when you reach overtime"
+                    ? "You&apos;re in overtime - earning 1x rate"
+                    : "You&apos;ll be notified when you reach overtime"
                   }
                 </p>
                 {timeStatus !== "idle" && (
@@ -514,7 +517,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         <CardHeader>
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-[#005cb3]" />
-            <CardTitle>This Week's Performance</CardTitle>
+            <CardTitle>This Week&apos;s Performance</CardTitle>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">

@@ -67,9 +67,10 @@ const MessageBubble = ({
             ? "bg-[#005cb3] text-white"
             : "bg-muted/50 border"
         )}>
-          <p className="text-sm break-words whitespace-pre-wrap pr-6">
-            {message.content}
-          </p>
+          <p 
+            className="text-sm break-words whitespace-pre-wrap pr-6"
+            dangerouslySetInnerHTML={{ __html: message.content }}
+          />
           
           {/* Timestamp */}
           <span className={cn(
