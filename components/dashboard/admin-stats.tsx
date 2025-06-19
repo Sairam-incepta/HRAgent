@@ -1,12 +1,6 @@
 'use client';
 
 import { useState, useEffect } from "react";
-import { 
-  Card, 
-  CardContent, 
-  CardHeader, 
-  CardTitle 
-} from "@/components/ui/card";
 import { Users, Clock, AlertCircle, TrendingUp } from "lucide-react";
 import { getEmployees, getPolicySales, getOvertimeRequests } from "@/lib/database";
 
@@ -52,76 +46,78 @@ export function AdminStats() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-        {[...Array(4)].map((_, i) => (
-          <Card key={i}>
-            <CardContent className="p-6">
-              <div className="animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                <div className="h-8 bg-gray-200 rounded w-1/2"></div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  }
-
   return (
-    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Total Employees</CardTitle>
-          <Users className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.totalEmployees}</div>
-          <p className="text-xs text-muted-foreground">
-            Registered in system
-          </p>
-        </CardContent>
-      </Card>
-      
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Currently Active</CardTitle>
-          <Clock className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.activeEmployees}</div>
-          <p className="text-xs text-muted-foreground">
-            {stats.totalEmployees > 0 ? Math.round((stats.activeEmployees / stats.totalEmployees) * 100) : 0}% of total workforce
-          </p>
-        </CardContent>
-      </Card>
-      
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Pending Requests</CardTitle>
-          <AlertCircle className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.pendingRequests}</div>
-          <p className="text-xs text-muted-foreground">
-            Awaiting approval
-          </p>
-        </CardContent>
-      </Card>
-      
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Total Policy Sales</CardTitle>
-          <TrendingUp className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.totalPolicies}</div>
-          <p className="text-xs text-muted-foreground">
-            All time
-          </p>
-        </CardContent>
-      </Card>
+    <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+      {loading ? (
+        // Loading state
+        Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-card rounded-lg border p-4">
+            <div className="animate-pulse space-y-2">
+              <div className="h-4 bg-muted rounded w-1/2"></div>
+              <div className="h-6 bg-muted rounded w-1/3"></div>
+            </div>
+          </div>
+        ))
+      ) : (
+        <>
+          {/* Total Employees */}
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Total Employees</p>
+                <p className="text-xl font-semibold text-foreground">{stats.totalEmployees}</p>
+              </div>
+              <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                <Users className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Active Employees */}
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Currently Active</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xl font-semibold text-foreground">{stats.activeEmployees}</p>
+                  <span className="text-sm text-muted-foreground">
+                    ({stats.totalEmployees > 0 ? Math.round((stats.activeEmployees / stats.totalEmployees) * 100) : 0}%)
+                  </span>
+                </div>
+              </div>
+              <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                <Clock className="h-4 w-4 text-green-600 dark:text-green-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Pending Requests */}
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Pending Requests</p>
+                <p className="text-xl font-semibold text-foreground">{stats.pendingRequests}</p>
+              </div>
+              <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+                <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Total Policy Sales */}
+          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Total Policy Sales</p>
+                <p className="text-xl font-semibold text-foreground">{stats.totalPolicies}</p>
+              </div>
+              <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+                <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

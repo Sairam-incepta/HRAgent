@@ -1059,12 +1059,13 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   try {
     const summaries = await getDailySummaries(employeeId);
     
+    // Use local date formatting to avoid timezone issues
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6); // End of current week (Saturday)
+    // Calculate start of week (Sunday) in local time
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
     
     // Generate array for the current week
     const weekData = [];
@@ -1073,10 +1074,14 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       const currentDate = new Date(startOfWeek);
       currentDate.setDate(startOfWeek.getDate() + i);
       
-      const dateString = currentDate.toISOString().split('T')[0];
+      // Format date as YYYY-MM-DD in local timezone
+      const year = currentDate.getFullYear();
+      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const day = String(currentDate.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`;
+      
       const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
-      const isToday = currentDate.toDateString() === now.toDateString();
-      const isCurrentWeek = currentDate >= startOfWeek && currentDate <= endOfWeek;
+      const isToday = currentDate.getTime() === today.getTime();
       
       // Find summary for this date
       const summary = summaries.find(s => s.date === dateString);
@@ -1088,7 +1093,7 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
         policiesSold: summary?.policies_sold || 0,
         totalSales: summary?.total_sales_amount || 0,
         isToday,
-        isCurrentWeek
+        isCurrentWeek: true // All days in the generated week are current week
       });
     }
     

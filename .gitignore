@@ -403,3 +403,6 @@ FodyWeavers.xsd
 .new/
 .temp/
 out/
+
+# HR Agent Project Documentation
+PROJECT_ARCHITECTURE.md

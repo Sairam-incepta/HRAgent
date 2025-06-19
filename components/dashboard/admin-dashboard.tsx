@@ -148,9 +148,6 @@ export function AdminDashboard() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
-          <p className="text-muted-foreground">
-            Manage employees, track time, and generate reports.
-          </p>
         </div>
         <div className="flex flex-col items-end text-right">
           <div className="flex items-center gap-2 text-lg font-semibold">
@@ -205,20 +202,39 @@ export function AdminDashboard() {
         <TabsContent value="overview" className="space-y-4">
           <AdminStats />
           
-          {/* High-Value Policy Notifications */}
-          <HighValuePolicyNotifications />
-          
-          {/* Expenditure Card with Filter */}
+          {/* Company Expenditure - Compact Top Section */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Company Expenditure</CardTitle>
-                <CardDescription>Track spending across different time periods</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold">Company Expenditure</h3>
+                    {loading ? (
+                      <div className="animate-pulse space-y-1 mt-1">
+                        <div className="h-6 bg-muted rounded w-24"></div>
+                        <div className="h-3 bg-muted rounded w-16"></div>
+                      </div>
+                    ) : (
+                      <div className="mt-1">
+                        <p className="text-2xl font-bold">${currentExpenditure.amount.toLocaleString()}</p>
+                        <p className="text-sm text-muted-foreground">{currentExpenditure.period}</p>
+                      </div>
+                    )}
+                  </div>
+                  {!loading && (
+                    <div className="flex items-center gap-2">
+                      <Badge 
+                        variant="outline" 
+                        className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                      >
+                        {currentExpenditure.change}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">vs previous</span>
+                    </div>
+                  )}
+                </div>
                 <Select value={expenditureFilter} onValueChange={setExpenditureFilter}>
-                  <SelectTrigger className="w-[120px]">
+                  <SelectTrigger className="w-[100px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -228,32 +244,11 @@ export function AdminDashboard() {
                   </SelectContent>
                 </Select>
               </div>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="animate-pulse">
-                  <div className="h-8 bg-gray-200 rounded w-1/3 mb-2"></div>
-                  <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-2xl font-bold">${currentExpenditure.amount.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">{currentExpenditure.period}</p>
-                  </div>
-                  <div className="text-right">
-                    <Badge 
-                      variant="outline" 
-                      className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                    >
-                      {currentExpenditure.change}
-                    </Badge>
-                    <p className="text-sm text-muted-foreground mt-1">vs previous period</p>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
+
+          {/* High-Value Policy Alerts - Full Width Below */}
+          <HighValuePolicyNotifications />
 
           {/* Requests Section */}
           <AdminRequests />
@@ -265,7 +260,6 @@ export function AdminDashboard() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Employee Directory</CardTitle>
-                <CardDescription>Manage and view all employees with status filters</CardDescription>
               </div>
               <Button 
                 onClick={() => setBulkUserCreationOpen(true)}

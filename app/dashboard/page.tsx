@@ -16,6 +16,7 @@ export default function DashboardPage() {
   const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
   const [isRoleLoaded, setIsRoleLoaded] = useState(false);
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [dailySummaryPrompt, setDailySummaryPrompt] = useState<string | null>(null);
   const dailySummaryPrompts = [
@@ -182,11 +183,15 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col h-screen bg-background">
       <DashboardHeader userRole={userRole} />
-      <div className="flex flex-1 overflow-hidden">
-        {/* Main Dashboard Content - 65% when chat is open, 100% when collapsed */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Main Dashboard Content - responsive width when chat is open */}
         <main 
           className={`flex-1 overflow-y-auto p-4 md:p-6 transition-all duration-300 ${
-            isChatCollapsed ? 'w-full' : 'lg:w-[65%]'
+            isChatCollapsed 
+              ? 'w-full' 
+              : isChatExpanded 
+                ? 'w-full md:w-[55%] lg:w-[55%] xl:w-[55%]' 
+                : 'w-full md:w-[55%] lg:w-[65%] xl:w-[70%]'
           }`}
         >
           {userRole === "employee" ? (
@@ -196,36 +201,25 @@ export default function DashboardPage() {
           )}
         </main>
         
-        {/* Chat Interface - 35% width, collapsible */}
+        {/* Chat Interface - responsive width, collapsible */}
         {userRole && (
           <div 
-            className={`transition-all duration-300 border-l bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 ${
-              isChatCollapsed 
+            className={`transition-all duration-300 border-l bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 
+              ${isChatCollapsed 
                 ? 'w-0 overflow-hidden' 
-                : 'w-full lg:w-[35%] min-w-[400px]'
-            }`}
+                : isChatExpanded
+                  ? 'w-full md:w-[45%] lg:w-[45%] xl:w-[45%] md:relative absolute top-0 right-0 h-full z-40 md:z-auto'
+                  : 'w-full md:w-[45%] lg:w-[35%] xl:w-[30%] md:relative absolute top-0 right-0 h-full z-40 md:z-auto'
+              }`}
           >
             {!isChatCollapsed && (
-              <div className="h-full flex flex-col">
-                {/* Chat Header with Collapse Button */}
-                <div className="flex items-center justify-between p-4 border-b">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="h-5 w-5 text-[#005cb3]" />
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsChatCollapsed(true)}
-                    className="h-8 w-8 p-0"
-                  >
-                    <X className="h-5 w-5" />
-                  </Button>
-                </div>
-                
-                {/* Chat Content */}
+              <div className="h-full">
                 <ChatInterface 
                   dailySummaryPrompt={dailySummaryPrompt} 
                   onDailySummaryPromptShown={() => setDailySummaryPrompt(null)}
+                  onCollapse={() => setIsChatCollapsed(true)}
+                  isExpanded={isChatExpanded}
+                  onToggleExpand={() => setIsChatExpanded(!isChatExpanded)}
                 />
               </div>
             )}
@@ -236,10 +230,10 @@ export default function DashboardPage() {
         {isChatCollapsed && (
           <Button
             onClick={() => setIsChatCollapsed(false)}
-            className="fixed bottom-6 right-6 h-12 w-12 rounded-full bg-[#005cb3] hover:bg-[#004a96] shadow-lg z-50"
+            className="fixed bottom-4 right-4 md:bottom-6 md:right-6 h-12 w-12 md:h-14 md:w-14 rounded-full bg-[#005cb3] hover:bg-[#004a96] shadow-lg z-50"
             size="sm"
           >
-            <MessageSquare className="h-5 w-5" />
+            <MessageSquare className="h-5 w-5 md:h-6 md:w-6" />
           </Button>
         )}
       </div>

@@ -65,7 +65,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   const { user } = useUser();
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
+
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [isOnLunch, setIsOnLunch] = useState(false);
@@ -215,8 +215,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     };
 
     const loadWeeklyData = async () => {
+      if (!user?.id) return;
+      
       try {
-        const data = await getWeeklySummary(user?.id || "");
+        const data = await getWeeklySummary(user.id);
+
         setWeeklyData(data);
       } catch (error) {
         console.error('Error loading weekly data:', error);
@@ -265,14 +268,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const today = new Date();
-    const isToday = date.toDateString() === today.toDateString();
-    
-    if (isToday) {
-      return "Today";
-    }
-    
+    // Parse date string manually to avoid timezone issues
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-based
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
@@ -285,9 +283,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Welcome back, {getUserName()}</h1>
-          <p className="text-muted-foreground">
-            Here's your performance overview and time tracking for today.
-          </p>
         </div>
         <div className="flex flex-col items-end text-right">
           <div className="flex items-center gap-2 text-lg font-semibold">
@@ -301,73 +296,67 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         </div>
       </div>
 
-      {/* Performance Overview Cards (NO BONUS CARD) */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Policies Sold</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {performanceData.loading ? (
-              <div className="animate-pulse">
-                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+      {/* Performance Metrics - Compact Design */}
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+        {performanceData.loading ? (
+          // Loading state
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-card rounded-lg border p-4">
+              <div className="animate-pulse space-y-2">
+                <div className="h-4 bg-muted rounded w-1/2"></div>
+                <div className="h-6 bg-muted rounded w-1/3"></div>
               </div>
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{performanceData.totalPolicies}</div>
-                <p className="text-xs text-muted-foreground">
-                  All time
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          ))
+        ) : (
+          <>
+            {/* Policies Sold */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Policies Sold</p>
+                  <p className="text-xl font-semibold text-foreground">{performanceData.totalPolicies}</p>
+                </div>
+                <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
+                </div>
+              </div>
+            </div>
 
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {performanceData.loading ? (
-              <div className="animate-pulse">
-                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+            {/* Total Sales */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Revenue from Sales</p>
+                  <p className="text-xl font-semibold text-foreground">${performanceData.totalSales.toLocaleString()}</p>
+                </div>
+                <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="h-4 w-4 text-green-600 dark:text-green-400" />
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="text-2xl font-bold">${performanceData.totalSales.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">
-                  Revenue generated
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+            </div>
 
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Client Reviews</CardTitle>
-            <Star className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {performanceData.loading ? (
-              <div className="animate-pulse">
-                <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+            {/* Client Reviews */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Reviews</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xl font-semibold text-foreground">{performanceData.totalReviews}</p>
+                    {performanceData.avgRating > 0 && (
+                      <span className="text-sm text-muted-foreground">
+                        ({performanceData.avgRating.toFixed(1)}★)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center">
+                  <Star className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{performanceData.totalReviews}</div>
-                <p className="text-xs text-muted-foreground">
-                  {performanceData.avgRating > 0 ? `Avg: ${performanceData.avgRating.toFixed(1)}/5` : 'No reviews yet'}
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Time Tracking Section */}
@@ -387,9 +376,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       <Card className="hover:shadow-md transition-shadow">
         <CardHeader>
           <CardTitle>Today's Hours</CardTitle>
-          <CardDescription>
-            Track your daily work hours and progress (Max: {employeeSettings.maxHoursBeforeOvertime}h before overtime)
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -524,90 +510,90 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         </CardContent>
       </Card>
 
-      <Collapsible
-        open={isWeeklySummaryOpen}
-        onOpenChange={setIsWeeklySummaryOpen}
-        className="bg-card rounded-lg border hover:shadow-md transition-shadow"
-      >
-        <CollapsibleTrigger asChild>
-          <Button
-            variant="ghost"
-            className="w-full flex items-center justify-between p-4"
-          >
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              <span className="font-semibold">Weekly Summary</span>
-            </div>
-            {isWeeklySummaryOpen ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="p-4 pt-0 space-y-3">
-          {/* Bar Graph */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="font-medium">Hours Worked This Week</h4>
-              <div className="text-sm text-muted-foreground">
-                {weeklyData.reduce((total, day) => total + day.hoursWorked, 0).toFixed(1)}h total
-              </div>
-            </div>
-            
-            <div className="space-y-3">
-              {weeklyData.map((day) => {
-                const maxHours = getMaxHours();
-                const percentage = maxHours > 0 ? (day.hoursWorked / maxHours) * 100 : 0;
-                const isToday = day.isToday;
-                
-                return (
-                  <div key={day.date} className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className={`font-medium ${isToday ? 'text-[#005cb3]' : ''}`}>
-                          {formatDate(day.date)}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {day.dayName}
-                        </span>
-                        {isToday && (
-                          <span className="text-xs bg-[#005cb3]/10 text-[#005cb3] px-2 py-1 rounded-full">
-                            Today
-                          </span>
-                        )}
-                      </div>
-                      <span className="font-medium">
-                        {day.hoursWorked > 0 ? `${day.hoursWorked.toFixed(1)}h` : '0h'}
-                      </span>
-                    </div>
-                    
-                    <div className="relative h-3 bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/60' 
-                              : 'bg-muted-foreground/20'
-                        }`}
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                    
-                    {day.policiesSold > 0 && (
-                      <div className="text-xs text-muted-foreground ml-2">
-                        📊 {day.policiesSold} policy{day.policiesSold !== 1 ? 'ies' : 'y'} sold
-                        {day.totalSales > 0 && ` • $${day.totalSales.toLocaleString()}`}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+      <Card className="hover:shadow-md transition-shadow">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-[#005cb3]" />
+            <CardTitle>This Week's Performance</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-medium">Hours Worked by Day</h4>
+            <div className="text-sm text-muted-foreground">
+              {weeklyData.reduce((total, day) => total + day.hoursWorked, 0).toFixed(1)}h total
             </div>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+          
+          {/* Vertical Bar Chart Container */}
+          <div className="flex items-end justify-between gap-2 h-40 bg-muted/10 rounded-lg p-4">
+            {weeklyData.map((day) => {
+              const maxHours = getMaxHours();
+              const percentage = maxHours > 0 ? (day.hoursWorked / maxHours) * 100 : 0;
+              const isToday = day.isToday;
+              
+              // Format hours and minutes
+              const hours = Math.floor(day.hoursWorked);
+              const minutes = Math.round((day.hoursWorked - hours) * 60);
+              const timeDisplay = hours === 0 && minutes === 0 
+                ? "0hrs" 
+                : minutes === 0 
+                  ? `${hours}hrs`
+                  : hours === 0
+                    ? `${minutes}mins`
+                    : `${hours}hrs ${minutes}mins`;
+              
+              return (
+                <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
+                  {/* Sales indicator */}
+                  {day.policiesSold > 0 && (
+                    <div className="text-xs text-[#005cb3] font-medium mb-1">
+                      {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  
+                  {/* Time label above bar */}
+                  <div className="text-xs font-medium text-center min-h-[24px] flex items-end">
+                    {timeDisplay}
+                  </div>
+                  
+                  {/* Vertical Bar */}
+                  <div className="relative flex-1 w-8 flex flex-col justify-end">
+                    <div 
+                      className={`w-full rounded-t-sm transition-all duration-500 ${
+                        isToday 
+                          ? 'bg-[#005cb3]' 
+                          : day.hoursWorked > 0 
+                            ? 'bg-[#005cb3]/70' 
+                            : 'bg-muted-foreground/30'
+                      }`}
+                      style={{ 
+                        height: `${Math.max(percentage, day.hoursWorked > 0 ? 10 : 5)}%`,
+                        minHeight: '4px'
+                      }}
+                    />
+                  </div>
+                  
+                  {/* Day label and date (X-axis) */}
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground font-medium">
+                      {day.dayName.slice(0, 3).toUpperCase()}
+                    </div>
+                    <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
+                      {formatDate(day.date)}
+                    </div>
+                  </div>
+                  
+                  {/* Today indicator */}
+                  {isToday && (
+                    <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       <RequestDialog 
         open={requestDialogOpen} 

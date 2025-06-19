@@ -325,7 +325,7 @@ export function TimeTracker({
               {status === "idle" ? (
                 <Button 
                   onClick={() => setClockInConfirmOpen(true)}
-                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90 h-10 px-4"
                 >
                   <Play className="mr-2 h-4 w-4" /> Clock In
                 </Button>
@@ -333,7 +333,7 @@ export function TimeTracker({
                 <Button 
                   onClick={() => setClockOutConfirmOpen(true)}
                   variant="outline"
-                  className="w-full sm:w-auto"
+                  className="w-full sm:w-auto h-10 px-4"
                 >
                   <Square className="mr-2 h-4 w-4" /> Clock Out
                 </Button>
@@ -341,7 +341,7 @@ export function TimeTracker({
             </div>
             
             <div className={cn(
-              "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
+              "px-3 py-1.5 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
               status === "idle" ? "bg-muted text-muted-foreground" :
               status === "lunch" ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]" :
               status === "overtime_pending" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" :
@@ -354,7 +354,7 @@ export function TimeTracker({
                isInOvertime ? "In Overtime" :
                "Currently Working"}
               {(status !== "idle" || elapsedTime > 0) && (
-                <span className="ml-2 font-mono">{formatTime(elapsedTime)}</span>
+                <span className="ml-2 font-mono text-sm">{formatTime(elapsedTime)}</span>
               )}
             </div>
             
@@ -381,20 +381,20 @@ export function TimeTracker({
                 <Button 
                   onClick={() => setLunchStartConfirmOpen(true)}
                   disabled={status === "idle"}
-                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed h-10 px-4"
                 >
                   <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
                 </Button>
               ) : (
                 <Button 
                   onClick={() => setLunchEndConfirmOpen(true)}
-                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90 h-10 px-4"
                 >
                   <Check className="mr-2 h-4 w-4" /> End Lunch Break
                 </Button>
               )}
               <div className={`
-                rounded-full px-4 py-2 text-sm font-medium
+                rounded-full px-4 py-1.5 text-sm font-medium
                 ${status === "lunch" 
                   ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
                   : "bg-muted text-muted-foreground"
