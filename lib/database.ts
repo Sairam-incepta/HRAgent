@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getAuthenticatedSupabaseClient } from './supabase-client';
 import type { 
   PolicySale, 
   EmployeeBonus, 
@@ -1046,7 +1047,7 @@ export const updateHighValuePolicyNotification = async (
   return data;
 };
 
-// Get weekly summary data for an employee
+// Get weekly summary data for an employee using actual time_logs
 export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   date: string;
   dayName: string;
@@ -1057,9 +1058,7 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   isCurrentWeek: boolean;
 }>> => {
   try {
-    const summaries = await getDailySummaries(employeeId);
-    
-    // Use local date formatting to avoid timezone issues
+    // Get current week dates
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
@@ -1083,17 +1082,42 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
       const isToday = currentDate.getTime() === today.getTime();
       
-      // Find summary for this date
-      const summary = summaries.find(s => s.date === dateString);
+      // Get time logs for this specific date
+      const timeLogs = await getTimeLogsForDay(employeeId, dateString);
+      
+      // Calculate total hours worked for this day
+      let hoursWorked = 0;
+      timeLogs.forEach(log => {
+        if (log.clock_in && log.clock_out) {
+          const startTime = new Date(log.clock_in).getTime();
+          const endTime = new Date(log.clock_out).getTime();
+          hoursWorked += (endTime - startTime) / (1000 * 60 * 60); // Convert to hours
+        } else if (log.clock_in && !log.clock_out) {
+          // If currently clocked in, calculate up to now
+          const startTime = new Date(log.clock_in).getTime();
+          const now = Date.now();
+          hoursWorked += (now - startTime) / (1000 * 60 * 60);
+        }
+      });
+      
+      // Get policy sales for this date (from existing function)
+      const policySales = await getPolicySales(employeeId);
+      const dayPolicies = policySales.filter(sale => {
+        const saleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+        return saleDate === dateString;
+      });
+      
+      const policiesSold = dayPolicies.length;
+      const totalSales = dayPolicies.reduce((sum, sale) => sum + sale.amount, 0);
       
       weekData.push({
         date: dateString,
         dayName,
-        hoursWorked: summary?.hours_worked || 0,
-        policiesSold: summary?.policies_sold || 0,
-        totalSales: summary?.total_sales_amount || 0,
+        hoursWorked: Math.round(hoursWorked * 100) / 100, // Round to 2 decimal places
+        policiesSold,
+        totalSales,
         isToday,
-        isCurrentWeek: true // All days in the generated week are current week
+        isCurrentWeek: true
       });
     }
     
@@ -1101,6 +1125,45 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   } catch (error) {
     console.error('Error getting weekly summary:', error);
     return [];
+  }
+};
+
+// Get today's total hours worked
+export const getTodayHours = async (employeeId: string): Promise<number> => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const timeLogs = await getTimeLogsForDay(employeeId, today);
+    
+    let totalHours = 0;
+    timeLogs.forEach(log => {
+      if (log.clock_in && log.clock_out) {
+        const startTime = new Date(log.clock_in).getTime();
+        const endTime = new Date(log.clock_out).getTime();
+        totalHours += (endTime - startTime) / (1000 * 60 * 60);
+      } else if (log.clock_in && !log.clock_out) {
+        // If currently clocked in, calculate up to now
+        const startTime = new Date(log.clock_in).getTime();
+        const now = Date.now();
+        totalHours += (now - startTime) / (1000 * 60 * 60);
+      }
+    });
+    
+    return Math.round(totalHours * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('Error getting today hours:', error);
+    return 0;
+  }
+};
+
+// Get this week's total hours worked
+export const getThisWeekHours = async (employeeId: string): Promise<number> => {
+  try {
+    const weeklyData = await getWeeklySummary(employeeId);
+    const totalHours = weeklyData.reduce((sum, day) => sum + day.hoursWorked, 0);
+    return Math.round(totalHours * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('Error getting this week hours:', error);
+    return 0;
   }
 };
 
@@ -1155,38 +1218,72 @@ export const getAllRequests = async (): Promise<Request[]> => {
   return data || [];
 };
 
-// Time Logs (Clock In/Out)
-export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: string, clockIn: Date }) => {
-  const date = clockIn.toISOString().split('T')[0];
-  const { data, error } = await supabase
-    .from('time_logs')
-    .insert({ employee_id: employeeId, date, clock_in: clockIn.toISOString() })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+// Time Logs (Clock In/Out) - Simplified for RLS disabled
+export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: string, clockIn: Date }): Promise<{ data: any; error: any }> => {
+  try {
+    const date = clockIn.toISOString().split('T')[0];
+    const { data, error } = await supabase
+      .from('time_logs')
+      .insert({ 
+        employee_id: employeeId, 
+        date, 
+        clock_in: clockIn.toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+    
+    return { data, error };
+  } catch (error) {
+    console.error('Error in createTimeLog:', error);
+    return { data: null, error };
+  }
 };
 
 export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockOut: Date }) => {
-  const { data, error } = await supabase
-    .from('time_logs')
-    .update({ clock_out: clockOut.toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', logId)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('time_logs')
+      .update({ 
+        clock_out: clockOut.toISOString(), 
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', logId)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error updating time log:', error);
+      return null;
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error in updateTimeLog:', error);
+    return null;
+  }
 };
 
 export const getTimeLogsForDay = async (employeeId: string, date: string) => {
-  const { data, error } = await supabase
-    .from('time_logs')
-    .select('*')
-    .eq('employee_id', employeeId)
-    .eq('date', date)
-    .order('clock_in', { ascending: true });
-  if (error) throw error;
-  return data || [];
+  try {
+    const { data, error } = await supabase
+      .from('time_logs')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .eq('date', date)
+      .order('clock_in', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching time logs:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error in getTimeLogsForDay:', error);
+    return [];
+  }
 };
 
 export const getTimeLogsForWeek = async (employeeId: string, startDate: string, endDate: string) => {

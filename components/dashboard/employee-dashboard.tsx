@@ -53,6 +53,8 @@ import {
   getClientReviews, 
   getDailySummaries,
   getWeeklySummary,
+  getTodayHours,
+  getThisWeekHours,
   type Request 
 } from "@/lib/database";
 
@@ -89,6 +91,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     isToday: boolean;
     isCurrentWeek: boolean;
   }>>([]);
+
+  // Today's hours state
+  const [todayHours, setTodayHours] = useState(0);
+  const [thisWeekHours, setThisWeekHours] = useState(0);
 
   // Employee performance data (NO BONUS INFORMATION)
   const [performanceData, setPerformanceData] = useState({
@@ -133,16 +139,34 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     });
   };
 
+  // Load weekly data and hours
+  const loadWeeklyData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const [weekly, today, week] = await Promise.all([
+        getWeeklySummary(user.id),
+        getTodayHours(user.id),
+        getThisWeekHours(user.id)
+      ]);
+      
+      setWeeklyData(weekly);
+      setTodayHours(today);
+      setThisWeekHours(week);
+    } catch (error) {
+      console.error('Error loading weekly data:', error);
+    }
+  };
+
   // Load employee performance data (NO BONUS INFORMATION)
   useEffect(() => {
     const loadPerformanceData = async () => {
       if (!user?.id) return;
       
       try {
-        const [policySales, clientReviews, dailySummaries] = await Promise.all([
+        const [policySales, clientReviews] = await Promise.all([
           getPolicySales(user.id),
-          getClientReviews(user.id),
-          getDailySummaries(user.id)
+          getClientReviews(user.id)
         ]);
 
         const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
@@ -166,10 +190,24 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     loadPerformanceData();
   }, [user?.id]);
 
+  // Load weekly data on mount and when user changes
+  useEffect(() => {
+    loadWeeklyData();
+  }, [user?.id]);
+
   // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
+    
+    // Refresh weekly data when time tracking changes
+    loadWeeklyData();
+  };
+
+  // Handle clock out to refresh data
+  const handleClockOut = () => {
+    loadWeeklyData();
+    onClockOut?.();
   };
 
   // Format time for display
@@ -212,26 +250,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       setRequestsLoading(false);
     }
   };
-
-  // Load weekly data
-  const loadWeeklyData = async () => {
-    if (!user?.id) return;
-    
-    try {
-      const data = await getWeeklySummary(user.id);
-
-      setWeeklyData(data);
-    } catch (error) {
-      console.error('Error loading weekly data:', error);
-    }
-  };
-
-  useEffect(() => {
-    if (user?.id) {
-      loadRequests();
-      loadWeeklyData();
-    }
-  }, [user?.id, toast]);
 
   const filteredRequests = requests.filter(request => {
     const matchesFilter = requestFilter === "all" || request.status === requestFilter;
@@ -299,68 +317,41 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
       {/* Performance Metrics - Compact Design */}
       <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
-        {performanceData.loading ? (
-          // Loading state
-          Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="bg-card rounded-lg border p-4 h-20">
-              <div className="animate-pulse flex items-center justify-between h-full">
-                <div className="flex flex-col justify-center space-y-2 flex-1">
-                  <div className="h-3 bg-muted rounded w-2/3"></div>
-                  <div className="h-6 bg-muted rounded w-1/3"></div>
-                </div>
-                <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
+        <Card className="hover:shadow-md transition-shadow">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Today's Hours</p>
+                <p className="text-2xl font-bold">{todayHours.toFixed(2)}h</p>
               </div>
+              <Timer className="h-8 w-8 text-[#005cb3]" />
             </div>
-          ))
-        ) : (
-          <>
-            {/* Policies Sold */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-              <div className="flex items-center justify-between h-full">
-                <div className="flex flex-col justify-center min-w-0 flex-1">
-                  <p className="text-xs text-muted-foreground leading-tight truncate">Policies Sold</p>
-                  <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalPolicies}</p>
-                </div>
-                <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                  <TrendingUp className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
-                </div>
-              </div>
-            </div>
+          </CardContent>
+        </Card>
 
-            {/* Total Sales */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-              <div className="flex items-center justify-between h-full">
-                <div className="flex flex-col justify-center min-w-0 flex-1">
-                  <p className="text-xs text-muted-foreground leading-tight truncate">Revenue from Sales</p>
-                  <p className="text-2xl font-semibold text-foreground leading-tight">${performanceData.totalSales.toLocaleString()}</p>
-                </div>
-                <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                  <TrendingUp className="h-4 w-4 text-green-600 dark:text-green-400" />
-                </div>
+        <Card className="hover:shadow-md transition-shadow">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">This Week</p>
+                <p className="text-2xl font-bold">{thisWeekHours.toFixed(2)}h</p>
               </div>
+              <TrendingUp className="h-8 w-8 text-[#005cb3]" />
             </div>
+          </CardContent>
+        </Card>
 
-            {/* Client Reviews */}
-            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-              <div className="flex items-center justify-between h-full">
-                <div className="flex flex-col justify-center min-w-0 flex-1">
-                  <p className="text-xs text-muted-foreground leading-tight truncate">Reviews</p>
-                  <div className="flex items-baseline gap-1">
-                    <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalReviews}</p>
-                    {performanceData.avgRating > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        ({performanceData.avgRating.toFixed(1)}★)
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                  <Star className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                </div>
+        <Card className="hover:shadow-md transition-shadow">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Policies Sold</p>
+                <p className="text-2xl font-bold">{performanceData.totalPolicies}</p>
               </div>
+              <FileText className="h-8 w-8 text-[#005cb3]" />
             </div>
-          </>
-        )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Time Tracking Section */}
@@ -372,7 +363,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
             hourlyRate={employeeSettings.hourlyRate}
-            onClockOut={onClockOut}
+            onClockOut={handleClockOut}
           />
         </div>
       </div>

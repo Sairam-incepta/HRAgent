@@ -23,9 +23,13 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id_timestamp ON chat_messages(
 
 -- RLS for time_logs
 ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read/write own time logs" ON time_logs;
+DROP POLICY IF EXISTS "Admin can read all time logs" ON time_logs;
+
 CREATE POLICY "Users can read/write own time logs" ON time_logs
   FOR ALL TO authenticated
   USING (employee_id = (SELECT auth.jwt() ->> 'sub'));
+
 CREATE POLICY "Admin can read all time logs" ON time_logs
   FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM employees WHERE clerk_user_id = (SELECT auth.jwt() ->> 'sub') AND (email = 'admin@letsinsure.hr' OR position = 'HR Manager')));

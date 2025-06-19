@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Clock, Calendar, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
 import { getPolicySales, getClientReviews, getEmployeeBonus, getWeeklySummary, getTimeLogsForDay } from "@/lib/database";
 import { PasswordResetDialog } from "./password-reset-dialog";
+import { useUser } from '@clerk/nextjs';
 
 interface EmployeeDetailsDialogProps {
   open: boolean;
