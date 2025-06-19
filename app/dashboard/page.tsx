@@ -119,16 +119,12 @@ export default function DashboardPage() {
     );
   }
 
-  // If no user after loading, show error
+  // If no user after loading, redirect to sign-in
   if (!user) {
-    console.log('No user found after loading');
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800">
-        <div className="text-center space-y-4">
-          <p className="text-muted-foreground">No user found. Please sign in again.</p>
-        </div>
-      </div>
-    );
+    if (typeof window !== 'undefined') {
+      window.location.href = '/sign-in';
+    }
+    return null;
   }
 
   // Show error state if timeout occurred

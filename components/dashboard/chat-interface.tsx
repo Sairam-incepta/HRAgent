@@ -157,11 +157,12 @@ export function ChatInterface({
           setMessages(parsedMessages);
         } else {
           // Set initial welcome message based on role
+          const employeeName = user?.firstName ? user.firstName : undefined;
           const welcomeMessage: Message = {
             id: "welcome",
             content: userRole === 'admin' 
               ? "Hi! I can help you analyze team performance, review sales data, and manage requests. What do you need?"
-              : "Hi! I can help you track sales, record reviews, and daily check-in. What would you like to do?",
+              : `Hi${employeeName ? `, ${employeeName}` : ''}! I can help you track sales, record reviews, and daily check-in. What would you like to do?`,
             sender: "bot",
             timestamp: new Date(),
           };
@@ -170,11 +171,12 @@ export function ChatInterface({
       } catch (error) {
         console.error('Error loading chat messages:', error);
         // Fallback to welcome message
+        const employeeName = user?.firstName ? user.firstName : undefined;
         const welcomeMessage: Message = {
           id: "welcome",
           content: userRole === 'admin' 
             ? "Hi! I can help you analyze team performance, review sales data, and manage requests. What do you need?"
-            : "Hi! I can help you track sales, record reviews, and daily check-in. What would you like to do?",
+            : `Hi${employeeName ? `, ${employeeName}` : ''}! I can help you track sales, record reviews, and daily check-in. What would you like to do?`,
           sender: "bot",
           timestamp: new Date(),
         };
