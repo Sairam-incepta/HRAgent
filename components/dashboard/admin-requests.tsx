@@ -29,7 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { getOvertimeRequests, updateOvertimeRequestStatus, getEmployees } from "@/lib/database";
+import { getAllRequests, updateOvertimeRequestStatus, getEmployees } from "@/lib/database";
 
 interface Request {
   id: string;
@@ -63,30 +63,19 @@ export function AdminRequests() {
 
   const loadData = async () => {
     try {
-      const [overtimeRequests, employeeData] = await Promise.all([
-        getOvertimeRequests(),
+      const [allRequests, employeeData] = await Promise.all([
+        getAllRequests(),
         getEmployees()
       ]);
-
-      // Transform overtime requests to match the interface
-      const transformedRequests: Request[] = overtimeRequests.map(req => {
+      // Transform requests to match the interface
+      const transformedRequests: Request[] = allRequests.map(req => {
         const employee = employeeData.find(emp => emp.clerk_user_id === req.employee_id);
         return {
-          id: req.id,
-          employee_id: req.employee_id,
+          ...req,
           employeeName: employee?.name || 'Unknown Employee',
-          type: "overtime" as const,
-          title: `Overtime Request - ${req.hours_requested} hours`,
-          description: req.reason,
-          request_date: req.request_date,
-          hours_requested: req.hours_requested,
-          status: req.status,
-          urgency: req.hours_requested > 4 ? "high" : req.hours_requested > 2 ? "medium" : "low",
-          current_overtime_hours: req.current_overtime_hours,
-          reason: req.reason
+          urgency: req.type === 'overtime' && req.hours_requested > 4 ? 'high' : req.type === 'overtime' && req.hours_requested > 2 ? 'medium' : 'low',
         };
       });
-
       setRequests(transformedRequests);
       setEmployees(employeeData);
     } catch (error) {

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Clock, Calendar, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
-import { getPolicySales, getClientReviews, getEmployeeBonus, getWeeklySummary } from "@/lib/database";
+import { getPolicySales, getClientReviews, getEmployeeBonus, getWeeklySummary, getTimeLogsForDay } from "@/lib/database";
 import { PasswordResetDialog } from "./password-reset-dialog";
 
 interface EmployeeDetailsDialogProps {
@@ -42,15 +42,41 @@ export function EmployeeDetailsDialog({
     totalSales: number;
     isToday: boolean;
     isCurrentWeek: boolean;
+    clockIn?: string;
+    clockOut?: string;
   }>>([]);
   const [loading, setLoading] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
+  const [clockTimes, setClockTimes] = useState<Record<string, { firstIn: string | null, lastOut: string | null }>>({});
 
   useEffect(() => {
     if (open && employee?.clerk_user_id) {
       loadEmployeeData();
     }
   }, [open, employee?.clerk_user_id]);
+
+  useEffect(() => {
+    async function fetchClockTimes() {
+      if (!employee?.clerk_user_id || !weeklyData.length) return;
+      const times: Record<string, { firstIn: string | null, lastOut: string | null }> = {};
+      for (const day of weeklyData) {
+        const logs = await getTimeLogsForDay(employee.clerk_user_id, day.date);
+        if (logs && logs.length > 0) {
+          logs.sort((a, b) => new Date(a.clock_in).getTime() - new Date(b.clock_in).getTime());
+          const firstLog = logs[0];
+          const lastLog = logs[logs.length - 1];
+          times[day.date] = {
+            firstIn: firstLog.clock_in ? new Date(firstLog.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+            lastOut: lastLog.clock_out ? new Date(lastLog.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+          };
+        } else {
+          times[day.date] = { firstIn: null, lastOut: null };
+        }
+      }
+      setClockTimes(times);
+    }
+    fetchClockTimes();
+  }, [employee?.clerk_user_id, weeklyData]);
 
   const loadEmployeeData = async () => {
     if (!employee?.clerk_user_id) return;
@@ -332,6 +358,13 @@ export function EmployeeDetailsDialog({
                               <div className="font-medium">
                                 {day.hoursWorked > 0 ? formatTime(day.hoursWorked) : '0h 00m'}
                               </div>
+                              {clockTimes[day.date] && (clockTimes[day.date].firstIn || clockTimes[day.date].lastOut) && (
+                                <div className="text-xs text-muted-foreground">
+                                  🕒 {clockTimes[day.date].firstIn ? `First In: ${clockTimes[day.date].firstIn}` : ''}
+                                  {clockTimes[day.date].firstIn && clockTimes[day.date].lastOut ? ', ' : ''}
+                                  {clockTimes[day.date].lastOut ? `Last Out: ${clockTimes[day.date].lastOut}` : ''}
+                                </div>
+                              )}
                               {day.policiesSold > 0 && (
                                 <div className="text-xs text-muted-foreground">
                                   📊 {day.policiesSold} policy{day.policiesSold !== 1 ? 'ies' : 'y'} sold

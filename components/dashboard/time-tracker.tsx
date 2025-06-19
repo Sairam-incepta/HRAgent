@@ -7,6 +7,8 @@ import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react"
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { createTimeLog, updateTimeLog, getTimeLogsForDay } from '@/lib/database';
+import { useUser } from '@clerk/nextjs';
 
 type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 
@@ -36,6 +38,7 @@ export function TimeTracker({
   maxHoursBeforeOvertime = 8,
   hourlyRate = 25
 }: TimeTrackerProps) {
+  const { user } = useUser();
   const [status, setStatus] = useState<TimeStatus>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -51,10 +54,42 @@ export function TimeTracker({
   
   const { toast } = useToast();
 
+  const [activeLogId, setActiveLogId] = useState<string | null>(null);
+  const [logsToday, setLogsToday] = useState<any[]>([]);
+
   // Get current date in user's timezone
   const getCurrentDate = () => {
     return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
   };
+
+  // Fetch today's logs and sum durations
+  const fetchAndSumLogs = async () => {
+    if (!user?.id) return;
+    const today = new Date().toISOString().split('T')[0];
+    const logs = await getTimeLogsForDay(user.id, today);
+    setLogsToday(logs);
+    let total = 0;
+    let openLogId: string | null = null;
+    logs.forEach(log => {
+      if (log.clock_in && log.clock_out) {
+        total += (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
+      } else if (log.clock_in && !log.clock_out) {
+        total += (Date.now() - new Date(log.clock_in).getTime()) / 1000;
+        openLogId = log.id;
+      }
+    });
+    setElapsedTime(Math.floor(total));
+    setActiveLogId(openLogId);
+  };
+
+  useEffect(() => { fetchAndSumLogs(); }, [user?.id]);
+
+  useEffect(() => {
+    if (status === 'working' && activeLogId) {
+      const interval = setInterval(fetchAndSumLogs, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [status, activeLogId]);
 
   // Load time session from localStorage on component mount
   useEffect(() => {
@@ -174,37 +209,14 @@ export function TimeTracker({
     };
   };
 
-  const confirmClockIn = () => {
-    const now = Date.now();
+  const confirmClockIn = async () => {
+    if (!user?.id) return;
+    await createTimeLog({ employeeId: user.id, clockIn: new Date() });
     setStatus("working");
-    setStartTime(now);
-    
-    // If there's existing time from today, keep it, otherwise reset
-    const currentDate = getCurrentDate();
-    const stored = localStorage.getItem(STORAGE_KEY);
-    let existingPausedTime = 0;
-    
-    if (stored) {
-      try {
-        const session: TimeSession = JSON.parse(stored);
-        if (session.date === currentDate) {
-          existingPausedTime = session.pausedTime;
-        }
-      } catch (error) {
-        console.error('Error parsing stored session:', error);
-      }
-    }
-    
-    setPausedTime(existingPausedTime);
-    setElapsedTime(existingPausedTime);
-    setOvertimeNotificationShown(false);
+    fetchAndSumLogs();
     onClockInChange?.(true);
     setClockInConfirmOpen(false);
-    
-    toast({
-      title: "Clocked In",
-      description: `You clocked in at ${new Date().toLocaleTimeString()}${existingPausedTime > 0 ? ` (continuing from ${formatTime(existingPausedTime)})` : ''}`,
-    });
+    toast({ title: "Clocked In", description: `You clocked in at ${new Date().toLocaleTimeString()}` });
   };
 
   const confirmClockOut = () => {
@@ -213,32 +225,18 @@ export function TimeTracker({
     setClockOutConfirmOpen(false);
   };
 
-  const performClockOut = () => {
-    const payInfo = calculatePay(elapsedTime);
-    const hoursWorked = elapsedTime / 3600;
-    
+  const performClockOut = async () => {
+    if (activeLogId) {
+      await updateTimeLog({ logId: activeLogId, clockOut: new Date() });
+    }
     setStatus("idle");
-    setStartTime(null);
-    setOvertimeNotificationShown(false);
+    setActiveLogId(null);
+    fetchAndSumLogs();
     onClockInChange?.(false);
     onLunchChange?.(false);
     setClockOutConfirmOpen(false);
-    
-    // Don't reset elapsed time and paused time - keep them for the day
-    // Only clear from localStorage
-    localStorage.removeItem(STORAGE_KEY);
-    
-    let description = `You clocked out at ${new Date().toLocaleTimeString()} after ${formatTime(elapsedTime)} total today`;
-    if (payInfo.overtimeHours > 0) {
-      description += `\nOvertime pay: $${payInfo.overtimePay.toFixed(2)} for ${payInfo.overtimeHours.toFixed(1)} hours`;
-    }
-    
-    toast({
-      title: "Clocked Out",
-      description,
-    });
-
-    onClockOut?.(hoursWorked);
+    toast({ title: "Clocked Out", description: `You clocked out at ${new Date().toLocaleTimeString()} after ${formatTime(elapsedTime)} total today` });
+    onClockOut?.(elapsedTime / 3600);
   };
 
   const confirmStartLunch = () => {

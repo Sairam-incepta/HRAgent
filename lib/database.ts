@@ -1103,3 +1103,125 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
     return [];
   }
 };
+
+// Add a generic request to the database
+export const addRequest = async (request: {
+  employeeId: string;
+  type: 'overtime' | 'vacation' | 'sick' | 'other';
+  title: string;
+  description: string;
+  requestDate: string;
+  status?: 'pending' | 'approved' | 'rejected';
+  hoursRequested?: number;
+  reason?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<Request | null> => {
+  const { data, error } = await supabase
+    .from('requests')
+    .insert({
+      employee_id: request.employeeId,
+      type: request.type,
+      title: request.title,
+      description: request.description,
+      request_date: request.requestDate,
+      status: request.status || 'pending',
+      hours_requested: request.hoursRequested,
+      reason: request.reason,
+      start_date: request.startDate,
+      end_date: request.endDate,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding request:', error);
+    return null;
+  }
+  return data;
+};
+
+// Get all requests (for admin)
+export const getAllRequests = async (): Promise<Request[]> => {
+  const { data, error } = await supabase
+    .from('requests')
+    .select('*')
+    .order('request_date', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching all requests:', error);
+    return [];
+  }
+  return data || [];
+};
+
+// Time Logs (Clock In/Out)
+export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: string, clockIn: Date }) => {
+  const date = clockIn.toISOString().split('T')[0];
+  const { data, error } = await supabase
+    .from('time_logs')
+    .insert({ employee_id: employeeId, date, clock_in: clockIn.toISOString() })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockOut: Date }) => {
+  const { data, error } = await supabase
+    .from('time_logs')
+    .update({ clock_out: clockOut.toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', logId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const getTimeLogsForDay = async (employeeId: string, date: string) => {
+  const { data, error } = await supabase
+    .from('time_logs')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .eq('date', date)
+    .order('clock_in', { ascending: true });
+  if (error) throw error;
+  return data || [];
+};
+
+export const getTimeLogsForWeek = async (employeeId: string, startDate: string, endDate: string) => {
+  const { data, error } = await supabase
+    .from('time_logs')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .order('date', { ascending: true })
+    .order('clock_in', { ascending: true });
+  if (error) throw error;
+  return data || [];
+};
+
+// Chat Messages
+export const addChatMessage = async ({ userId, role, content }: { userId: string, role: string, content: string }) => {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .insert({ user_id: userId, role, content })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const getChatMessages = async ({ userId, role, limit = 35 }: { userId: string, role: string, limit?: number }) => {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('role', role)
+    .order('timestamp', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  // Return in chronological order
+  return (data || []).reverse();
+};

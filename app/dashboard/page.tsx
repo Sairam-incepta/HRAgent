@@ -119,12 +119,16 @@ export default function DashboardPage() {
     );
   }
 
-  // If no user after loading, redirect to sign-in
+  // If no user after loading, show loading (let Clerk handle redirect)
   if (!user) {
-    if (typeof window !== 'undefined') {
-      window.location.href = '/sign-in';
-    }
-    return null;
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-[#005cb3]" />
+          <p className="text-muted-foreground">Loading authentication...</p>
+        </div>
+      </div>
+    );
   }
 
   // Show error state if timeout occurred

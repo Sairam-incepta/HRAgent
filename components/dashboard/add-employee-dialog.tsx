@@ -178,9 +178,6 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
               placeholder="Enter initial password"
               required
             />
-            <p className="text-xs text-muted-foreground">
-              Minimum 8 characters. Employee will be prompted to change this on first login.
-            </p>
           </div>
 
           <div className="space-y-2">

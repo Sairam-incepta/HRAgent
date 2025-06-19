@@ -197,35 +197,36 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   };
 
   // Load requests from database
+  const loadRequests = async () => {
+    try {
+      const fetchedRequests = await getEmployeeRequests(user?.id || "");
+      setRequests(fetchedRequests);
+    } catch (error) {
+      console.error('Error loading requests:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load requests. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
+  // Load weekly data
+  const loadWeeklyData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const data = await getWeeklySummary(user.id);
+
+      setWeeklyData(data);
+    } catch (error) {
+      console.error('Error loading weekly data:', error);
+    }
+  };
+
   useEffect(() => {
-    const loadRequests = async () => {
-      try {
-        const fetchedRequests = await getEmployeeRequests(user?.id || "");
-        setRequests(fetchedRequests);
-      } catch (error) {
-        console.error('Error loading requests:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load requests. Please try again.",
-          variant: "destructive",
-        });
-      } finally {
-        setRequestsLoading(false);
-      }
-    };
-
-    const loadWeeklyData = async () => {
-      if (!user?.id) return;
-      
-      try {
-        const data = await getWeeklySummary(user.id);
-
-        setWeeklyData(data);
-      } catch (error) {
-        console.error('Error loading weekly data:', error);
-      }
-    };
-
     if (user?.id) {
       loadRequests();
       loadWeeklyData();
@@ -600,7 +601,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
       <RequestDialog 
         open={requestDialogOpen} 
-        onOpenChange={setRequestDialogOpen} 
+        onOpenChange={(open) => {
+          setRequestDialogOpen(open);
+          if (!open) loadRequests();
+        }} 
       />
 
       <SettingsDialog

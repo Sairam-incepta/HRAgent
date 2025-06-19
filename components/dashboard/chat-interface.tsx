@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Send, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart, X, Expand, Shrink, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { addChatMessage, getChatMessages } from '@/lib/database';
 
 type Message = {
   id: string;
@@ -140,160 +141,76 @@ export function ChatInterface({
     }
   }, [isLoaded, user]);
 
-  const STORAGE_KEY = userRole ? `letsinsure_chat_messages_${userRole}_${user?.id || 'anonymous'}` : null;
-
-  // Load messages from localStorage on component mount
+  // Load messages from backend on mount
   useEffect(() => {
-    if (!STORAGE_KEY || !userRole) return;
-
-    const loadMessages = () => {
+    const loadMessages = async () => {
+      if (!user?.id || !userRole) return;
       try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsedMessages = JSON.parse(stored).map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          }));
-          setMessages(parsedMessages);
-        } else {
-          // Set initial welcome message based on role
-          const employeeName = user?.firstName ? user.firstName : undefined;
-          const welcomeMessage: Message = {
-            id: "welcome",
-            content: userRole === 'admin' 
-              ? "Hi! I can help you analyze team performance, review sales data, and manage requests. What do you need?"
-              : `Hi${employeeName ? `, ${employeeName}` : ''}! I can help you track sales, record reviews, and daily check-in. What would you like to do?`,
-            sender: "bot",
-            timestamp: new Date(),
-          };
-          setMessages([welcomeMessage]);
-        }
+        const msgs = await getChatMessages({ userId: user.id, role: userRole, limit: MAX_MESSAGES });
+        setMessages(msgs.map((msg: any) => ({
+          id: msg.id,
+          content: msg.content,
+          sender: msg.role === 'bot' ? 'bot' : 'user',
+          timestamp: new Date(msg.timestamp)
+        })));
       } catch (error) {
-        console.error('Error loading chat messages:', error);
-        // Fallback to welcome message
-        const employeeName = user?.firstName ? user.firstName : undefined;
-        const welcomeMessage: Message = {
-          id: "welcome",
-          content: userRole === 'admin' 
-            ? "Hi! I can help you analyze team performance, review sales data, and manage requests. What do you need?"
-            : `Hi${employeeName ? `, ${employeeName}` : ''}! I can help you track sales, record reviews, and daily check-in. What would you like to do?`,
-          sender: "bot",
-          timestamp: new Date(),
-        };
-        setMessages([welcomeMessage]);
+        setMessages([]);
       }
     };
-
     loadMessages();
-  }, [userRole, STORAGE_KEY, user?.id]);
+  }, [user?.id, userRole]);
 
-  // Save messages to localStorage whenever messages change
-  useEffect(() => {
-    if (messages.length > 0 && STORAGE_KEY) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-      } catch (error) {
-        console.error('Error saving chat messages:', error);
-      }
-    }
-  }, [messages, STORAGE_KEY]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const getUserInitials = () => {
-    if (user?.firstName && user?.lastName) {
-      return `${user.firstName[0]}${user.lastName[0]}`;
-    }
-    if (user?.emailAddresses[0]?.emailAddress) {
-      const email = user.emailAddresses[0].emailAddress;
-      return email.substring(0, 2).toUpperCase();
-    }
-    return userRole === 'admin' ? "AD" : "EM";
-  };
-
+  // Save messages to backend on send
   const handleSend = async () => {
-    if (!input.trim() || isTyping || !userRole) return;
-
-    // Add user message
+    if (!input.trim() || isTyping || !userRole || !user?.id) return;
     const userMessage: Message = {
       id: Date.now().toString(),
       content: input,
       sender: "user",
       timestamp: new Date(),
     };
-    
-    // Remove oldest messages if limit is reached
-    const updatedMessages = [...messages, userMessage];
-    if (updatedMessages.length > MAX_MESSAGES) {
-      updatedMessages.splice(0, updatedMessages.length - MAX_MESSAGES);
-    }
-    
-    setMessages(updatedMessages);
+    setMessages(prev => {
+      const updated = [...prev, userMessage];
+      if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+      return updated;
+    });
     setInput("");
     setIsTyping(true);
-    
+    await addChatMessage({ userId: user.id, role: userRole, content: input });
     try {
-      // Call OpenAI API with user role
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: input,
-          userRole: userRole,
-          employeeId: user?.id || "emp-001"
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input, userRole: userRole, employeeId: user.id })
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to get response');
-      }
-
+      if (!response.ok) throw new Error('Failed to get response');
       const data = await response.json();
-      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: data.response,
         sender: "bot",
         timestamp: new Date(),
       };
-      
-      // Remove oldest messages if limit is reached
-      const updatedMessagesWithBot = [...updatedMessages, botMessage];
-      if (updatedMessagesWithBot.length > MAX_MESSAGES) {
-        updatedMessagesWithBot.splice(0, updatedMessagesWithBot.length - MAX_MESSAGES);
-      }
-      
-      setMessages(updatedMessagesWithBot);
-    } catch (error) {
-      console.error('Chat error:', error);
-      toast({
-        title: "Error",
-        description: "Failed to get response from assistant. Please try again.",
-        variant: "destructive",
+      setMessages(prev => {
+        const updated = [...prev, botMessage];
+        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+        return updated;
       });
-      
-      // Add error message
+      await addChatMessage({ userId: user.id, role: 'bot', content: data.response });
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to get response from assistant. Please try again.", variant: "destructive" });
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: "I'm sorry, I'm having trouble connecting right now. Please check that your OpenAI API key is configured and try again.",
         sender: "bot",
         timestamp: new Date(),
       };
-      
-      const updatedMessagesWithError = [...updatedMessages, errorMessage];
-      if (updatedMessagesWithError.length > MAX_MESSAGES) {
-        updatedMessagesWithError.splice(0, updatedMessagesWithError.length - MAX_MESSAGES);
-      }
-      
-      setMessages(updatedMessagesWithError);
+      setMessages(prev => {
+        const updated = [...prev, errorMessage];
+        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+        return updated;
+      });
+      await addChatMessage({ userId: user.id, role: 'bot', content: errorMessage.content });
     } finally {
       setIsTyping(false);
     }
@@ -379,6 +296,17 @@ export function ChatInterface({
   }
 
   const quickActions = getQuickActions();
+
+  const getUserInitials = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName[0]}${user.lastName[0]}`;
+    }
+    if (user?.emailAddresses?.[0]?.emailAddress) {
+      const email = user.emailAddresses[0].emailAddress;
+      return email.substring(0, 2).toUpperCase();
+    }
+    return userRole === "admin" ? "AD" : "EM";
+  };
 
   return (
     <div className="h-full flex flex-col bg-background">

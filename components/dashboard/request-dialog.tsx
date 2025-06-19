@@ -13,6 +13,8 @@ import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { addRequest } from "@/lib/database";
+import { useUser } from "@clerk/nextjs";
 
 interface RequestDialogProps {
   open: boolean;
@@ -24,12 +26,13 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
   const [reason, setReason] = useState("");
+  const [hours, setHours] = useState<number | undefined>(undefined);
   const { toast } = useToast();
+  const { user } = useUser();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!requestType || !startDate || !reason) {
+    if (!requestType || !startDate || !reason || !user?.id) {
       toast({
         title: "Error",
         description: "Please fill in all required fields",
@@ -37,19 +40,36 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
       });
       return;
     }
-
-    // Here you would typically send the request to your backend
-    toast({
-      title: "Request Submitted",
-      description: "Your request has been submitted for approval",
-    });
-
-    // Reset form and close dialog
-    setRequestType("");
-    setStartDate(undefined);
-    setEndDate(undefined);
-    setReason("");
-    onOpenChange(false);
+    const requestData = {
+      employeeId: user.id,
+      type: requestType as any,
+      title: `${requestType.charAt(0).toUpperCase() + requestType.slice(1)} Request`,
+      description: reason,
+      requestDate: startDate.toISOString().split('T')[0],
+      hoursRequested: requestType === "overtime" ? hours : undefined,
+      reason,
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate ? endDate.toISOString().split('T')[0] : undefined,
+    };
+    const result = await addRequest(requestData);
+    if (result) {
+      toast({
+        title: "Request Submitted",
+        description: "Your request has been submitted for approval",
+      });
+      setRequestType("");
+      setStartDate(undefined);
+      setEndDate(undefined);
+      setReason("");
+      setHours(undefined);
+      onOpenChange(false);
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to submit request. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -137,6 +157,8 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
                 min="1"
                 max="24"
                 placeholder="Number of hours"
+                value={hours ?? ""}
+                onChange={e => setHours(Number(e.target.value))}
               />
             </div>
           )}
