@@ -39,6 +39,7 @@ export function TimeTracker({
   maxHoursBeforeOvertime = 8,
   hourlyRate = 25
 }: TimeTrackerProps) {
+  console.log('🚩 TimeTracker mounted', new Date().toISOString());
   const { user } = useUser();
   const [status, setStatus] = useState<TimeStatus>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -58,6 +59,44 @@ export function TimeTracker({
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
   const [logsToday, setLogsToday] = useState<any[]>([]);
   const [isUpdatingLogs, setIsUpdatingLogs] = useState(false);
+
+  // NEW: Store base time in a ref
+  const baseTimeRef = useRef(0);
+
+  // Update baseTimeRef whenever logsToday changes
+  useEffect(() => {
+    const baseTime = logsToday
+      .filter(log => log.clock_in && log.clock_out)
+      .reduce((total, log) => {
+        return total + (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
+      }, 0);
+    baseTimeRef.current = baseTime;
+  }, [logsToday]);
+
+  // Stable timer interval for live updates
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (status === "working" || status === "overtime_pending") {
+      interval = setInterval(() => {
+        const now = Date.now();
+        const currentSessionTime = startTime ? (now - startTime) / 1000 : 0;
+        const totalElapsed = Math.floor(baseTimeRef.current + currentSessionTime);
+        setElapsedTime(totalElapsed);
+        console.log('⏱️ Timer tick:', { totalElapsed, now: new Date().toISOString() });
+        onTimeUpdate?.(totalElapsed, status);
+        // Overtime check
+        const hoursWorked = totalElapsed / 3600;
+        if (hoursWorked > maxHoursBeforeOvertime && !overtimeNotificationShown && status !== 'overtime_pending') {
+          setOvertimeNotificationShown(true);
+          setOvertimeDialogOpen(true);
+          setStatus("overtime_pending");
+        }
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [status, startTime, onTimeUpdate, maxHoursBeforeOvertime, overtimeNotificationShown]);
 
   // Get current date in user's timezone
   const getCurrentDate = () => {
@@ -234,73 +273,6 @@ export function TimeTracker({
   const isWorkingStatus = (s: TimeStatus): s is "working" | "overtime_pending" => {
     return s === "working" || s === "overtime_pending";
   };
-
-  // Update the useEffect for timer to use database time
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    console.log('⏱️ Timer useEffect triggered:', { status, startTime: !!startTime, logsTodayLength: logsToday.length, isUpdatingLogs });
-    
-    // Don't recalculate if logs are being updated
-    if (isUpdatingLogs) {
-      console.log('⏳ Logs are being updated, skipping timer calculation');
-      return;
-    }
-    
-    if (isWorkingStatus(status)) {
-      interval = setInterval(async () => {
-        const now = Date.now();
-        
-        // Get the base time from previous sessions today
-        const baseTime = logsToday
-          .filter(log => log.clock_in && log.clock_out)
-          .reduce((total, log) => {
-            return total + (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
-          }, 0);
-        
-        // Calculate current session time
-        const currentSessionTime = startTime ? (now - startTime) / 1000 : 0;
-        
-        const totalElapsed = Math.floor(baseTime + currentSessionTime);
-        setElapsedTime(totalElapsed);
-        
-        // Notify parent component of time update
-        onTimeUpdate?.(totalElapsed, status);
-        
-        // Check for overtime
-        const hoursWorked = totalElapsed / 3600;
-        if (hoursWorked > maxHoursBeforeOvertime && !overtimeNotificationShown && status !== 'overtime_pending') {
-          setOvertimeNotificationShown(true);
-          setOvertimeDialogOpen(true);
-          setStatus("overtime_pending");
-        }
-      }, 1000);
-    } else if (status === "idle") {
-      // When idle, calculate the total time from completed logs
-      console.log('😴 Status is idle, calculating from logs:', logsToday.length, 'logs');
-      const totalTime = logsToday
-        .filter(log => log.clock_in && log.clock_out)
-        .reduce((total, log) => {
-          return total + (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
-        }, 0);
-      
-      const totalElapsed = Math.floor(totalTime);
-      console.log('📊 Idle calculation - totalTime:', totalTime, 'totalElapsed:', totalElapsed);
-      setElapsedTime(totalElapsed);
-      
-      // Notify parent component of final time
-      onTimeUpdate?.(totalElapsed, status);
-    } else if (status === "lunch") {
-      // When on lunch, just show the paused time
-      console.log('🍽️ Status is lunch, showing paused time:', pausedTime);
-      setElapsedTime(pausedTime);
-      onTimeUpdate?.(pausedTime, status);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [status, startTime, logsToday, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate, pausedTime, isUpdatingLogs]);
 
   // Add useEffect to load initial state on mount
   useEffect(() => {

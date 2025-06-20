@@ -3,7 +3,8 @@ import { auth } from '@clerk/nextjs/server';
 import { 
   getTodayTimeTracking,
   getTodayPolicySales,
-  addDailySummary
+  addDailySummary,
+  addChatMessage
 } from '@/lib/database';
 import { handleAdminChat } from '@/lib/ai/admin-chat';
 import { handleEmployeeChat } from '@/lib/ai/employee-chat';
@@ -16,6 +17,7 @@ const getUserRole = (userId: string, userEmail?: string) => {
 };
 
 export async function POST(request: NextRequest) {
+  console.log('Received POST /api/chat');
   try {
     const { userId } = auth();
     
@@ -31,18 +33,36 @@ export async function POST(request: NextRequest) {
     // Determine actual user role if not provided
     const actualUserRole = userRole || getUserRole(userId);
 
+    // Save the user's message to the database
+    await addChatMessage({ userId, role: actualUserRole, content: message });
+
     // Handle daily summary submission directly
     if (isDailySummarySubmission) {
       return await handleDailySummarySubmission(message, userId);
     }
 
     // Handle admin vs employee differently
+    let aiResponse;
     if (actualUserRole === 'admin') {
-      return await handleAdminChat(message, userId);
+      aiResponse = await handleAdminChat(message, userId);
     } else {
-      return await handleEmployeeChat(message, userId);
+      aiResponse = await handleEmployeeChat(message, userId);
     }
 
+    // Extract the response text from the returned NextResponse
+    let responseText = '';
+    if (aiResponse && aiResponse.body) {
+      const body = await aiResponse.json();
+      responseText = body.response || '';
+      // Save the bot's response to the database
+      if (responseText) {
+        await addChatMessage({ userId, role: 'bot', content: responseText });
+      }
+      // Return a new NextResponse with the parsed body
+      return NextResponse.json({ response: responseText });
+    } else {
+      return NextResponse.json({ error: 'No response from AI' }, { status: 500 });
+    }
   } catch (error) {
     console.error('OpenAI API error:', error);
     return NextResponse.json(

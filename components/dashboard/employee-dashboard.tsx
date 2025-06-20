@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useUser } from "@clerk/nextjs";
 import { 
   Card, 
@@ -60,6 +60,7 @@ import {
   type Request 
 } from "@/lib/database";
 import { dashboardEvents } from "@/lib/events";
+import { ChatInterface } from "./chat-interface";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -67,24 +68,18 @@ interface EmployeeDashboardProps {
 }
 
 export function EmployeeDashboard({ initialTab = "overview", onClockOut }: EmployeeDashboardProps) {
-  const { user } = useUser();
+  console.log('🚩 EmployeeDashboard mounted', new Date().toISOString());
+  const { user, isLoaded, isSignedIn } = useUser();
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [isOnLunch, setIsOnLunch] = useState(false);
   const [isClockedIn, setIsClockedIn] = useState(false);
-  
-  // Time tracking state
   const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
   const [timeStatus, setTimeStatus] = useState<"idle" | "working" | "lunch" | "overtime_pending">("idle");
-  
-  // Requests state
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
-
-  // Weekly summary state
   const [weeklyData, setWeeklyData] = useState<Array<{
     date: string;
     dayName: string;
@@ -94,12 +89,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     isToday: boolean;
     isCurrentWeek: boolean;
   }>>([]);
-
-  // Today's hours state
   const [todayHours, setTodayHours] = useState(0);
   const [thisWeekHours, setThisWeekHours] = useState(0);
-
-  // Employee data state
   const [employeeData, setEmployeeData] = useState<{
     name: string;
     email: string;
@@ -113,8 +104,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     position: "",
     loading: true
   });
-
-  // Employee performance data (NO BONUS INFORMATION)
   const [performanceData, setPerformanceData] = useState({
     totalPolicies: 0,
     totalSales: 0,
@@ -122,14 +111,44 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     avgRating: 0,
     loading: true
   });
-
   const { toast } = useToast();
-
-  // Mock employee settings - in real app, this would come from database
   const employeeSettings = {
     maxHoursBeforeOvertime: 8,
     hourlyRate: 25
   };
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
+  const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (isLoaded && !isSignedIn && typeof window !== 'undefined') {
+      window.location.href = '/sign-in';
+    }
+  }, [isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (user?.id) {
+      loadEmployeeData();
+    }
+  }, [user?.id]);
+
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <span className="text-lg text-muted-foreground">Loading user profile...</span>
+      </div>
+    );
+  }
+  if (isLoaded && !isSignedIn) {
+    return null;
+  }
 
   // Load employee data from database
   const loadEmployeeData = async () => {
@@ -352,7 +371,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
   // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
-    console.log('⏰ Time update received:', { elapsedSeconds, status, currentStatus: timeStatus });
+    console.log('⏰ Time update received:', { elapsedSeconds, status, currentStatus: timeStatus, now: new Date().toISOString() });
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
     
@@ -364,7 +383,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   };
 
   // Handle clock out to refresh data
-  const handleClockOut = () => {
+  const handleClockOut = async () => {
     console.log('🚪 Clock out triggered, will refresh data in 500ms');
     // Add a small delay to ensure the database operation completes
     setTimeout(() => {
@@ -373,6 +392,24 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       loadPerformanceData();
     }, 500);
     onClockOut?.();
+    // Fetch AI-generated message
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: "The user just finished their workday. Please generate an encouraging, conversational message asking about their day and inviting them to share a summary.",
+          userRole: 'bot',
+          employeeId: user?.id,
+          isClockOutPrompt: true
+        }),
+      });
+      const data = await res.json();
+      setClockOutPromptMessage(data.reply || "How was your day? Please share a brief summary before you clock out!");
+    } catch {
+      setClockOutPromptMessage("How was your day? Please share a brief summary before you clock out!");
+    }
+    setShowClockOutPrompt(true);
   };
 
   // Format time for display (hours and minutes)
@@ -478,20 +515,40 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     return employeeData.name;
   };
 
-  const getCurrentDate = () => {
-    return new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
+  const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
 
-  const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const getCurrentTime = () => currentTime.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  // Live pay calculation based on currentElapsedTime
+  const livePay = useMemo(() => {
+    const hours = currentElapsedTime / 3600;
+    const regularHours = Math.min(hours, employeeSettings.maxHoursBeforeOvertime);
+    const overtimeHours = Math.max(0, hours - employeeSettings.maxHoursBeforeOvertime);
+    const regularPay = regularHours * employeeSettings.hourlyRate;
+    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.0;
+    return {
+      regularPay,
+      overtimePay,
+      totalPay: regularPay + overtimePay,
+      overtimeHours
+    };
+  }, [currentElapsedTime, employeeSettings.hourlyRate, employeeSettings.maxHoursBeforeOvertime]);
+
+  // Helper to get user's first name for personalized welcome
+  const getFirstName = () => {
+    if (employeeData.name && employeeData.name !== 'Employee') {
+      return employeeData.name.split(' ')[0];
+    }
+    if (user?.firstName) return user.firstName;
+    return 'there';
   };
 
   return (
@@ -588,7 +645,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
                 <span className="text-sm">
-                  {formatTimeDisplay(todayHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                  {isClockedIn
+                    ? formatTimeDisplay(currentElapsedTime / 3600)
+                    : formatTimeDisplay(todayHours)
+                  } / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
               <Progress 
@@ -603,9 +663,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
                     ? "On lunch break - timer paused"
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
-                    : todayHours > employeeSettings.maxHoursBeforeOvertime
+                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime
                     ? "You&apos;re in overtime - earning 1x rate"
-                    : todayHours > employeeSettings.maxHoursBeforeOvertime * 0.8
+                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime * 0.8
                     ? "You&apos;ll be notified when you reach overtime"
                     : "Tracking your work hours"
                   }
@@ -615,6 +675,16 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
                     Status: <span className="capitalize font-medium">{timeStatus.replace('_', ' ')}</span>
                   </div>
                 )}
+              </div>
+              {/* Live Pay Display */}
+              <div className="flex justify-between items-center mt-2">
+                <span className="text-xs font-medium text-muted-foreground">Today's Pay</span>
+                <span className="text-xs font-bold">
+                  ${isClockedIn ? livePay.totalPay.toFixed(2) : (todayHours * employeeSettings.hourlyRate).toFixed(2)}
+                  {isClockedIn && livePay.overtimeHours > 0 && (
+                    <span className="ml-2 text-amber-600">(Overtime: ${livePay.overtimePay.toFixed(2)})</span>
+                  )}
+                </span>
               </div>
             </div>
           </div>
@@ -811,6 +881,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         onOpenChange={setSettingsDialogOpen}
         employeeName={employeeData.name}
         employeeEmail={employeeData.email}
+      />
+
+      <ChatInterface 
+        defaultMessage={`Welcome back, ${getFirstName()}! 👋 This is your HR Assistant. Record sales, ask questions, or get help with your workday.`}
+        onClockOutPrompt={showClockOutPrompt}
+        clockOutPromptMessage={clockOutPromptMessage}
       />
     </div>
   );

@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotifications, type PayrollPeriod } from "@/lib/database";
+import { ChatInterface } from "./chat-interface";
 
 export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
@@ -65,9 +66,14 @@ export function AdminDashboard() {
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
   const [highValueNotifications, setHighValueNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadData = async () => {
@@ -117,21 +123,17 @@ export function AdminDashboard() {
     }
   };
 
-  const getCurrentDate = () => {
-    return new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
+  const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
 
-  const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const getCurrentTime = () => currentTime.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 
   const currentExpenditure = expenditureData[expenditureFilter as keyof typeof expenditureData];
 
@@ -368,6 +370,8 @@ export function AdminDashboard() {
         onOpenChange={setBulkUserCreationOpen}
         onUsersCreated={loadData}
       />
+
+      <ChatInterface defaultMessage="Welcome to the Admin HR Assistant! Ask about team stats, analytics, or manage employees." />
     </div>
   );
 }

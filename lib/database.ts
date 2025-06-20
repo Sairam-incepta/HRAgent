@@ -1412,12 +1412,11 @@ export const addChatMessage = async ({ userId, role, content }: { userId: string
   return data;
 };
 
-export const getChatMessages = async ({ userId, role, limit = 35 }: { userId: string, role: string, limit?: number }) => {
+export const getChatMessages = async ({ userId, limit = 35 }: { userId: string, limit?: number }) => {
   const { data, error } = await supabase
     .from('chat_messages')
     .select('*')
     .eq('user_id', userId)
-    .eq('role', role)
     .order('timestamp', { ascending: false })
     .limit(limit);
   if (error) throw error;

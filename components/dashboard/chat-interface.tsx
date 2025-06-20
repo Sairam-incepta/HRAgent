@@ -9,7 +9,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Send, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart, X, Expand, Shrink, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { addChatMessage, getChatMessages } from '@/lib/database';
+import { getChatMessages } from '@/lib/database';
+import { useRouter } from "next/navigation";
 
 type Message = {
   id: string;
@@ -60,7 +61,7 @@ const MessageBubble = ({
       )}>
         {/* Message Bubble */}
         <div className={cn(
-          "relative rounded-lg px-3 py-2 shadow-sm",
+          "relative rounded-lg px-3 py-3 pb-8 shadow-sm min-h-[3.5rem]",
           // Simple max-width based on chat state
           isExpanded ? "max-w-[75%]" : "max-w-[85%]",
           // Styling based on sender
@@ -69,7 +70,7 @@ const MessageBubble = ({
             : "bg-muted/50 border"
         )}>
           <p 
-            className="text-sm break-words whitespace-pre-wrap pr-6"
+            className="text-sm break-words whitespace-pre-wrap pr-10"
             dangerouslySetInnerHTML={{ __html: message.content }}
           />
           
@@ -115,21 +116,31 @@ export function ChatInterface({
   onDailySummaryPromptShown, 
   onCollapse,
   isExpanded,
-  onToggleExpand
+  onToggleExpand,
+  defaultMessage,
+  onClockOutPrompt,
+  clockOutPromptMessage
 }: { 
   dailySummaryPrompt?: string | null;
   onDailySummaryPromptShown?: () => void;
   onCollapse?: () => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
+  defaultMessage?: string;
+  onClockOutPrompt?: boolean;
+  clockOutPromptMessage?: string;
 }) {
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded, isSignedIn } = useUser();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const router = useRouter();
+  const [hasRedirected, setHasRedirected] = useState(false);
+  const [awaitingDailySummary, setAwaitingDailySummary] = useState(false);
+  const [hasShownClockOutPrompt, setHasShownClockOutPrompt] = useState(false);
 
   // Determine user role
   useEffect(() => {
@@ -144,9 +155,9 @@ export function ChatInterface({
   // Load messages from backend on mount
   useEffect(() => {
     const loadMessages = async () => {
-      if (!user?.id || !userRole) return;
+      if (!user?.id) return;
       try {
-        const msgs = await getChatMessages({ userId: user.id, role: userRole, limit: MAX_MESSAGES });
+        const msgs = await getChatMessages({ userId: user.id, limit: MAX_MESSAGES });
         setMessages(msgs.map((msg: any) => ({
           id: msg.id,
           content: msg.content,
@@ -158,10 +169,94 @@ export function ChatInterface({
       }
     };
     loadMessages();
-  }, [user?.id, userRole]);
+  }, [user?.id]);
 
-  // Save messages to backend on send
+  // Show default message on mount if no messages
+  useEffect(() => {
+    if (defaultMessage && messages.length === 0 && userRole) {
+      setMessages([
+        {
+          id: `default-message-${Date.now()}`,
+          content: defaultMessage,
+          sender: "bot",
+          timestamp: new Date(),
+        },
+      ]);
+    }
+  }, [defaultMessage, userRole]);
+
+  // Show post-clock-out prompt when onClockOutPrompt becomes true
+  useEffect(() => {
+    if (onClockOutPrompt && !hasShownClockOutPrompt && userRole === 'employee') {
+      setAwaitingDailySummary(true);
+      setHasShownClockOutPrompt(true);
+      // Add the prompt as a bot message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `clockout-prompt-${Date.now()}`,
+          content: clockOutPromptMessage || "How was your day? Please share a brief summary before you clock out!",
+          sender: "bot",
+          timestamp: new Date(),
+        },
+      ]);
+    }
+    if (!onClockOutPrompt) {
+      setHasShownClockOutPrompt(false);
+    }
+  }, [onClockOutPrompt, userRole, hasShownClockOutPrompt, clockOutPromptMessage]);
+
+  // Handle daily summary submission (after clock out)
+  const handleDailySummarySubmit = async () => {
+    if (!input.trim() || isTyping || !userRole || !user?.id) return;
+    setIsTyping(true);
+    try {
+      // Send to /api/chat with isDailySummarySubmission flag
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input, userRole: userRole, employeeId: user.id, isDailySummarySubmission: true })
+      });
+      const data = await response.json();
+      // Add user message
+      addMessage({
+        id: Date.now().toString(),
+        content: input,
+        sender: "user",
+        timestamp: new Date(),
+      });
+      // Add bot response
+      addMessage({
+        id: (Date.now() + 1).toString(),
+        content: data.response || "Thank you for your summary!",
+        sender: "bot",
+        timestamp: new Date(),
+      });
+      setAwaitingDailySummary(false);
+      setInput("");
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to submit summary.", variant: "destructive" });
+      setAwaitingDailySummary(false);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // When adding a new message, keep only the latest 35 (excluding the welcome message)
+  const addMessage = (newMsg: Message) => {
+    setMessages(prev => {
+      const updated = [...prev, newMsg];
+      if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+      return updated;
+    });
+  };
+
+  // Update handleSend to check for awaitingDailySummary
   const handleSend = async () => {
+    if (awaitingDailySummary) {
+      await handleDailySummarySubmit();
+      return;
+    }
     if (!input.trim() || isTyping || !userRole || !user?.id) return;
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -169,21 +264,21 @@ export function ChatInterface({
       sender: "user",
       timestamp: new Date(),
     };
-    setMessages(prev => {
-      const updated = [...prev, userMessage];
-      if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
-      return updated;
-    });
+    addMessage(userMessage);
     setInput("");
     setIsTyping(true);
-    await addChatMessage({ userId: user.id, role: userRole, content: input });
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input, userRole: userRole, employeeId: user.id })
       });
-      if (!response.ok) throw new Error('Failed to get response');
+      if (!response.ok) {
+        let errorBody = '';
+        try { errorBody = await response.text(); } catch {}
+        console.error('Chat API error:', response.status, errorBody);
+        throw new Error('Failed to get response');
+      }
       const data = await response.json();
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -191,13 +286,9 @@ export function ChatInterface({
         sender: "bot",
         timestamp: new Date(),
       };
-      setMessages(prev => {
-        const updated = [...prev, botMessage];
-        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
-        return updated;
-      });
-      await addChatMessage({ userId: user.id, role: 'bot', content: data.response });
+      addMessage(botMessage);
     } catch (error) {
+      console.error('Chat handleSend error:', error);
       toast({ title: "Error", description: "Failed to get response from assistant. Please try again.", variant: "destructive" });
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -205,12 +296,7 @@ export function ChatInterface({
         sender: "bot",
         timestamp: new Date(),
       };
-      setMessages(prev => {
-        const updated = [...prev, errorMessage];
-        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
-        return updated;
-      });
-      await addChatMessage({ userId: user.id, role: 'bot', content: errorMessage.content });
+      addMessage(errorMessage);
     } finally {
       setIsTyping(false);
     }
@@ -286,6 +372,15 @@ export function ChatInterface({
     }
   }, [dailySummaryPrompt, userRole, onDailySummaryPromptShown]);
 
+  useEffect(() => {
+    if (isLoaded && isSignedIn && !hasRedirected) {
+      setHasRedirected(true);
+      setTimeout(() => {
+        router.replace('/dashboard');
+      }, 100);
+    }
+  }, [isLoaded, isSignedIn, router, hasRedirected]);
+
   // Don't render chat until we have a confirmed role
   if (!userRole || !isLoaded) {
     return (
@@ -306,6 +401,22 @@ export function ChatInterface({
       return email.substring(0, 2).toUpperCase();
     }
     return userRole === "admin" ? "AD" : "EM";
+  };
+
+  // Always show the welcome message at the top
+  const renderMessages = () => {
+    const welcomeMsg: Message[] = defaultMessage
+      ? [{
+          id: 'welcome-message',
+          content: defaultMessage,
+          sender: 'bot',
+          timestamp: new Date(0),
+        }]
+      : [];
+    return [
+      ...welcomeMsg,
+      ...messages.slice(-MAX_MESSAGES)
+    ];
   };
 
   return (
@@ -392,53 +503,39 @@ export function ChatInterface({
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-        {messages.map((message) => (
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+        {renderMessages().map((message) => (
           <MessageBubble
             key={message.id}
             message={message}
             userInitials={getUserInitials()}
             userImageUrl={user?.imageUrl}
-            isExpanded={isExpanded ?? false}
+            isExpanded={!!isExpanded}
           />
         ))}
-        
-        {isTyping && (
-          <TypingIndicator isExpanded={isExpanded ?? false} />
-        )}
-        
+        {isTyping && <TypingIndicator isExpanded={!!isExpanded} />}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-3 bg-background">
-        <div className="flex w-full items-center gap-2">
-          <Input
-            placeholder={userRole === 'admin' 
-              ? "Ask about team performance, sales data, or employee metrics..." 
-              : "Record a sale, share feedback, ask questions, or get help..."
-            }
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 border-muted-foreground/20 focus:border-[#005cb3] transition-colors text-sm"
-            disabled={isTyping}
-          />
-          <Button 
-            onClick={handleSend} 
-            disabled={!input.trim() || isTyping} 
-            className="bg-[#005cb3] hover:bg-[#004a96] px-3 shrink-0"
-            size="sm"
-          >
-            {isTyping ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-            <span className="sr-only">Send</span>
-          </Button>
-        </div>
-      </div>
+      <form
+        className="flex items-center gap-2 p-3 border-t bg-background"
+        onSubmit={e => {
+          e.preventDefault();
+          handleSend();
+        }}
+      >
+        <Input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={awaitingDailySummary ? "Share a brief summary of your day..." : "Type your message..."}
+          disabled={isTyping}
+        />
+        <Button type="submit" disabled={isTyping || !input.trim()}>
+          {isTyping ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </form>
     </div>
   );
 }
