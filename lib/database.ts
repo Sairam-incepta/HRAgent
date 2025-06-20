@@ -10,6 +10,7 @@ import type {
   OvertimeRequest,
   HighValuePolicyNotification
 } from './supabase';
+import { notifyPolicySale, notifyClientReview, notifyRequestSubmitted, notifyTimeLogged, notifyDailySummary } from './events';
 
 // Timezone-aware date utilities
 const getLocalDateString = (date: Date = new Date()): string => {
@@ -100,52 +101,51 @@ export const addPolicySale = async (sale: {
   clientDescription?: string;
   isCrossSoldPolicy?: boolean;
 }): Promise<PolicySale | null> => {
-  // Calculate bonuses based on new rules
-  const brokerFeeBonus = calculateBonus(sale.brokerFee, sale.crossSold);
-  const lifeInsuranceBonus = calculateLifeInsuranceReferralBonus(sale.policyType, sale.crossSoldType);
-  const totalBonus = brokerFeeBonus + lifeInsuranceBonus;
-  
-  const { data, error } = await supabase
-    .from('policy_sales')
-    .insert({
-      policy_number: sale.policyNumber,
-      client_name: sale.clientName,
-      policy_type: sale.policyType,
-      amount: sale.amount,
-      broker_fee: sale.brokerFee,
-      bonus: totalBonus,
-      employee_id: sale.employeeId,
-      sale_date: sale.saleDate.toISOString(),
-      cross_sold: sale.crossSold || false,
-      cross_sold_type: sale.crossSoldType,
-      cross_sold_to: sale.crossSoldTo,
-      client_description: sale.clientDescription,
-      is_cross_sold_policy: sale.isCrossSoldPolicy || false
-    })
-    .select()
-    .single();
+  try {
+    console.log('📝 Adding policy sale:', sale);
+    
+    const { data, error } = await supabase
+      .from('policy_sales')
+      .insert({
+        policy_number: sale.policyNumber,
+        client_name: sale.clientName,
+        policy_type: sale.policyType,
+        amount: sale.amount,
+        broker_fee: sale.brokerFee,
+        employee_id: sale.employeeId,
+        sale_date: sale.saleDate.toISOString(),
+        cross_sold: sale.crossSold || false,
+        cross_sold_type: sale.crossSoldType,
+        cross_sold_to: sale.crossSoldTo,
+        client_description: sale.clientDescription,
+        is_cross_sold_policy: sale.isCrossSoldPolicy || false,
+        bonus: calculateBonus(sale.brokerFee, sale.crossSold),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error adding policy sale:', error);
+    if (error) {
+      console.error('❌ Error adding policy sale:', error);
+      console.error('📝 Sale data that failed:', sale);
+      return null;
+    }
+    
+    console.log('✅ Policy sale added successfully:', data);
+    
+    // Update employee bonus
+    await updateEmployeeBonus(sale.employeeId, data.bonus);
+    
+    // Notify dashboard to refresh
+    notifyPolicySale();
+    
+    return data;
+  } catch (error) {
+    console.error('❌ Exception in addPolicySale:', error);
+    console.error('📝 Sale data that failed:', sale);
     return null;
   }
-
-  // Update employee bonus
-  await updateEmployeeBonus(sale.employeeId, totalBonus);
-  
-  // Create high-value policy notification if amount > $5000
-  if (sale.amount > 5000) {
-    await createHighValuePolicyNotification({
-      employeeId: sale.employeeId,
-      policyNumber: sale.policyNumber,
-      policyAmount: sale.amount,
-      brokerFee: sale.brokerFee,
-      currentBonus: totalBonus,
-      isCrossSoldPolicy: sale.isCrossSoldPolicy || false
-    });
-  }
-  
-  return data;
 };
 
 export const getPolicySales = async (employeeId?: string): Promise<PolicySale[]> => {
@@ -277,31 +277,47 @@ export const addClientReview = async (review: {
   reviewDate: Date;
   employeeId: string;
 }): Promise<ClientReview | null> => {
-  const { data, error } = await supabase
-    .from('client_reviews')
-    .insert({
-      client_name: review.clientName,
-      policy_number: review.policyNumber,
-      rating: review.rating,
-      review: review.review,
-      review_date: review.reviewDate.toISOString(),
-      employee_id: review.employeeId
-    })
-    .select()
-    .single();
+  try {
+    console.log('📝 Adding client review:', review);
+    
+    const bonus = calculateReviewBonus(review.rating);
+    
+    const { data, error } = await supabase
+      .from('client_reviews')
+      .insert({
+        client_name: review.clientName,
+        policy_number: review.policyNumber,
+        rating: review.rating,
+        review: review.review,
+        review_date: review.reviewDate.toISOString(),
+        employee_id: review.employeeId,
+        bonus: bonus,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error adding client review:', error);
+    if (error) {
+      console.error('❌ Error adding client review:', error);
+      console.error('📝 Review data that failed:', review);
+      return null;
+    }
+    
+    console.log('✅ Client review added successfully:', data);
+    
+    // Update employee bonus
+    await updateEmployeeBonus(review.employeeId, bonus);
+    
+    // Notify dashboard to refresh
+    notifyClientReview();
+    
+    return data;
+  } catch (error) {
+    console.error('❌ Exception in addClientReview:', error);
+    console.error('📝 Review data that failed:', review);
     return null;
   }
-
-  // Add 5-star review bonus
-  const reviewBonus = calculateReviewBonus(review.rating);
-  if (reviewBonus > 0) {
-    await updateEmployeeBonus(review.employeeId, reviewBonus);
-  }
-
-  return data;
 };
 
 export const getClientReviews = async (employeeId?: string): Promise<ClientReview[]> => {
@@ -332,27 +348,43 @@ export const addDailySummary = async (summary: {
   description: string;
   keyActivities: string[];
 }): Promise<DailySummary | null> => {
-  const { data, error } = await supabase
-    .from('daily_summaries')
-    .insert({
-      employee_id: summary.employeeId,
-      date: summary.date.toISOString().split('T')[0], // Date only
-      hours_worked: summary.hoursWorked,
-      policies_sold: summary.policiesSold,
-      total_sales_amount: summary.totalSalesAmount,
-      total_broker_fees: summary.totalBrokerFees,
-      description: summary.description,
-      key_activities: summary.keyActivities
-    })
-    .select()
-    .single();
+  try {
+    console.log('📝 Adding daily summary:', summary);
+    
+    const { data, error } = await supabase
+      .from('daily_summaries')
+      .insert({
+        employee_id: summary.employeeId,
+        date: getLocalDateString(summary.date),
+        hours_worked: summary.hoursWorked,
+        policies_sold: summary.policiesSold,
+        total_sales_amount: summary.totalSalesAmount,
+        total_broker_fees: summary.totalBrokerFees,
+        description: summary.description,
+        key_activities: summary.keyActivities,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error adding daily summary:', error);
+    if (error) {
+      console.error('❌ Error adding daily summary:', error);
+      console.error('📝 Summary data that failed:', summary);
+      return null;
+    }
+    
+    console.log('✅ Daily summary added successfully:', data);
+    
+    // Notify dashboard to refresh
+    notifyDailySummary();
+    
+    return data;
+  } catch (error) {
+    console.error('❌ Exception in addDailySummary:', error);
+    console.error('📝 Summary data that failed:', summary);
     return null;
   }
-
-  return data;
 };
 
 export const getDailySummaries = async (employeeId: string): Promise<DailySummary[]> => {
@@ -626,27 +658,26 @@ export interface Request {
   status: 'pending' | 'approved' | 'rejected';
   hours_requested?: number;
   reason?: string;
-  current_overtime_hours?: number;
 }
 
 export const getEmployeeRequests = async (employeeId: string): Promise<Request[]> => {
-  // Get overtime requests and transform them
-  const overtimeRequests = await getOvertimeRequests(employeeId);
-  
-  const requests: Request[] = overtimeRequests.map(req => ({
-    id: req.id,
-    employee_id: req.employee_id,
-    type: 'overtime' as const,
-    title: `Overtime Request - ${req.hours_requested} hours`,
-    description: req.reason,
-    request_date: req.request_date,
-    status: req.status,
-    hours_requested: req.hours_requested,
-    reason: req.reason,
-    current_overtime_hours: req.current_overtime_hours
-  }));
+  try {
+    const { data, error } = await supabase
+      .from('requests')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .order('request_date', { ascending: false });
 
-  return requests;
+    if (error) {
+      console.error('Error fetching employee requests:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error in getEmployeeRequests:', error);
+    return [];
+  }
 };
 
 // Enhanced Payroll Functions with Real Database Data
@@ -1227,28 +1258,43 @@ export const addRequest = async (request: {
   startDate?: string;
   endDate?: string;
 }): Promise<Request | null> => {
-  const { data, error } = await supabase
-    .from('requests')
-    .insert({
-      employee_id: request.employeeId,
-      type: request.type,
-      title: request.title,
-      description: request.description,
-      request_date: request.requestDate,
-      status: request.status || 'pending',
-      hours_requested: request.hoursRequested,
-      reason: request.reason,
-      start_date: request.startDate,
-      end_date: request.endDate,
-    })
-    .select()
-    .single();
+  try {
+    console.log('📝 Adding request:', request);
+    
+    const { data, error } = await supabase
+      .from('requests')
+      .insert({
+        employee_id: request.employeeId,
+        type: request.type,
+        title: request.title,
+        description: request.description,
+        request_date: request.requestDate,
+        status: request.status || 'pending',
+        hours_requested: request.hoursRequested,
+        reason: request.reason,
+        start_date: request.startDate,
+        end_date: request.endDate,
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error adding request:', error);
+    if (error) {
+      console.error('❌ Error adding request:', error);
+      console.error('📝 Request data that failed:', request);
+      return null;
+    }
+    
+    console.log('✅ Request added successfully:', data);
+    
+    // Notify dashboard to refresh
+    notifyRequestSubmitted();
+    
+    return data;
+  } catch (error) {
+    console.error('❌ Exception in addRequest:', error);
+    console.error('📝 Request data that failed:', request);
     return null;
   }
-  return data;
 };
 
 // Get all requests (for admin)
@@ -1282,6 +1328,11 @@ export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: strin
       .select()
       .single();
     
+    if (!error) {
+      // Notify dashboard to refresh
+      notifyTimeLogged();
+    }
+    
     return { data, error };
   } catch (error) {
     console.error('Error in createTimeLog:', error);
@@ -1305,6 +1356,9 @@ export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockO
       console.error('Error updating time log:', error);
       return null;
     }
+    
+    // Notify dashboard to refresh
+    notifyTimeLogged();
     
     return data;
   } catch (error) {
@@ -1369,4 +1423,29 @@ export const getChatMessages = async ({ userId, role, limit = 35 }: { userId: st
   if (error) throw error;
   // Return in chronological order
   return (data || []).reverse();
+};
+
+// Update request status (for new requests table)
+export const updateRequestStatus = async (
+  requestId: string, 
+  status: 'pending' | 'approved' | 'rejected'
+): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from('requests')
+      .update({ status })
+      .eq('id', requestId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating request status:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error in updateRequestStatus:', error);
+    return false;
+  }
 };

@@ -25,11 +25,18 @@ interface DashboardHeaderProps {
 export function DashboardHeader({ userRole, employeeName, employeeEmail }: DashboardHeaderProps) {
   const { setTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { signOut } = useClerk();
   const { user } = useUser();
 
-  const handleLogout = () => {
-    signOut();
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Logout error:', error);
+      setIsLoggingOut(false);
+    }
   };
 
   const getUserInitials = () => {
@@ -143,9 +150,9 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
                   <span>Settings</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout}>
+                <DropdownMenuItem onClick={handleLogout} disabled={isLoggingOut}>
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
+                  <span>{isLoggingOut ? "Logging out..." : "Log out"}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

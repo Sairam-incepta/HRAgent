@@ -59,6 +59,7 @@ import {
   logTimezoneInfo,
   type Request 
 } from "@/lib/database";
+import { dashboardEvents } from "@/lib/events";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -174,7 +175,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
   // Load employee data on mount and when user changes
   useEffect(() => {
-    loadEmployeeData();
+    if (user?.id) {
+      loadEmployeeData();
+    }
   }, [user?.id]);
 
   // Load weekly data and hours
@@ -206,45 +209,52 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   };
 
   // Load employee performance data (NO BONUS INFORMATION)
-  useEffect(() => {
-    const loadPerformanceData = async () => {
-      if (!user?.id) return;
+  const loadPerformanceData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const [policySales, clientReviews] = await Promise.all([
+        getPolicySales(user.id),
+        getClientReviews(user.id)
+      ]);
       
-      try {
-        const [policySales, clientReviews] = await Promise.all([
-          getPolicySales(user.id),
-          getClientReviews(user.id)
-        ]);
+      const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
+      const avgRating = clientReviews.length > 0 
+        ? clientReviews.reduce((sum, review) => sum + review.rating, 0) / clientReviews.length 
+        : 0;
+      
+      setPerformanceData({
+        totalPolicies: policySales.length,
+        totalSales,
+        totalReviews: clientReviews.length,
+        avgRating: Math.round(avgRating * 10) / 10,
+        loading: false
+      });
+    } catch (error) {
+      console.error('Error loading performance data:', error);
+      setPerformanceData(prev => ({ ...prev, loading: false }));
+    }
+  };
 
-        const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
-        const avgRating = clientReviews.length > 0 
-          ? clientReviews.reduce((sum, review) => sum + review.rating, 0) / clientReviews.length 
-          : 0;
-
-        setPerformanceData({
-          totalPolicies: policySales.length,
-          totalSales,
-          totalReviews: clientReviews.length,
-          avgRating,
-          loading: false
-        });
-      } catch (error) {
-        console.error('Error loading performance data:', error);
-        setPerformanceData(prev => ({ ...prev, loading: false }));
-      }
-    };
-
-    loadPerformanceData();
+  // Load employee performance data on mount and when user changes
+  useEffect(() => {
+    if (user?.id) {
+      loadPerformanceData();
+    }
   }, [user?.id]);
 
   // Load weekly data on mount and when user changes
   useEffect(() => {
-    loadWeeklyData();
+    if (user?.id) {
+      loadWeeklyData();
+    }
   }, [user?.id]);
 
   // Load requests on mount and when user changes
   useEffect(() => {
-    loadRequests();
+    if (user?.id) {
+      loadRequests();
+    }
   }, [user?.id]);
 
   // Refresh data periodically to keep it up to date
@@ -252,6 +262,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     const interval = setInterval(() => {
       if (user?.id) {
         loadWeeklyData();
+        loadPerformanceData();
       }
     }, 30000); // Refresh every 30 seconds
 
@@ -261,6 +272,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   // Detect day change and refresh data
   useEffect(() => {
     const checkDayChange = () => {
+      if (!user?.id) return; // Don't check if user is logging out
+      
       const now = new Date();
       const currentDate = now.toDateString(); // Gets date in local timezone
       
@@ -271,6 +284,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         console.log('📅 Day changed detected, refreshing data');
         logTimezoneInfo(); // Log timezone info for debugging
         loadWeeklyData();
+        loadPerformanceData();
         loadRequests();
       }
       
@@ -284,6 +298,56 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     const dayChangeInterval = setInterval(checkDayChange, 60000);
     
     return () => clearInterval(dayChangeInterval);
+  }, [user?.id]);
+
+  // Listen for database changes and refresh data
+  useEffect(() => {
+    const handlePolicySale = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Policy sale event received, refreshing performance data');
+      loadPerformanceData();
+    };
+
+    const handleClientReview = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Client review event received, refreshing performance data');
+      loadPerformanceData();
+    };
+
+    const handleRequestSubmitted = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Request submitted event received, refreshing requests');
+      loadRequests();
+    };
+
+    const handleTimeLogged = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Time logged event received, refreshing weekly data');
+      loadWeeklyData();
+    };
+
+    const handleDailySummary = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Daily summary event received, refreshing all data');
+      loadWeeklyData();
+      loadPerformanceData();
+    };
+
+    // Subscribe to events
+    dashboardEvents.on('policy_sale', handlePolicySale);
+    dashboardEvents.on('client_review', handleClientReview);
+    dashboardEvents.on('request_submitted', handleRequestSubmitted);
+    dashboardEvents.on('time_logged', handleTimeLogged);
+    dashboardEvents.on('daily_summary', handleDailySummary);
+
+    // Cleanup event listeners
+    return () => {
+      dashboardEvents.off('policy_sale', handlePolicySale);
+      dashboardEvents.off('client_review', handleClientReview);
+      dashboardEvents.off('request_submitted', handleRequestSubmitted);
+      dashboardEvents.off('time_logged', handleTimeLogged);
+      dashboardEvents.off('daily_summary', handleDailySummary);
+    };
   }, [user?.id]);
 
   // Handle time tracker updates
@@ -306,6 +370,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     setTimeout(() => {
       console.log('🔄 Clock out delay completed, refreshing data');
       loadWeeklyData();
+      loadPerformanceData();
     }, 500);
     onClockOut?.();
   };
@@ -345,6 +410,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
 
   // Load requests from database
   const loadRequests = async () => {
+    setRequestsLoading(true);
     try {
       const fetchedRequests = await getEmployeeRequests(user?.id || "");
       setRequests(fetchedRequests);
@@ -458,12 +524,17 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Today's Hours</p>
+                <p className="text-sm font-medium text-muted-foreground">Client Reviews</p>
                 <p className="text-2xl font-bold">
-                  {formatTimeDisplay(todayHours)}
+                  {performanceData.totalReviews}
                 </p>
+                {performanceData.totalReviews > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Avg: {performanceData.avgRating}★
+                  </p>
+                )}
               </div>
-              <Timer className="h-8 w-8 text-[#005cb3]" />
+              <Star className="h-8 w-8 text-[#005cb3]" />
             </div>
           </CardContent>
         </Card>
@@ -472,8 +543,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">This Week</p>
-                <p className="text-2xl font-bold">{formatTimeDisplay(thisWeekHours)}</p>
+                <p className="text-sm font-medium text-muted-foreground">Sales Generated</p>
+                <p className="text-2xl font-bold">${performanceData.totalSales.toLocaleString()}</p>
               </div>
               <TrendingUp className="h-8 w-8 text-[#005cb3]" />
             </div>
@@ -628,18 +699,13 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
                           <span className="font-medium">Hours Requested:</span> {request.hours_requested}
                         </p>
                       )}
-                      {request.current_overtime_hours && (
-                        <p className="text-sm">
-                          <span className="font-medium">Current Overtime:</span> {request.current_overtime_hours} hours
-                        </p>
-                      )}
                     </CollapsibleContent>
                   </div>
                 </Collapsible>
               ))
             ) : (
               <div className="text-center py-8 text-muted-foreground">
-                {requests.length === 0 ? "No requests submitted yet." : "No requests found matching your filters."}
+                {!user?.id ? "Loading..." : requests.length === 0 ? "No requests submitted yet." : "No requests found matching your filters."}
               </div>
             )}
           </div>
@@ -727,8 +793,17 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         open={requestDialogOpen} 
         onOpenChange={(open) => {
           setRequestDialogOpen(open);
-          if (!open) loadRequests();
-        }} 
+          if (!open) {
+            // Refresh requests when dialog closes (after successful submission)
+            setTimeout(() => {
+              loadRequests();
+            }, 100);
+          }
+        }}
+        onRequestSubmitted={() => {
+          // Refresh requests immediately when a request is submitted
+          loadRequests();
+        }}
       />
 
       <SettingsDialog

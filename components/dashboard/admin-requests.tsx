@@ -29,7 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { getAllRequests, updateOvertimeRequestStatus, getEmployees } from "@/lib/database";
+import { getAllRequests, updateRequestStatus, getEmployees } from "@/lib/database";
 
 interface Request {
   id: string;
@@ -41,9 +41,7 @@ interface Request {
   request_date: string;
   hours_requested?: number;
   status: "pending" | "approved" | "rejected";
-  urgency: "low" | "medium" | "high";
-  current_overtime_hours?: number;
-  reason: string;
+  reason?: string;
 }
 
 export function AdminRequests() {
@@ -73,7 +71,7 @@ export function AdminRequests() {
         return {
           ...req,
           employeeName: employee?.name || 'Unknown Employee',
-          urgency: req.type === 'overtime' && req.hours_requested > 4 ? 'high' : req.type === 'overtime' && req.hours_requested > 2 ? 'medium' : 'low',
+          reason: req.reason || '',
         };
       });
       setRequests(transformedRequests);
@@ -99,7 +97,7 @@ export function AdminRequests() {
 
   const handleApprove = async (requestId: string) => {
     try {
-      const success = await updateOvertimeRequestStatus(requestId, 'approved');
+      const success = await updateRequestStatus(requestId, 'approved');
       if (success) {
         setRequests(prev => prev.map(req => 
           req.id === requestId 
@@ -125,7 +123,7 @@ export function AdminRequests() {
 
   const handleReject = async (requestId: string) => {
     try {
-      const success = await updateOvertimeRequestStatus(requestId, 'rejected');
+      const success = await updateRequestStatus(requestId, 'rejected');
       if (success) {
         setRequests(prev => prev.map(req => 
           req.id === requestId 
@@ -134,19 +132,11 @@ export function AdminRequests() {
         ));
         
         const request = requests.find(r => r.id === requestId);
-        
-        if (request?.type === "overtime") {
-          toast({
-            title: "Overtime Request Rejected",
-            description: `${request.employeeName} has been automatically clocked out and will be paid overtime for ${request.current_overtime_hours} hours already worked.`,
-          });
-        } else {
-          toast({
-            title: "Request Rejected",
-            description: `${request?.employeeName}'s ${request?.type} request has been rejected.`,
-            variant: "destructive",
-          });
-        }
+        toast({
+          title: "Request Rejected",
+          description: `${request?.employeeName}'s ${request?.type} request has been rejected.`,
+          variant: "destructive",
+        });
       }
     } catch (error) {
       console.error('Error rejecting request:', error);
@@ -158,18 +148,35 @@ export function AdminRequests() {
     }
   };
 
+  const handleSetPending = async (requestId: string) => {
+    try {
+      const success = await updateRequestStatus(requestId, 'pending');
+      if (success) {
+        setRequests(prev => prev.map(req => 
+          req.id === requestId 
+            ? { ...req, status: "pending" as const }
+            : req
+        ));
+        
+        const request = requests.find(r => r.id === requestId);
+        toast({
+          title: "Request Status Updated",
+          description: `${request?.employeeName}'s ${request?.type} request has been set to pending.`,
+        });
+      }
+    } catch (error) {
+      console.error('Error updating request status:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update request status. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleViewDetails = (request: Request) => {
     setSelectedRequest(request);
     setDetailsOpen(true);
-  };
-
-  const getUrgencyColor = (urgency: string) => {
-    switch (urgency) {
-      case "high": return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400";
-      case "medium": return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
-      case "low": return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400";
-      default: return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400";
-    }
   };
 
   const getTypeIcon = (type: string) => {
@@ -276,12 +283,6 @@ export function AdminRequests() {
                         <div className="flex items-center gap-2 mb-1">
                           {getTypeIcon(request.type)}
                           <h4 className="font-medium truncate">{request.title}</h4>
-                          <Badge 
-                            variant="outline" 
-                            className={getUrgencyColor(request.urgency)}
-                          >
-                            {request.urgency}
-                          </Badge>
                         </div>
                         
                         <p className="text-sm text-muted-foreground mb-2">
@@ -289,12 +290,6 @@ export function AdminRequests() {
                         </p>
                         
                         <p className="text-sm line-clamp-2">{request.description}</p>
-                        
-                        {request.type === "overtime" && request.current_overtime_hours && (
-                          <div className="mt-2 text-xs bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 px-2 py-1 rounded">
-                            Currently {request.current_overtime_hours} hours into overtime
-                          </div>
-                        )}
                       </div>
                     </div>
                     
@@ -330,6 +325,28 @@ export function AdminRequests() {
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
+                      )}
+                      
+                      {request.status === "approved" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSetPending(request.id)}
+                          className="h-8"
+                        >
+                          Set Pending
+                        </Button>
+                      )}
+                      
+                      {request.status === "rejected" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSetPending(request.id)}
+                          className="h-8"
+                        >
+                          Set Pending
+                        </Button>
                       )}
                       
                       <Button
@@ -398,35 +415,22 @@ export function AdminRequests() {
                     <p className="text-sm">{selectedRequest.hours_requested} hours</p>
                   </div>
                 )}
-                
-                {selectedRequest.current_overtime_hours && (
-                  <div>
-                    <label className="text-sm font-medium">Current Overtime Hours</label>
-                    <p className="text-sm">{selectedRequest.current_overtime_hours} hours</p>
-                  </div>
-                )}
-                
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium">Status:</label>
-                  <Badge 
-                    variant="outline"
-                    className={
-                      selectedRequest.status === "approved" 
-                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        : selectedRequest.status === "rejected"
-                        ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
-                        : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                    }
-                  >
-                    {selectedRequest.status}
-                  </Badge>
-                  <Badge 
-                    variant="outline" 
-                    className={getUrgencyColor(selectedRequest.urgency)}
-                  >
-                    {selectedRequest.urgency} priority
-                  </Badge>
-                </div>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium">Status:</label>
+                <Badge 
+                  variant="outline"
+                  className={
+                    selectedRequest.status === "approved" 
+                      ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                      : selectedRequest.status === "rejected"
+                      ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                      : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                  }
+                >
+                  {selectedRequest.status}
+                </Badge>
               </div>
               
               {selectedRequest.status === "pending" && (

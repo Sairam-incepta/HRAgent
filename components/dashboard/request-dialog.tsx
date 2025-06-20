@@ -19,9 +19,10 @@ import { useUser } from "@clerk/nextjs";
 interface RequestDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onRequestSubmitted?: () => void;
 }
 
-export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
+export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: RequestDialogProps) {
   const [requestType, setRequestType] = useState<string>("");
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
@@ -32,7 +33,18 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    console.log('📝 Submitting request:', {
+      requestType,
+      startDate,
+      endDate,
+      reason,
+      hours,
+      userId: user?.id
+    });
+    
     if (!requestType || !startDate || !reason || !user?.id) {
+      console.log('❌ Validation failed:', { requestType, startDate, reason, userId: user?.id });
       toast({
         title: "Error",
         description: "Please fill in all required fields",
@@ -40,6 +52,29 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
       });
       return;
     }
+    
+    // Additional validation for overtime requests
+    if (requestType === "overtime" && (!hours || hours <= 0)) {
+      console.log('❌ Overtime validation failed:', { hours });
+      toast({
+        title: "Error",
+        description: "Please enter a valid number of hours for overtime requests",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Additional validation for vacation requests
+    if (requestType === "vacation" && !endDate) {
+      console.log('❌ Vacation validation failed:', { endDate });
+      toast({
+        title: "Error",
+        description: "Please select an end date for vacation requests",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     const requestData = {
       employeeId: user.id,
       type: requestType as any,
@@ -51,22 +86,39 @@ export function RequestDialog({ open, onOpenChange }: RequestDialogProps) {
       startDate: startDate.toISOString().split('T')[0],
       endDate: endDate ? endDate.toISOString().split('T')[0] : undefined,
     };
-    const result = await addRequest(requestData);
-    if (result) {
-      toast({
-        title: "Request Submitted",
-        description: "Your request has been submitted for approval",
-      });
-      setRequestType("");
-      setStartDate(undefined);
-      setEndDate(undefined);
-      setReason("");
-      setHours(undefined);
-      onOpenChange(false);
-    } else {
+    
+    console.log('📝 Sending request data:', requestData);
+    
+    try {
+      const result = await addRequest(requestData);
+      if (result) {
+        console.log('✅ Request submitted successfully:', result);
+        toast({
+          title: "Request Submitted",
+          description: "Your request has been submitted for approval",
+        });
+        setRequestType("");
+        setStartDate(undefined);
+        setEndDate(undefined);
+        setReason("");
+        setHours(undefined);
+        onOpenChange(false);
+        if (onRequestSubmitted) {
+          onRequestSubmitted();
+        }
+      } else {
+        console.log('❌ Request submission failed - no result returned');
+        toast({
+          title: "Error",
+          description: "Failed to submit request. Please try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('❌ Exception during request submission:', error);
       toast({
         title: "Error",
-        description: "Failed to submit request. Please try again.",
+        description: "An unexpected error occurred. Please try again.",
         variant: "destructive",
       });
     }
