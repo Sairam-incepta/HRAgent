@@ -11,6 +11,56 @@ import type {
   HighValuePolicyNotification
 } from './supabase';
 
+// Timezone-aware date utilities
+const getLocalDateString = (date: Date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getLocalStartOfDay = (date: Date = new Date()): Date => {
+  const localDate = new Date(date);
+  localDate.setHours(0, 0, 0, 0);
+  return localDate;
+};
+
+const getLocalEndOfDay = (date: Date = new Date()): Date => {
+  const localDate = new Date(date);
+  localDate.setHours(23, 59, 59, 999);
+  return localDate;
+};
+
+const getLocalStartOfWeek = (date: Date = new Date()): Date => {
+  const localDate = new Date(date);
+  const day = localDate.getDay();
+  const diff = localDate.getDate() - day; // Sunday is 0
+  localDate.setDate(diff);
+  localDate.setHours(0, 0, 0, 0);
+  return localDate;
+};
+
+const getLocalEndOfWeek = (date: Date = new Date()): Date => {
+  const localDate = new Date(date);
+  const day = localDate.getDay();
+  const diff = localDate.getDate() - day + 6; // Saturday is 6
+  localDate.setDate(diff);
+  localDate.setHours(23, 59, 59, 999);
+  return localDate;
+};
+
+// Debug utility to log timezone information
+export const logTimezoneInfo = () => {
+  const now = new Date();
+  console.log('🌍 Timezone Debug Info:');
+  console.log('  Local time:', now.toString());
+  console.log('  UTC time:', now.toISOString());
+  console.log('  Local date string:', getLocalDateString(now));
+  console.log('  UTC date string:', now.toISOString().split('T')[0]);
+  console.log('  Timezone offset:', now.getTimezoneOffset(), 'minutes');
+  console.log('  Timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+};
+
 // Helper function to calculate bonus based on broker fees (not policy amount)
 export const calculateBonus = (brokerFee: number, isCrossSold: boolean = false): number => {
   if (brokerFee <= 100) return 0;
@@ -1058,13 +1108,12 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   isCurrentWeek: boolean;
 }>> => {
   try {
-    // Get current week dates
+    // Get current week dates using local timezone
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const today = getLocalStartOfDay(now);
     
     // Calculate start of week (Sunday) in local time
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay());
+    const startOfWeek = getLocalStartOfWeek(now);
     
     // Generate array for the current week
     const weekData = [];
@@ -1074,10 +1123,7 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       currentDate.setDate(startOfWeek.getDate() + i);
       
       // Format date as YYYY-MM-DD in local timezone
-      const year = currentDate.getFullYear();
-      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-      const day = String(currentDate.getDate()).padStart(2, '0');
-      const dateString = `${year}-${month}-${day}`;
+      const dateString = getLocalDateString(currentDate);
       
       const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
       const isToday = currentDate.getTime() === today.getTime();
@@ -1103,7 +1149,7 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       // Get policy sales for this date (from existing function)
       const policySales = await getPolicySales(employeeId);
       const dayPolicies = policySales.filter(sale => {
-        const saleDate = new Date(sale.sale_date).toISOString().split('T')[0];
+        const saleDate = getLocalDateString(new Date(sale.sale_date));
         return saleDate === dateString;
       });
       
@@ -1131,7 +1177,8 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
 // Get today's total hours worked
 export const getTodayHours = async (employeeId: string): Promise<number> => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    // Use local date string for today
+    const today = getLocalDateString();
     const timeLogs = await getTimeLogsForDay(employeeId, today);
     
     let totalHours = 0;
@@ -1221,7 +1268,8 @@ export const getAllRequests = async (): Promise<Request[]> => {
 // Time Logs (Clock In/Out) - Simplified for RLS disabled
 export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: string, clockIn: Date }): Promise<{ data: any; error: any }> => {
   try {
-    const date = clockIn.toISOString().split('T')[0];
+    // Use local date string for the date field
+    const date = getLocalDateString(clockIn);
     const { data, error } = await supabase
       .from('time_logs')
       .insert({ 

@@ -21,9 +21,11 @@ import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 interface DashboardSidebarProps {
   userRole: "admin" | "employee";
   onToggleRole: () => void;
+  employeeName?: string;
+  employeeEmail?: string;
 }
 
-export function DashboardSidebar({ userRole, onToggleRole }: DashboardSidebarProps) {
+export function DashboardSidebar({ userRole, onToggleRole, employeeName, employeeEmail }: DashboardSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const router = useRouter();
@@ -150,6 +152,8 @@ export function DashboardSidebar({ userRole, onToggleRole }: DashboardSidebarPro
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        employeeName={employeeName}
+        employeeEmail={employeeEmail}
       />
     </>
   );

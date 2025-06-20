@@ -8,13 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { User, Mail } from "lucide-react";
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  employeeName?: string;
+  employeeEmail?: string;
 }
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail }: SettingsDialogProps) {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(true);
   const [timezone, setTimezone] = useState("UTC");
@@ -36,6 +39,27 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
         <div className="space-y-6">
+          {/* Employee Information */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium">Employee Information</h4>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">{employeeName || "Employee"}</p>
+                  <p className="text-xs text-muted-foreground">Name</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">{employeeEmail || "No email"}</p>
+                  <p className="text-xs text-muted-foreground">Email</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-4">
             <h4 className="text-sm font-medium">Notifications</h4>
             <div className="flex items-center justify-between">

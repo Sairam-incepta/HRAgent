@@ -55,6 +55,8 @@ import {
   getWeeklySummary,
   getTodayHours,
   getThisWeekHours,
+  getEmployee,
+  logTimezoneInfo,
   type Request 
 } from "@/lib/database";
 
@@ -96,6 +98,21 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
   const [todayHours, setTodayHours] = useState(0);
   const [thisWeekHours, setThisWeekHours] = useState(0);
 
+  // Employee data state
+  const [employeeData, setEmployeeData] = useState<{
+    name: string;
+    email: string;
+    department: string;
+    position: string;
+    loading: boolean;
+  }>({
+    name: "Employee",
+    email: "",
+    department: "",
+    position: "",
+    loading: true
+  });
+
   // Employee performance data (NO BONUS INFORMATION)
   const [performanceData, setPerformanceData] = useState({
     totalPolicies: 0,
@@ -113,48 +130,78 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     hourlyRate: 25
   };
 
-  const getUserName = () => {
-    if (user?.firstName && user?.lastName) {
-      return `${user.firstName} ${user.lastName}`;
+  // Load employee data from database
+  const loadEmployeeData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const employee = await getEmployee(user.id);
+      
+      if (employee) {
+        setEmployeeData({
+          name: employee.name,
+          email: employee.email,
+          department: employee.department,
+          position: employee.position,
+          loading: false
+        });
+      } else {
+        // Fallback to Clerk user data if employee not found in database
+        setEmployeeData({
+          name: user.firstName && user.lastName 
+            ? `${user.firstName} ${user.lastName}` 
+            : user.firstName || "Employee",
+          email: user.emailAddresses[0]?.emailAddress || "",
+          department: "Unknown",
+          position: "Employee",
+          loading: false
+        });
+      }
+    } catch (error) {
+      console.error('Error loading employee data:', error);
+      // Fallback to Clerk user data
+      setEmployeeData({
+        name: user.firstName && user.lastName 
+          ? `${user.firstName} ${user.lastName}` 
+          : user.firstName || "Employee",
+        email: user.emailAddresses[0]?.emailAddress || "",
+        department: "Unknown",
+        position: "Employee",
+        loading: false
+      });
     }
-    if (user?.firstName) {
-      return user.firstName;
-    }
-    return "Employee";
   };
 
-  const getCurrentDate = () => {
-    return new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  // Load employee data on mount and when user changes
+  useEffect(() => {
+    loadEmployeeData();
+  }, [user?.id]);
 
   // Load weekly data and hours
   const loadWeeklyData = async () => {
     if (!user?.id) return;
     
     try {
+      console.log('🔄 Loading weekly data for user:', user.id);
+      logTimezoneInfo(); // Log timezone info for debugging
+      
       const [weekly, today, week] = await Promise.all([
         getWeeklySummary(user.id),
         getTodayHours(user.id),
         getThisWeekHours(user.id)
       ]);
       
+      console.log('📊 Weekly data loaded:', { weekly, today, week });
+      console.log('📅 Today hours from DB:', today);
+      console.log('📈 This week hours from DB:', week);
+      
       setWeeklyData(weekly);
       setTodayHours(today);
       setThisWeekHours(week);
+      
+      console.log('✅ State updated - todayHours:', today, 'thisWeekHours:', week);
     } catch (error) {
-      console.error('Error loading weekly data:', error);
+      console.error('❌ Error loading weekly data:', error);
     }
   };
 
@@ -195,37 +242,99 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     loadWeeklyData();
   }, [user?.id]);
 
+  // Load requests on mount and when user changes
+  useEffect(() => {
+    loadRequests();
+  }, [user?.id]);
+
+  // Refresh data periodically to keep it up to date
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (user?.id) {
+        loadWeeklyData();
+      }
+    }, 30000); // Refresh every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [user?.id]);
+
+  // Detect day change and refresh data
+  useEffect(() => {
+    const checkDayChange = () => {
+      const now = new Date();
+      const currentDate = now.toDateString(); // Gets date in local timezone
+      
+      // Store the last known date
+      const lastKnownDate = localStorage.getItem('last_known_date');
+      
+      if (lastKnownDate && lastKnownDate !== currentDate) {
+        console.log('📅 Day changed detected, refreshing data');
+        logTimezoneInfo(); // Log timezone info for debugging
+        loadWeeklyData();
+        loadRequests();
+      }
+      
+      localStorage.setItem('last_known_date', currentDate);
+    };
+
+    // Check immediately
+    checkDayChange();
+    
+    // Check every minute for day changes
+    const dayChangeInterval = setInterval(checkDayChange, 60000);
+    
+    return () => clearInterval(dayChangeInterval);
+  }, [user?.id]);
+
   // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
+    console.log('⏰ Time update received:', { elapsedSeconds, status, currentStatus: timeStatus });
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
     
-    // Refresh weekly data when time tracking changes
-    loadWeeklyData();
+    // Only refresh weekly data when status changes, not on every timer tick
+    if (status !== timeStatus) {
+      console.log('🔄 Status changed, refreshing weekly data');
+      loadWeeklyData();
+    }
   };
 
   // Handle clock out to refresh data
   const handleClockOut = () => {
-    loadWeeklyData();
+    console.log('🚪 Clock out triggered, will refresh data in 500ms');
+    // Add a small delay to ensure the database operation completes
+    setTimeout(() => {
+      console.log('🔄 Clock out delay completed, refreshing data');
+      loadWeeklyData();
+    }, 500);
     onClockOut?.();
   };
 
-  // Format time for display
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+  // Format time for display (hours and minutes)
+  const formatTimeDisplay = (hours: number) => {
+    const wholeHours = Math.floor(hours);
+    const minutes = Math.round((hours - wholeHours) * 60);
+    
+    if (wholeHours === 0 && minutes === 0) {
+      return "0h 00m";
+    } else if (wholeHours === 0) {
+      return `${minutes}m`;
+    } else if (minutes === 0) {
+      return `${wholeHours}h`;
+    } else {
+      return `${wholeHours}h ${minutes.toString().padStart(2, '0')}m`;
+    }
   };
 
-  // Calculate progress percentage
+  // Calculate progress percentage based on database hours, not current timer
   const getProgressPercentage = () => {
-    const hoursWorked = currentElapsedTime / 3600;
+    const hoursWorked = todayHours; // Use database hours, not current timer
     return Math.min((hoursWorked / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
   };
 
-  // Get progress color based on status
+  // Get progress color based on database hours
   const getProgressColor = () => {
-    const hoursWorked = currentElapsedTime / 3600;
+    const hoursWorked = todayHours; // Use database hours, not current timer
     if (hoursWorked > employeeSettings.maxHoursBeforeOvertime) {
       return "bg-red-500"; // Overtime
     } else if (hoursWorked > employeeSettings.maxHoursBeforeOvertime * 0.9) {
@@ -296,12 +405,40 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     });
   };
 
+  const getUserName = () => {
+    if (employeeData.loading) {
+      return "Employee";
+    }
+    return employeeData.name;
+  };
+
+  const getCurrentDate = () => {
+    return new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  const getCurrentTime = () => {
+    return new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Header with Live Date/Time */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Welcome back, {getUserName()}</h1>
+          {!employeeData.loading && (
+            <p className="text-muted-foreground mt-1">
+              {employeeData.position} • {employeeData.department}
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end text-right">
           <div className="flex items-center gap-2 text-lg font-semibold">
@@ -322,7 +459,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Today's Hours</p>
-                <p className="text-2xl font-bold">{todayHours.toFixed(2)}h</p>
+                <p className="text-2xl font-bold">
+                  {formatTimeDisplay(todayHours)}
+                </p>
               </div>
               <Timer className="h-8 w-8 text-[#005cb3]" />
             </div>
@@ -334,7 +473,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">This Week</p>
-                <p className="text-2xl font-bold">{thisWeekHours.toFixed(2)}h</p>
+                <p className="text-2xl font-bold">{formatTimeDisplay(thisWeekHours)}</p>
               </div>
               <TrendingUp className="h-8 w-8 text-[#005cb3]" />
             </div>
@@ -378,7 +517,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
                 <span className="text-sm">
-                  {timeStatus === "idle" ? "0h 00m" : formatTime(currentElapsedTime)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                  {formatTimeDisplay(todayHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
               <Progress 
@@ -393,9 +532,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
                     ? "On lunch break - timer paused"
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
-                    : currentElapsedTime / 3600 > employeeSettings.maxHoursBeforeOvertime
+                    : todayHours > employeeSettings.maxHoursBeforeOvertime
                     ? "You&apos;re in overtime - earning 1x rate"
-                    : "You&apos;ll be notified when you reach overtime"
+                    : todayHours > employeeSettings.maxHoursBeforeOvertime * 0.8
+                    ? "You&apos;ll be notified when you reach overtime"
+                    : "Tracking your work hours"
                   }
                 </p>
                 {timeStatus !== "idle" && (
@@ -516,7 +657,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
             <div className="text-sm text-muted-foreground">
-              {weeklyData.reduce((total, day) => total + day.hoursWorked, 0).toFixed(1)}h total
+              {formatTimeDisplay(weeklyData.reduce((total, day) => total + day.hoursWorked, 0))} total
             </div>
           </div>
           
@@ -527,16 +668,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
               const percentage = maxHours > 0 ? (day.hoursWorked / maxHours) * 100 : 0;
               const isToday = day.isToday;
               
-              // Format hours and minutes
-              const hours = Math.floor(day.hoursWorked);
-              const minutes = Math.round((day.hoursWorked - hours) * 60);
-              const timeDisplay = hours === 0 && minutes === 0 
-                ? "0hrs" 
-                : minutes === 0 
-                  ? `${hours}hrs`
-                  : hours === 0
-                    ? `${minutes}mins`
-                    : `${hours}hrs ${minutes}mins`;
+              // Format hours and minutes for display
+              const timeDisplay = formatTimeDisplay(day.hoursWorked);
               
               return (
                 <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
@@ -601,6 +734,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       <SettingsDialog
         open={settingsDialogOpen}
         onOpenChange={setSettingsDialogOpen}
+        employeeName={employeeData.name}
+        employeeEmail={employeeData.email}
       />
     </div>
   );

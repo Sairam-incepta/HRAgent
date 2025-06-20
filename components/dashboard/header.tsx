@@ -18,9 +18,11 @@ import { useClerk, useUser } from "@clerk/nextjs";
 
 interface DashboardHeaderProps {
   userRole: "admin" | "employee";
+  employeeName?: string;
+  employeeEmail?: string;
 }
 
-export function DashboardHeader({ userRole }: DashboardHeaderProps) {
+export function DashboardHeader({ userRole, employeeName, employeeEmail }: DashboardHeaderProps) {
   const { setTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { signOut } = useClerk();
@@ -31,6 +33,14 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
   };
 
   const getUserInitials = () => {
+    if (employeeName) {
+      const names = employeeName.split(" ");
+      if (names.length >= 2) {
+        return `${names[0][0]}${names[1][0]}`.toUpperCase();
+      }
+      return employeeName.substring(0, 2).toUpperCase();
+    }
+    
     if (user?.firstName && user?.lastName) {
       return `${user.firstName[0]}${user.lastName[0]}`;
     }
@@ -42,6 +52,10 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
   };
 
   const getUserName = () => {
+    if (employeeName) {
+      return employeeName;
+    }
+    
     if (user?.firstName && user?.lastName) {
       return `${user.firstName} ${user.lastName}`;
     }
@@ -52,6 +66,10 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
   };
 
   const getUserEmail = () => {
+    if (employeeEmail) {
+      return employeeEmail;
+    }
+    
     return user?.emailAddresses[0]?.emailAddress || 
            (userRole === "admin" ? "admin@letsinsure.hr" : "employee@letsinsure.hr");
   };
@@ -138,6 +156,8 @@ export function DashboardHeader({ userRole }: DashboardHeaderProps) {
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        employeeName={employeeName}
+        employeeEmail={employeeEmail}
       />
     </>
   );

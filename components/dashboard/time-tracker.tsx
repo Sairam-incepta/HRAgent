@@ -57,10 +57,15 @@ export function TimeTracker({
 
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
   const [logsToday, setLogsToday] = useState<any[]>([]);
+  const [isUpdatingLogs, setIsUpdatingLogs] = useState(false);
 
   // Get current date in user's timezone
   const getCurrentDate = () => {
-    return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`; // YYYY-MM-DD format in local timezone
   };
 
   // Add this function to calculate total time worked today
@@ -79,23 +84,29 @@ export function TimeTracker({
   // Update fetchAndSumLogs to store logs
   const fetchAndSumLogs = async () => {
     if (!user?.id) return;
-    const today = new Date().toISOString().split('T')[0];
-    const logs = await getTimeLogsForDay(user.id, today);
-    setLogsToday(logs);
     
-    let total = calculateTotalTimeWorked(logs);
-    let openLogId: string | null = null;
-    
-    // Find any open log (clocked in but not out)
-    const openLog = logs.find(log => log.clock_in && !log.clock_out);
-    if (openLog) {
-      openLogId = openLog.id;
-      setStartTime(new Date(openLog.clock_in).getTime());
-      setStatus("working");
+    setIsUpdatingLogs(true);
+    try {
+      const today = getCurrentDate(); // Use timezone-aware date
+      const logs = await getTimeLogsForDay(user.id, today);
+      setLogsToday(logs);
+      
+      let total = calculateTotalTimeWorked(logs);
+      let openLogId: string | null = null;
+      
+      // Find any open log (clocked in but not out)
+      const openLog = logs.find(log => log.clock_in && !log.clock_out);
+      if (openLog) {
+        openLogId = openLog.id;
+        setStartTime(new Date(openLog.clock_in).getTime());
+        setStatus("working");
+      }
+      
+      setElapsedTime(total);
+      setActiveLogId(openLogId);
+    } finally {
+      setIsUpdatingLogs(false);
     }
-    
-    setElapsedTime(total);
-    setActiveLogId(openLogId);
   };
 
   const performClockOut = async () => {
@@ -103,6 +114,8 @@ export function TimeTracker({
     
     try {
       const clockOutTime = new Date();
+      console.log('🚪 Clock out - elapsed time before update:', elapsedTime);
+      
       const updatedLog = await updateTimeLog({ 
         logId: activeLogId, 
         clockOut: clockOutTime 
@@ -112,8 +125,15 @@ export function TimeTracker({
         throw new Error('Failed to update time log');
       }
       
+      console.log('✅ Time log updated successfully');
+      
+      // Add a small delay to ensure the database update completes
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // Immediately fetch updated logs to get accurate total time
       await fetchAndSumLogs();
+      
+      console.log('📊 Clock out - elapsed time after fetch:', elapsedTime);
       
       setStatus("idle");
       setActiveLogId(null);
@@ -122,6 +142,7 @@ export function TimeTracker({
       setClockOutConfirmOpen(false);
       
       // Notify parent to refresh weekly data
+      console.log('📡 Notifying parent of time update:', elapsedTime, "idle");
       onTimeUpdate?.(elapsedTime, "idle");
       
       toast({
@@ -129,9 +150,10 @@ export function TimeTracker({
         description: `You clocked out at ${clockOutTime.toLocaleTimeString()} after ${formatTime(elapsedTime)} total today`
       });
       
+      console.log('💰 Clock out - calling onClockOut with hours:', elapsedTime / 3600);
       onClockOut?.(elapsedTime / 3600);
     } catch (error) {
-      console.error('Error clocking out:', error);
+      console.error('❌ Error clocking out:', error);
       toast({
         title: "Error",
         description: "Failed to clock out. Please try again.",
@@ -217,6 +239,14 @@ export function TimeTracker({
   useEffect(() => {
     let interval: NodeJS.Timeout;
     
+    console.log('⏱️ Timer useEffect triggered:', { status, startTime: !!startTime, logsTodayLength: logsToday.length, isUpdatingLogs });
+    
+    // Don't recalculate if logs are being updated
+    if (isUpdatingLogs) {
+      console.log('⏳ Logs are being updated, skipping timer calculation');
+      return;
+    }
+    
     if (isWorkingStatus(status)) {
       interval = setInterval(async () => {
         const now = Date.now();
@@ -245,12 +275,32 @@ export function TimeTracker({
           setStatus("overtime_pending");
         }
       }, 1000);
+    } else if (status === "idle") {
+      // When idle, calculate the total time from completed logs
+      console.log('😴 Status is idle, calculating from logs:', logsToday.length, 'logs');
+      const totalTime = logsToday
+        .filter(log => log.clock_in && log.clock_out)
+        .reduce((total, log) => {
+          return total + (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
+        }, 0);
+      
+      const totalElapsed = Math.floor(totalTime);
+      console.log('📊 Idle calculation - totalTime:', totalTime, 'totalElapsed:', totalElapsed);
+      setElapsedTime(totalElapsed);
+      
+      // Notify parent component of final time
+      onTimeUpdate?.(totalElapsed, status);
+    } else if (status === "lunch") {
+      // When on lunch, just show the paused time
+      console.log('🍽️ Status is lunch, showing paused time:', pausedTime);
+      setElapsedTime(pausedTime);
+      onTimeUpdate?.(pausedTime, status);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [status, startTime, logsToday, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate]);
+  }, [status, startTime, logsToday, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate, pausedTime, isUpdatingLogs]);
 
   // Add useEffect to load initial state on mount
   useEffect(() => {
@@ -266,7 +316,7 @@ export function TimeTracker({
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
           const session: TimeSession = JSON.parse(stored);
-          const currentDate = getCurrentDate();
+          const currentDate = getCurrentDate(); // Use timezone-aware date
           
           // Only restore session if it's from today
           if (session.date === currentDate) {
@@ -515,8 +565,7 @@ export function TimeTracker({
               {status !== "lunch" ? (
                 <Button 
                   onClick={() => setLunchStartConfirmOpen(true)}
-                  disabled={status === "idle"}
-                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black disabled:opacity-50 disabled:cursor-not-allowed h-10 px-4"
+                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black h-10 px-4"
                 >
                   <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
                 </Button>
