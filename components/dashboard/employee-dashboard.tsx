@@ -192,13 +192,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     }
   };
 
-  // Load employee data on mount and when user changes
-  useEffect(() => {
-    if (user?.id) {
-      loadEmployeeData();
-    }
-  }, [user?.id]);
-
   // Load weekly data and hours
   const loadWeeklyData = async () => {
     if (!user?.id) return;
@@ -254,13 +247,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       setPerformanceData(prev => ({ ...prev, loading: false }));
     }
   };
-
-  // Load employee performance data on mount and when user changes
-  useEffect(() => {
-    if (user?.id) {
-      loadPerformanceData();
-    }
-  }, [user?.id]);
 
   // Load weekly data on mount and when user changes
   useEffect(() => {

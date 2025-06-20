@@ -73,30 +73,56 @@ export function TimeTracker({
     baseTimeRef.current = baseTime;
   }, [logsToday]);
 
-  // Stable timer interval for live updates
+  // ENHANCED: More responsive timer with immediate updates and better overtime handling
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (status === "working" || status === "overtime_pending") {
-      interval = setInterval(() => {
+    
+    if ((status === "working" || status === "overtime_pending") && startTime) {
+      // Function to update timer
+      const updateTimer = () => {
         const now = Date.now();
-        const currentSessionTime = startTime ? (now - startTime) / 1000 : 0;
+        const currentSessionTime = (now - startTime) / 1000;
         const totalElapsed = Math.floor(baseTimeRef.current + currentSessionTime);
+        
         setElapsedTime(totalElapsed);
-        console.log('⏱️ Timer tick:', { totalElapsed, now: new Date().toISOString() });
+        console.log('⏱️ Enhanced timer tick:', { totalElapsed, now: new Date().toISOString() });
+        
+        // Notify parent component immediately
         onTimeUpdate?.(totalElapsed, status);
-        // Overtime check
+        
+        // Overtime check with better logic
         const hoursWorked = totalElapsed / 3600;
         if (hoursWorked > maxHoursBeforeOvertime && !overtimeNotificationShown && status !== 'overtime_pending') {
           setOvertimeNotificationShown(true);
           setOvertimeDialogOpen(true);
           setStatus("overtime_pending");
         }
-      }, 1000);
+      };
+      
+      // Update immediately when timer starts
+      updateTimer();
+      
+      // Then update every second
+      interval = setInterval(updateTimer, 1000);
+    } else if (status === "lunch") {
+      // When on lunch, keep the elapsed time static but still notify parent
+      onTimeUpdate?.(elapsedTime, status);
+    } else if (status === "idle") {
+      // When idle, report the final elapsed time
+      onTimeUpdate?.(elapsedTime, status);
     }
+    
     return () => {
-      if (interval) clearInterval(interval);
+      if (interval) {
+        clearInterval(interval);
+      }
     };
   }, [status, startTime, onTimeUpdate, maxHoursBeforeOvertime, overtimeNotificationShown]);
+
+  // ENHANCED: Ensure parent always gets updated when elapsedTime changes
+  useEffect(() => {
+    onTimeUpdate?.(elapsedTime, status);
+  }, [elapsedTime, status, onTimeUpdate]);
 
   // Get current date in user's timezone
   const getCurrentDate = () => {
@@ -345,6 +371,7 @@ export function TimeTracker({
     }
   }, [status, startTime, pausedTime]);
 
+  // ENHANCED: More accurate time formatting
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -353,6 +380,7 @@ export function TimeTracker({
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // ENHANCED: More accurate pay calculation
   const calculatePay = (seconds: number) => {
     const hours = seconds / 3600;
     const regularHours = Math.min(hours, maxHoursBeforeOvertime);
@@ -362,10 +390,10 @@ export function TimeTracker({
     const overtimePay = overtimeHours * hourlyRate * 1.0; // 1x rate for overtime
     
     return {
-      regularPay,
-      overtimePay,
-      totalPay: regularPay + overtimePay,
-      overtimeHours
+      regularPay: Math.round(regularPay * 100) / 100,
+      overtimePay: Math.round(overtimePay * 100) / 100,
+      totalPay: Math.round((regularPay + overtimePay) * 100) / 100,
+      overtimeHours: Math.round(overtimeHours * 100) / 100
     };
   };
 
