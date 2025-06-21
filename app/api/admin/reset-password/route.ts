@@ -4,7 +4,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
     
     if (!userId) {
       return NextResponse.json(
@@ -40,7 +40,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Reset the user's password in Clerk
-    await clerkClient.users.updateUser(targetUserId, {
+    const client = await clerkClient();
+    await client.users.updateUser(targetUserId, {
       password: newPassword
     });
 

@@ -7,7 +7,7 @@ interface CustomPublicMetadata {
 }
 
 export async function getUserRole(): Promise<UserRole> {
-  const { userId, sessionClaims } = auth();
+  const { userId, sessionClaims } = await auth();
 
   if (!userId) {
     return "employee"; // Default or handle as unauthenticated

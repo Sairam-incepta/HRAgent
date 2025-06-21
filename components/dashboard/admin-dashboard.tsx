@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { 
   Card, 
   CardContent, 
@@ -48,7 +48,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotifications, type PayrollPeriod } from "@/lib/database";
+import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotificationsList, type PayrollPeriod } from "@/lib/database";
+import type { HighValuePolicyNotification } from "@/lib/supabase";
 
 export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
@@ -63,15 +64,30 @@ export function AdminDashboard() {
     year: { amount: 0, period: "2025", change: "+0%" }
   });
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
-  const [highValueNotifications, setHighValueNotifications] = useState<any[]>([]);
+  const [highValueNotifications, setHighValueNotifications] = useState<HighValuePolicyNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
+  // Add ref for scrolling to high-value notifications
+  const highValueNotificationsRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    loadData();
     const interval = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // Auto-refresh data every 30 seconds to catch new high-value policies
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadData();
+    }, 30000);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -80,7 +96,7 @@ export function AdminDashboard() {
       const [employees, periods, notifications] = await Promise.all([
         getEmployees(),
         getPayrollPeriods(),
-        getHighValuePolicyNotifications()
+        getHighValuePolicyNotificationsList()
       ]);
       
       // Calculate real expenditure based on employee hourly rates
@@ -141,6 +157,15 @@ export function AdminDashboard() {
     setCompanyPayrollDialogOpen(true);
   };
 
+  const handleReviewNowClick = () => {
+    if (highValueNotificationsRef.current) {
+      highValueNotificationsRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }
+  };
+
   const pendingHighValueCount = highValueNotifications.length;
 
   return (
@@ -184,6 +209,7 @@ export function AdminDashboard() {
               <Button 
                 variant="outline" 
                 className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/30"
+                onClick={handleReviewNowClick}
               >
                 <AlertTriangle className="mr-2 h-4 w-4" />
                 Review Now
@@ -249,7 +275,9 @@ export function AdminDashboard() {
           </Card>
 
           {/* High-Value Policy Alerts - Full Width Below */}
-          <HighValuePolicyNotifications />
+          <div ref={highValueNotificationsRef}>
+            <HighValuePolicyNotifications />
+          </div>
 
           {/* Requests Section */}
           <AdminRequests />

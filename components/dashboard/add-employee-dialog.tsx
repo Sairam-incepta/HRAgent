@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { createClerkUserAndEmployee } from "@/lib/clerk-automation";
 
 interface AddEmployeeDialogProps {
   open: boolean;
@@ -80,18 +79,26 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
     setIsSubmitting(true);
 
     try {
-      const result = await createClerkUserAndEmployee({
-        firstName,
-        lastName,
-        emailAddress: email,
-        password,
-        department,
-        position,
-        hourlyRate,
-        maxHoursBeforeOvertime
+      const response = await fetch('/api/admin/create-employee', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          emailAddress: email,
+          password,
+          department,
+          position,
+          hourlyRate,
+          maxHoursBeforeOvertime
+        }),
       });
 
-      if (result.success) {
+      const result = await response.json();
+
+      if (response.ok && result.success) {
         toast({
           title: "Employee Added Successfully",
           description: `${firstName} ${lastName} has been added to both Clerk and the employee database. They can now sign in with their email and password.`,

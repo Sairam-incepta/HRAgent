@@ -65,11 +65,10 @@ import { ChatInterface } from "./chat-interface";
 interface EmployeeDashboardProps {
   initialTab?: string;
   onClockOut?: () => void;
+  onClockOutPrompt?: (message: string) => void;
 }
 
-export function EmployeeDashboard({ initialTab = "overview", onClockOut }: EmployeeDashboardProps) {
-  console.log('🚩 EmployeeDashboard mounted', new Date().toISOString());
-  
+export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClockOutPrompt }: EmployeeDashboardProps) {
   // ✅ ALL HOOKS MUST BE DECLARED FIRST - NO EARLY RETURNS BEFORE THIS POINT
   const { user, isLoaded, isSignedIn } = useUser();
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
@@ -114,8 +113,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     loading: true
   });
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
-  const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
 
   const { toast } = useToast();
   
@@ -123,15 +120,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     maxHoursBeforeOvertime: 8,
     hourlyRate: 25
   };
-
-  // 🔧 ENHANCED DEBUGGING: Log state changes
-  useEffect(() => {
-    console.log('🔔 Clock out state changed:', {
-      showClockOutPrompt,
-      clockOutPromptMessage,
-      timestamp: new Date().toISOString()
-    });
-  }, [showClockOutPrompt, clockOutPromptMessage]);
 
   // Current time update effect
   useEffect(() => {
@@ -169,14 +157,21 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     }
   }, [user?.id]);
 
-  // Refresh data periodically effect
+  // Load performance data effect - ADDED THIS
+  useEffect(() => {
+    if (user?.id) {
+      loadPerformanceData();
+    }
+  }, [user?.id]);
+
+  // Refresh data periodically effect (improved frequency for better user experience)
   useEffect(() => {
     const interval = setInterval(() => {
       if (user?.id) {
         loadWeeklyData();
         loadPerformanceData();
       }
-    }, 30000); // Refresh every 30 seconds
+    }, 30000); // Refresh every 30 seconds for better real-time updates
 
     return () => clearInterval(interval);
   }, [user?.id]);
@@ -193,7 +188,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       const lastKnownDate = localStorage.getItem('last_known_date');
       
       if (lastKnownDate && lastKnownDate !== currentDate) {
-        console.log('📅 Day changed detected, refreshing data');
         logTimezoneInfo(); // Log timezone info for debugging
         loadWeeklyData();
         loadPerformanceData();
@@ -206,41 +200,32 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     // Check immediately
     checkDayChange();
     
-    // Check every minute for day changes
-    const dayChangeInterval = setInterval(checkDayChange, 60000);
+    // Then check every minute
+    const interval = setInterval(checkDayChange, 60000);
     
-    return () => clearInterval(dayChangeInterval);
+    return () => clearInterval(interval);
   }, [user?.id]);
 
-  // Event listeners effect
+  // Event listeners for dashboard updates
   useEffect(() => {
     const handlePolicySale = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Policy sale event received, refreshing performance data');
+      loadWeeklyData();
       loadPerformanceData();
     };
 
     const handleClientReview = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Client review event received, refreshing performance data');
       loadPerformanceData();
     };
 
     const handleRequestSubmitted = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Request submitted event received, refreshing requests');
       loadRequests();
     };
 
     const handleTimeLogged = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Time logged event received, refreshing weekly data');
       loadWeeklyData();
     };
 
     const handleDailySummary = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Daily summary event received, refreshing all data');
       loadWeeklyData();
       loadPerformanceData();
     };
@@ -252,65 +237,47 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     dashboardEvents.on('time_logged', handleTimeLogged);
     dashboardEvents.on('daily_summary', handleDailySummary);
 
-    // Cleanup event listeners
     return () => {
+      // Cleanup event listeners
       dashboardEvents.off('policy_sale', handlePolicySale);
       dashboardEvents.off('client_review', handleClientReview);
       dashboardEvents.off('request_submitted', handleRequestSubmitted);
       dashboardEvents.off('time_logged', handleTimeLogged);
       dashboardEvents.off('daily_summary', handleDailySummary);
     };
-  }, [user?.id]);
+  }, []);
 
-  // Live pay calculation memoized
+  // Computed values
   const livePay = useMemo(() => {
-    const hours = currentElapsedTime / 3600;
-    const regularHours = Math.min(hours, employeeSettings.maxHoursBeforeOvertime);
-    const overtimeHours = Math.max(0, hours - employeeSettings.maxHoursBeforeOvertime);
+    const regularHours = Math.min(currentElapsedTime / 3600, employeeSettings.maxHoursBeforeOvertime);
+    const overtimeHours = Math.max(0, (currentElapsedTime / 3600) - employeeSettings.maxHoursBeforeOvertime);
+    
     const regularPay = regularHours * employeeSettings.hourlyRate;
-    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.0;
+    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.5;
+    
     return {
+      regularHours,
+      overtimeHours,
       regularPay,
       overtimePay,
-      totalPay: regularPay + overtimePay,
-      overtimeHours
+      totalPay: regularPay + overtimePay
     };
-  }, [currentElapsedTime, employeeSettings.hourlyRate, employeeSettings.maxHoursBeforeOvertime]);
+  }, [currentElapsedTime, employeeSettings.maxHoursBeforeOvertime, employeeSettings.hourlyRate]);
 
-  // Reset clock out prompt state when appropriate
-  useEffect(() => {
-    // Reset the clock out prompt after 5 minutes to prevent it from getting stuck
-    if (showClockOutPrompt) {
-      console.log('⏰ Clock out prompt shown, setting 5-minute timeout');
-      const timeout = setTimeout(() => {
-        console.log('🔄 Resetting clock out prompt after timeout');
-        setShowClockOutPrompt(false);
-        setClockOutPromptMessage(undefined);
-      }, 5 * 60 * 1000); // 5 minutes
+  const filteredRequests = useMemo(() => {
+    return requests.filter(request => {
+      const matchesFilter = requestFilter === "all" || request.status === requestFilter;
+      const matchesSearch = request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           request.description.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesFilter && matchesSearch;
+    });
+  }, [requests, requestFilter, searchTerm]);
 
-      return () => {
-        console.log('⏰ Clearing clock out timeout');
-        clearTimeout(timeout);
-      };
-    }
-  }, [showClockOutPrompt]);
-
-  // ✅ ALL CONDITIONAL RENDERING LOGIC AFTER ALL HOOKS
-  if (!isLoaded) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <span className="text-lg text-muted-foreground">Loading user profile...</span>
-      </div>
-    );
+  // Early return after all hooks
+  if (!isLoaded || !isSignedIn) {
+    return <div>Loading...</div>;
   }
 
-  if (isLoaded && !isSignedIn) {
-    return null;
-  }
-
-  // FUNCTION DEFINITIONS (these are safe to be after conditional returns since they're not hooks)
-  
-  // Load employee data from database
   const loadEmployeeData = async () => {
     if (!user?.id) return;
     
@@ -319,87 +286,79 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       
       if (employee) {
         setEmployeeData({
-          name: employee.name,
-          email: employee.email,
-          department: employee.department,
-          position: employee.position,
+          name: employee.name || user.firstName + ' ' + user.lastName || 'Employee',
+          email: employee.email || user.emailAddresses[0]?.emailAddress || '',
+          department: employee.department || 'Sales',
+          position: employee.position || 'Insurance Agent',
           loading: false
         });
       } else {
-        // Fallback to Clerk user data if employee not found in database
+        // Use Clerk user data as fallback
         setEmployeeData({
-          name: user.firstName && user.lastName 
-            ? `${user.firstName} ${user.lastName}` 
-            : user.firstName || "Employee",
-          email: user.emailAddresses[0]?.emailAddress || "",
-          department: "Unknown",
-          position: "Employee",
+          name: user.firstName + ' ' + user.lastName || 'Employee',
+          email: user.emailAddresses[0]?.emailAddress || '',
+          department: 'Sales',
+          position: 'Insurance Agent',
           loading: false
         });
       }
     } catch (error) {
       console.error('Error loading employee data:', error);
-      // Fallback to Clerk user data
+      // Use Clerk user data as fallback
       setEmployeeData({
-        name: user.firstName && user.lastName 
-          ? `${user.firstName} ${user.lastName}` 
-          : user.firstName || "Employee",
-        email: user.emailAddresses[0]?.emailAddress || "",
-        department: "Unknown",
-        position: "Employee",
+        name: user.firstName + ' ' + user.lastName || 'Employee',
+        email: user.emailAddresses[0]?.emailAddress || '',
+        department: 'Sales',
+        position: 'Insurance Agent',
         loading: false
       });
     }
   };
 
-  // Load weekly data and hours
   const loadWeeklyData = async () => {
     if (!user?.id) return;
     
     try {
-      console.log('🔄 Loading weekly data for user:', user.id);
-      logTimezoneInfo(); // Log timezone info for debugging
-      
-      const [weekly, today, week] = await Promise.all([
-        getWeeklySummary(user.id),
+      const [todayHoursData, thisWeekHoursData, weeklyDataResult] = await Promise.all([
         getTodayHours(user.id),
-        getThisWeekHours(user.id)
+        getThisWeekHours(user.id),
+        getWeeklySummary(user.id)
       ]);
       
-      console.log('📊 Weekly data loaded:', { weekly, today, week });
-      console.log('📅 Today hours from DB:', today);
-      console.log('📈 This week hours from DB:', week);
-      
-      setWeeklyData(weekly);
-      setTodayHours(today);
-      setThisWeekHours(week);
-      
-      console.log('✅ State updated - todayHours:', today, 'thisWeekHours:', week);
+      setTodayHours(todayHoursData);
+      setThisWeekHours(thisWeekHoursData);
+      setWeeklyData(weeklyDataResult);
     } catch (error) {
-      console.error('❌ Error loading weekly data:', error);
+      console.error('Error loading weekly data:', error);
     }
   };
 
-  // Load employee performance data (NO BONUS INFORMATION)
   const loadPerformanceData = async () => {
     if (!user?.id) return;
     
     try {
-      const [policySales, clientReviews] = await Promise.all([
+      setPerformanceData(prev => ({ ...prev, loading: true }));
+      
+      // Use Promise.allSettled to handle potential failures gracefully
+      const results = await Promise.allSettled([
         getPolicySales(user.id),
         getClientReviews(user.id)
       ]);
+
+      const policySales = results[0].status === 'fulfilled' ? results[0].value : [];
+      const clientReviews = results[1].status === 'fulfilled' ? results[1].value : [];
       
       const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
-      const avgRating = clientReviews.length > 0 
-        ? clientReviews.reduce((sum, review) => sum + review.rating, 0) / clientReviews.length 
+      const totalReviews = clientReviews.length;
+      const avgRating = totalReviews > 0 
+        ? (clientReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews).toFixed(1)
         : 0;
       
       setPerformanceData({
         totalPolicies: policySales.length,
         totalSales,
-        totalReviews: clientReviews.length,
-        avgRating: Math.round(avgRating * 10) / 10,
+        totalReviews,
+        avgRating: parseFloat(avgRating.toString()),
         loading: false
       });
     } catch (error) {
@@ -408,123 +367,82 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     }
   };
 
-  // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
-    console.log('⏰ Time update received:', { elapsedSeconds, status, currentStatus: timeStatus, now: new Date().toISOString() });
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
-    
-    // Only refresh weekly data when status changes, not on every timer tick
-    if (status !== timeStatus) {
-      console.log('🔄 Status changed, refreshing weekly data');
-      loadWeeklyData();
-    }
   };
 
-  // 🔧 ENHANCED DEBUGGING: Clock out handler
   const handleClockOut = async () => {
-    console.log('🚪 ===== CLOCK OUT TRIGGERED =====');
-    console.log('🚪 User ID:', user?.id);
-    console.log('🚪 Current state:', { showClockOutPrompt, clockOutPromptMessage });
-    
-    // Add a small delay to ensure the database operation completes
-    setTimeout(() => {
-      console.log('🔄 Clock out delay completed, refreshing data');
-      loadWeeklyData();
-      loadPerformanceData();
-    }, 500);
-    
-    onClockOut?.();
-    
-    console.log('🤖 Attempting to fetch AI clock out message...');
-    
-    // Fetch AI-generated message
-    try {
-      const requestPayload = {
-        message: "CLOCK_OUT_PROMPT",
-        userRole: 'employee',
-        employeeId: user?.id,
-        userName: getFirstName(),
-        isClockOutPrompt: true
-      };
-      
-      console.log('📤 Sending request to /api/chat:', requestPayload);
-      
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestPayload),
-      });
-      
-      console.log('📥 Response status:', res.status);
-      console.log('📥 Response ok:', res.ok);
-      
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
-      
-      const data = await res.json();
-      console.log('📥 Response data:', data);
-      
-      const message = data.response || "How was your day? I'd love to hear about it!";
-      console.log('💬 Setting clock out message:', message);
-      
-      setClockOutPromptMessage(message);
-      setShowClockOutPrompt(true);
-      
-      console.log('✅ Clock out prompt state updated');
-      
-    } catch (error) {
-      console.error('❌ Error getting clock out message:', error);
-      const fallbackMessage = "How was your day? I'd love to hear about it!";
-      console.log('💬 Using fallback message:', fallbackMessage);
-      
-      setClockOutPromptMessage(fallbackMessage);
-      setShowClockOutPrompt(true);
+    // Call the parent onClockOut if provided
+    if (onClockOut) {
+      onClockOut();
     }
-    
-    console.log('🚪 ===== CLOCK OUT COMPLETE =====');
+
+    // Generate and send clock-out question to parent (ask about their day)
+    if (onClockOutPrompt) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: 'CLOCK_OUT_PROMPT',
+            userRole: 'employee',
+            employeeId: user?.id || "emp-001"
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          onClockOutPrompt(data.response);
+        } else {
+          // Fallback question
+          onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
+        }
+      } catch (error) {
+        console.error('Error getting clock out prompt:', error);
+        // Fallback question
+        onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
+      }
+    }
   };
 
-  // Format time for display (hours and minutes)
   const formatTimeDisplay = (hours: number) => {
     const wholeHours = Math.floor(hours);
     const minutes = Math.round((hours - wholeHours) * 60);
     
-    if (wholeHours === 0 && minutes === 0) {
-      return "0h 00m";
-    } else if (wholeHours === 0) {
+    if (wholeHours === 0) {
       return `${minutes}m`;
     } else if (minutes === 0) {
       return `${wholeHours}h`;
     } else {
-      return `${wholeHours}h ${minutes.toString().padStart(2, '0')}m`;
+      return `${wholeHours}h ${minutes}m`;
     }
   };
 
-  // Calculate progress percentage based on database hours, not current timer
   const getProgressPercentage = () => {
-    const hoursWorked = todayHours; // Use database hours, not current timer
-    return Math.min((hoursWorked / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
+    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
+    return Math.min((currentHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
   };
 
-  // Get progress color based on database hours
   const getProgressColor = () => {
-    const hoursWorked = todayHours; // Use database hours, not current timer
-    if (hoursWorked > employeeSettings.maxHoursBeforeOvertime) {
-      return "bg-red-500"; // Overtime
-    } else if (hoursWorked > employeeSettings.maxHoursBeforeOvertime * 0.9) {
-      return "bg-amber-500"; // Near overtime
+    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
+    if (currentHours >= employeeSettings.maxHoursBeforeOvertime) {
+      return 'bg-amber-500';
+    } else if (currentHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
+      return 'bg-orange-500';
     }
-    return "bg-[#005cb3]"; // Normal
+    return 'bg-[#005cb3]';
   };
 
-  // Load requests from database
   const loadRequests = async () => {
+    if (!user?.id) return;
+    
     setRequestsLoading(true);
     try {
-      const fetchedRequests = await getEmployeeRequests(user?.id || "");
-      setRequests(fetchedRequests);
+      const requestsData = await getEmployeeRequests(user.id);
+      setRequests(requestsData);
     } catch (error) {
       console.error('Error loading requests:', error);
       toast({
@@ -537,56 +455,31 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     }
   };
 
-  const filteredRequests = requests.filter(request => {
-    const matchesFilter = requestFilter === "all" || request.status === requestFilter;
-    const matchesSearch = 
-      request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      request.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      request.request_date.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
-
   const handleLunchBreak = () => {
-    if (!isClockedIn) {
-      return; // Don't allow lunch break if not clocked in
-    }
-    
-    const newLunchState = !isOnLunch;
-    setIsOnLunch(newLunchState);
-    
-    // Control the timer through the global functions
-    if (newLunchState) {
-      // Starting lunch break - pause timer
-      if ((window as any).pauseTimer) {
-        (window as any).pauseTimer();
-      }
-    } else {
-      // Ending lunch break - resume timer
-      if ((window as any).resumeTimer) {
-        (window as any).resumeTimer();
-      }
-    }
-  };
-
-  const getMaxHours = () => {
-    return Math.max(...weeklyData.map(day => day.hoursWorked), 8);
-  };
-
-  const formatDate = (dateString: string) => {
-    // Parse date string manually to avoid timezone issues
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day); // month is 0-based
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
+    setIsOnLunch(!isOnLunch);
+    toast({
+      title: isOnLunch ? "Back from lunch" : "Lunch break started",
+      description: isOnLunch 
+        ? "Welcome back! Your time tracking has resumed." 
+        : "Enjoy your lunch! Time tracking is paused.",
     });
   };
 
+  const getMaxHours = () => {
+    return Math.max(...weeklyData.map(day => day.hoursWorked), employeeSettings.maxHoursBeforeOvertime);
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  };
+
   const getUserName = () => {
-    if (employeeData.loading) {
-      return "Employee";
+    if (employeeData.name && employeeData.name !== 'Employee') {
+      return employeeData.name.split(' ')[0];
     }
-    return employeeData.name;
+    if (user?.firstName) return user.firstName;
+    return 'there';
   };
 
   const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
@@ -609,14 +502,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     if (user?.firstName) return user.firstName;
     return 'there';
   };
-
-  // 🔧 ENHANCED DEBUGGING: Props being passed to ChatInterface
-  const chatProps = {
-    onClockOutPrompt: showClockOutPrompt,
-    clockOutPromptMessage: clockOutPromptMessage
-  };
-  
-  console.log('🔧 ChatInterface props:', chatProps);
 
   return (
     <div className="space-y-6">
@@ -641,46 +526,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
           </div>
         </div>
       </div>
-
-      {/* 🔧 ENHANCED DEBUGGING: Current State Display */}
-      <Card className="border-blue-200 bg-blue-50">
-        <CardContent className="p-4">
-          <h3 className="font-semibold text-blue-700 mb-2">🔧 Debug Information</h3>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p><strong>showClockOutPrompt:</strong> {showClockOutPrompt.toString()}</p>
-              <p><strong>clockOutPromptMessage:</strong> {clockOutPromptMessage ? 'Set' : 'Not set'}</p>
-              <p><strong>User ID:</strong> {user?.id || 'Not loaded'}</p>
-            </div>
-            <div>
-              <p><strong>timeStatus:</strong> {timeStatus}</p>
-              <p><strong>isClockedIn:</strong> {isClockedIn.toString()}</p>
-              <p><strong>First Name:</strong> {getFirstName()}</p>
-            </div>
-          </div>
-          <div className="mt-2">
-            <Button 
-              onClick={handleClockOut}
-              variant="outline"
-              className="border-blue-300 text-blue-700 hover:bg-blue-100 mr-2"
-            >
-              🧪 Test Clock Out Message
-            </Button>
-            <Button 
-              onClick={() => {
-                console.log('🔧 Manual state reset triggered');
-                setShowClockOutPrompt(false);
-                setClockOutPromptMessage(undefined);
-              }}
-              variant="outline"
-              size="sm"
-              className="border-red-300 text-red-700 hover:bg-red-100"
-            >
-              Reset State
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Performance Metrics - Compact Design */}
       <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
@@ -733,18 +578,15 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         <div className="flex flex-col sm:flex-row gap-2 w-full">
           <TimeTracker 
             onClockInChange={(clockedIn) => {
-              console.log('🕐 TimeTracker onClockInChange:', clockedIn);
               setIsClockedIn(clockedIn);
             }} 
             onLunchChange={(lunch) => {
-              console.log('🍽️ TimeTracker onLunchChange:', lunch);
               setIsOnLunch(lunch);
             }}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
             hourlyRate={employeeSettings.hourlyRate}
             onClockOut={(data) => {
-              console.log('🕐 TimeTracker onClockOut triggered with:', data);
               handleClockOut();
             }}
           />
@@ -999,18 +841,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         employeeEmail={employeeData.email}
       />
 
-      {/* 🔧 ENHANCED DEBUGGING: ChatInterface with debug info */}
-      <div className="border-2 border-dashed border-purple-300 p-4 rounded-lg">
-        <h3 className="text-purple-700 font-semibold mb-2">🔧 ChatInterface Debug Zone</h3>
-        <p className="text-sm text-purple-600 mb-2">
-          Props: onClockOutPrompt={showClockOutPrompt.toString()}, 
-          clockOutPromptMessage={(clockOutPromptMessage ? 'SET' : 'UNSET')}
-        </p>
-        <ChatInterface 
-          onClockOutPrompt={showClockOutPrompt}
-          clockOutPromptMessage={clockOutPromptMessage}
-        />
-      </div>
+
     </div>
   );
 }

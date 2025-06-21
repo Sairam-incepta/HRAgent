@@ -61,6 +61,7 @@ export default function Home() {
           <div className="w-full flex flex-col items-center">
             <SignIn
               routing="path"
+              path="/sign-in"
               appearance={{
                 elements: {
                   card: 'shadow-none border-none',
@@ -74,7 +75,6 @@ export default function Home() {
                   colorBackground: '#fff',
                   colorInputBackground: '#f3f4f6',
                   colorInputText: '#222',
-                  colorAlphaShade: '#005cb3',
                 }
               }}
             />

@@ -83,7 +83,7 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
 
   return (
     <>
-      <header className="h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10">
+      <header className="h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10 flex-shrink-0">
         <div className="h-full px-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Image

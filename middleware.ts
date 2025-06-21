@@ -1,13 +1,10 @@
-import { authMiddleware } from '@clerk/nextjs';
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
-export default authMiddleware({
-  publicRoutes: ['/sign-in'],
-  // Force users to sign in again after server restart
-  afterAuth(auth, req, evt) {
-    // Clear any cached session data
-    if (!auth.userId && req.nextUrl.pathname.startsWith('/dashboard')) {
-      return Response.redirect(new URL('/sign-in', req.url));
-    }
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)']);
+
+export default clerkMiddleware(async (auth, req) => {
+  if (!isPublicRoute(req)) {
+    await auth.protect();
   }
 });
 

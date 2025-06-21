@@ -119,9 +119,7 @@ export const addPolicySale = async (sale: {
         cross_sold_to: sale.crossSoldTo,
         client_description: sale.clientDescription,
         is_cross_sold_policy: sale.isCrossSoldPolicy || false,
-        bonus: calculateBonus(sale.brokerFee, sale.crossSold),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        bonus: calculateBonus(sale.brokerFee, sale.crossSold)
       })
       .select()
       .single();
@@ -136,6 +134,19 @@ export const addPolicySale = async (sale: {
     
     // Update employee bonus
     await updateEmployeeBonus(sale.employeeId, data.bonus);
+    
+    // Create high-value policy notification if amount > $5,000
+    if (sale.amount > 5000) {
+      console.log('💰 Creating high-value policy notification for policy over $5,000');
+      await createHighValuePolicyNotification({
+        employeeId: sale.employeeId,
+        policyNumber: sale.policyNumber,
+        policyAmount: sale.amount,
+        brokerFee: sale.brokerFee,
+        currentBonus: data.bonus,
+        isCrossSoldPolicy: sale.isCrossSoldPolicy || false
+      });
+    }
     
     // Notify dashboard to refresh
     notifyPolicySale();

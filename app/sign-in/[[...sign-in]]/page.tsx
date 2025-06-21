@@ -4,8 +4,8 @@ import Link from "next/link";
 
 export default function SignInPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
-      <div className="w-full max-w-md space-y-8">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4 py-12">
+      <div className="w-full max-w-md space-y-6 flex-shrink-0">
         {/* Logo Section */}
         <div className="text-center">
           <div className="flex justify-center mb-6">
@@ -25,7 +25,7 @@ export default function SignInPage() {
         </div>
         
         {/* Sign In Form */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 p-8">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 p-6">
           <SignIn 
             appearance={{
               elements: {
@@ -75,6 +75,9 @@ export default function SignInPage() {
           </p>
         </div>
       </div>
+      
+      {/* Extra spacing to prevent bottom cutoff */}
+      <div className="h-16 flex-shrink-0"></div>
     </div>
   );
 }

@@ -25,6 +25,15 @@ export function HighValuePolicyNotifications() {
     loadHighValuePolicies();
   }, []);
 
+  // Auto-refresh every 30 seconds to catch new high-value policies
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadHighValuePolicies();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const loadHighValuePolicies = async () => {
     try {
       setLoading(true);

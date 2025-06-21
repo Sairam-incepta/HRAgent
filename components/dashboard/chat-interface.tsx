@@ -5,12 +5,11 @@ import { useUser } from "@clerk/nextjs";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart, X, Expand, Shrink, Bot } from "lucide-react";
+import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { getChatMessages } from '@/lib/database';
-import { useRouter } from "next/navigation";
 
 type Message = {
   id: string;
@@ -21,124 +20,28 @@ type Message = {
 
 const MAX_MESSAGES = 35;
 
-// Dedicated MessageBubble component with better responsive design
-const MessageBubble = ({ 
-  message, 
-  userInitials, 
-  userImageUrl, 
-  isExpanded 
-}: {
-  message: Message;
-  userInitials: string;
-  userImageUrl?: string;
-  isExpanded: boolean;
-}) => {
-  const isUser = message.sender === "user";
-  
-  return (
-    <div className={cn(
-      "flex gap-3",
-      isUser ? "flex-row-reverse" : "flex-row"
-    )}>
-      {/* Avatar */}
-      <Avatar className="h-8 w-8 flex-shrink-0 mt-0.5">
-        {isUser ? (
-          <>
-            <AvatarImage src={userImageUrl} />
-            <AvatarFallback className="text-xs font-medium">{userInitials}</AvatarFallback>
-          </>
-        ) : (
-          <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3]">
-            <Bot className="h-4 w-4" />
-          </AvatarFallback>
-        )}
-      </Avatar>
-
-      {/* Message Content Container */}
-      <div className={cn(
-        "flex flex-col min-w-0 flex-1",
-        isUser ? "items-end" : "items-start"
-      )}>
-        {/* Message Bubble */}
-        <div className={cn(
-          "relative rounded-lg px-3 py-3 pb-8 shadow-sm min-h-[3.5rem]",
-          // Simple max-width based on chat state
-          isExpanded ? "max-w-[75%]" : "max-w-[85%]",
-          // Styling based on sender
-          isUser
-            ? "bg-[#005cb3] text-white"
-            : "bg-muted/50 border"
-        )}>
-          <p 
-            className="text-sm break-words whitespace-pre-wrap pr-10"
-            dangerouslySetInnerHTML={{ __html: message.content }}
-          />
-          
-          {/* Timestamp */}
-          <span className={cn(
-            "absolute bottom-1.5 right-2 text-[10px] opacity-60",
-            isUser ? "text-blue-100" : "text-muted-foreground"
-          )}>
-            {message.timestamp.toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            })}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Typing indicator component
-const TypingIndicator = ({ isExpanded }: { isExpanded: boolean }) => (
-  <div className="flex gap-3">
-    <Avatar className="h-8 w-8 flex-shrink-0 mt-0.5">
-      <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3]">
-        <Bot className="h-4 w-4" />
-      </AvatarFallback>
-    </Avatar>
-    
-    <div className={cn(
-      "rounded-lg px-3 py-2 bg-muted/50 border",
-      isExpanded ? "max-w-[75%]" : "max-w-[85%]"
-    )}>
-      <div className="flex items-center gap-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#005cb3]" />
-        <span className="text-sm text-muted-foreground">Typing...</span>
-      </div>
-    </div>
-  </div>
-);
-
 export function ChatInterface({ 
-  dailySummaryPrompt, 
-  onDailySummaryPromptShown, 
+  onClockOutPrompt, 
+  clockOutPromptMessage,
   onCollapse,
   isExpanded,
-  onToggleExpand,
-  onClockOutPrompt,
-  clockOutPromptMessage
+  onToggleExpand
 }: { 
-  dailySummaryPrompt?: string | null;
-  onDailySummaryPromptShown?: () => void;
+  onClockOutPrompt?: boolean; 
+  clockOutPromptMessage?: string;
   onCollapse?: () => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
-  onClockOutPrompt?: boolean;
-  clockOutPromptMessage?: string;
 }) {
-  const { user, isLoaded, isSignedIn } = useUser();
+  const { user, isLoaded } = useUser();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
+  const [hasInitialized, setHasInitialized] = useState(false);
+  const [hasShownClockOutPrompt, setHasShownClockOutPrompt] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-  const router = useRouter();
-  const [hasRedirected, setHasRedirected] = useState(false);
-  const [awaitingDailySummary, setAwaitingDailySummary] = useState(false);
-  const [hasShownClockOutPrompt, setHasShownClockOutPrompt] = useState(false);
 
   // Determine user role
   useEffect(() => {
@@ -150,319 +53,212 @@ export function ChatInterface({
     }
   }, [isLoaded, user]);
 
-  // Load messages from backend on mount
+  const STORAGE_KEY = userRole ? `letsinsure_chat_messages_${userRole}_${user?.id || 'anonymous'}` : null;
+
+  // Load messages from localStorage and send initial AI greeting
   useEffect(() => {
-    const loadMessages = async () => {
-      if (!user?.id || !userRole) return;
-      
+    if (!STORAGE_KEY || !userRole || hasInitialized) return;
+
+    const loadMessagesAndInitialize = async () => {
       try {
-        const msgs = await getChatMessages({ userId: user.id, limit: MAX_MESSAGES });
-        if (msgs && msgs.length > 0) {
-          setMessages(msgs.map((msg: any) => ({
-            id: msg.id,
-            content: msg.content,
-            sender: msg.role === 'bot' ? 'bot' : 'user',
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsedMessages = JSON.parse(stored).map((msg: any) => ({
+            ...msg,
             timestamp: new Date(msg.timestamp)
-          })));
+          }));
+          setMessages(parsedMessages);
         } else {
-          // Send initial greeting to backend to get AI-generated welcome message
-          sendInitialGreeting();
+          // If no stored messages, get AI greeting
+          await getInitialAIGreeting();
         }
+        setHasInitialized(true);
       } catch (error) {
-        console.error('Error loading messages:', error);
-        // Send initial greeting on error as fallback
-        sendInitialGreeting();
+        console.error('Error loading chat messages:', error);
+        // Fallback to getting AI greeting
+        await getInitialAIGreeting();
+        setHasInitialized(true);
       }
     };
 
-    // Always load messages when user and role are available
-    if (user?.id && userRole) {
-      loadMessages();
-    }
-  }, [user?.id, userRole]);
+    loadMessagesAndInitialize();
+  }, [userRole, STORAGE_KEY, user?.id, hasInitialized]);
 
-  // Send initial greeting to get AI-generated welcome message
-  const sendInitialGreeting = async () => {
-    if (!user?.id || !userRole) return;
-    
+  // Get initial AI greeting
+  const getInitialAIGreeting = async () => {
+    if (!userRole) return;
+
+    setIsTyping(true);
     try {
-      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: "INITIAL_GREETING", 
-          userRole: userRole, 
-          employeeId: user.id,
-          userName: userName
-        })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: userRole === 'admin' 
+            ? "Hello, I'm the new admin. Please introduce yourself and tell me how you can help."
+            : "Hello, I'm a new employee. Please introduce yourself and tell me how you can help.",
+          userRole: userRole,
+          employeeId: user?.id || "emp-001"
+        }),
       });
-      
+
       if (response.ok) {
         const data = await response.json();
-        const welcomeMessage: Message = {
-          id: "welcome",
+        const aiMessage: Message = {
+          id: "initial-greeting",
           content: data.response,
           sender: "bot",
           timestamp: new Date(),
         };
-        setMessages([welcomeMessage]);
+        setMessages([aiMessage]);
       }
     } catch (error) {
-      console.error('Error getting initial greeting:', error);
-    }
-  };
-
-  // Handle daily summary prompt
-  useEffect(() => {
-    if (dailySummaryPrompt && userRole === 'employee') {
-      const botMessage: Message = {
-        id: `daily-summary-prompt-${Date.now()}`,
-        content: dailySummaryPrompt,
-        sender: "bot",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => {
-        const updated = [...prev, botMessage];
-        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
-        return updated;
-      });
-      onDailySummaryPromptShown?.();
-    }
-  }, [dailySummaryPrompt, userRole, onDailySummaryPromptShown]);
-
-  // Show post-clock-out prompt when onClockOutPrompt becomes true
-  useEffect(() => {
-    console.log('Clock out effect triggered:', { onClockOutPrompt, hasShownClockOutPrompt, userRole });
-    
-    if (onClockOutPrompt && !hasShownClockOutPrompt && userRole === 'employee') {
-      console.log('Showing clock out prompt with message:', clockOutPromptMessage);
-      setAwaitingDailySummary(true);
-      setHasShownClockOutPrompt(true);
-      
-      // Always add the message (either custom or fallback)
-      const messageToShow = clockOutPromptMessage || "How was your day? I'd love to hear about it!";
-      
-      setMessages(prev => [
-        ...prev,
-        {
-          id: `clockout-prompt-${Date.now()}`,
-          content: messageToShow,
-          sender: "bot",
-          timestamp: new Date(),
-        },
-      ]);
-    }
-    
-    if (!onClockOutPrompt) {
-      setHasShownClockOutPrompt(false);
-      setAwaitingDailySummary(false);
-    }
-  }, [onClockOutPrompt, userRole, hasShownClockOutPrompt, clockOutPromptMessage]);
-
-  // Get AI-generated clock out message
-  const getAIClockOutMessage = async () => {
-    if (!user?.id) return;
-    
-    try {
-      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: "CLOCK_OUT_PROMPT",
-          userRole: 'employee',
-          employeeId: user.id,
-          userName: userName,
-          isClockOutPrompt: true
-        }),
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(prev => [
-          ...prev,
-          {
-            id: `clockout-prompt-${Date.now()}`,
-            content: data.response,
-            sender: "bot",
-            timestamp: new Date(),
-          },
-        ]);
-      }
-    } catch (error) {
-      console.error('Error getting clock out message:', error);
-      // Fallback message
-      setMessages(prev => [
-        ...prev,
-        {
-          id: `clockout-prompt-${Date.now()}`,
-          content: "How was your day? I'd love to hear about it!",
-          sender: "bot",
-          timestamp: new Date(),
-        },
-      ]);
-    }
-  };
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // Handle daily summary submission (after clock out)
-  const handleDailySummarySubmit = async () => {
-    if (!input.trim() || isTyping || !userRole || !user?.id) return;
-    
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: input,
-      sender: "user",
-      timestamp: new Date(),
-    };
-    addMessage(userMessage);
-    
-    const messageToSend = input;
-    setInput("");
-    setIsTyping(true);
-    
-    try {
-      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
-      
-      // Send to /api/chat with isDailySummarySubmission flag
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: messageToSend, 
-          userRole: userRole, 
-          employeeId: user.id, 
-          isDailySummarySubmission: true,
-          userName: userName
-        })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        // Add bot response
-        addMessage({
-          id: (Date.now() + 1).toString(),
-          content: data.response || "Thank you for sharing about your day!",
-          sender: "bot",
-          timestamp: new Date(),
-        });
-      } else {
-        throw new Error('Failed to submit daily summary');
-      }
-      
-      setAwaitingDailySummary(false);
-    } catch (error) {
-      console.error('Error submitting daily summary:', error);
-      toast({ title: "Error", description: "Failed to submit summary.", variant: "destructive" });
-      
-      // Add encouraging error message
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        content: "I had trouble saving your summary, but I appreciate you sharing! Please try again if you'd like. 😊",
-        sender: "bot",
-        timestamp: new Date(),
-      });
-      
-      setAwaitingDailySummary(false);
+      console.error('Error getting initial AI greeting:', error);
     } finally {
       setIsTyping(false);
     }
   };
 
-  // When adding a new message, keep only the latest messages
-  const addMessage = (newMsg: Message) => {
-    setMessages(prev => {
-      const updated = [...prev, newMsg];
-      if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
-      return updated;
-    });
+  // Save messages to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0 && STORAGE_KEY && hasInitialized) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+      } catch (error) {
+        console.error('Error saving chat messages:', error);
+      }
+    }
+  }, [messages, STORAGE_KEY, hasInitialized]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Enhanced handleSend with better error handling and user name
-  const handleSend = async () => {
-    if (awaitingDailySummary) {
-      await handleDailySummarySubmit();
-      return;
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const getUserInitials = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName[0]}${user.lastName[0]}`;
     }
-    if (!input.trim() || isTyping || !userRole || !user?.id) return;
-    
+    if (user?.emailAddresses[0]?.emailAddress) {
+      const email = user.emailAddresses[0].emailAddress;
+      return email.substring(0, 2).toUpperCase();
+    }
+    return userRole === 'admin' ? "AD" : "EM";
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isTyping || !userRole) return;
+
+    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       content: input,
       sender: "user",
       timestamp: new Date(),
     };
-    addMessage(userMessage);
+    
+    // Remove oldest messages if limit is reached
+    const updatedMessages = [...messages, userMessage];
+    if (updatedMessages.length > MAX_MESSAGES) {
+      updatedMessages.splice(0, updatedMessages.length - MAX_MESSAGES);
+    }
+    
+    setMessages(updatedMessages);
     setInput("");
     setIsTyping(true);
     
+    // Reset textarea height after sending
+    setTimeout(() => {
+      const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.style.height = '44px';
+      }
+    }, 0);
+    
     try {
-      // Get user name for personalization
-      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
-      
+      // Call OpenAI API with user role
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: input, 
-          userRole: userRole, 
-          employeeId: user.id,
-          userName: userName
-        })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: input,
+          userRole: userRole,
+          employeeId: user?.id || "emp-001"
+        }),
       });
-      
+
       if (!response.ok) {
-        let errorBody = '';
-        try { errorBody = await response.text(); } catch {}
-        console.error('Chat API error:', response.status, errorBody);
         throw new Error('Failed to get response');
       }
-      
+
       const data = await response.json();
+      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: data.response,
         sender: "bot",
         timestamp: new Date(),
       };
-      addMessage(botMessage);
+      
+      // Remove oldest messages if limit is reached
+      const updatedMessagesWithBot = [...updatedMessages, botMessage];
+      if (updatedMessagesWithBot.length > MAX_MESSAGES) {
+        updatedMessagesWithBot.splice(0, updatedMessagesWithBot.length - MAX_MESSAGES);
+      }
+      
+      setMessages(updatedMessagesWithBot);
     } catch (error) {
-      console.error('Chat handleSend error:', error);
-      toast({ 
-        title: "Error", 
-        description: "Failed to get response from assistant. Please try again.", 
-        variant: "destructive" 
+      console.error('Chat error:', error);
+      toast({
+        title: "Error",
+        description: "Failed to get response from assistant. Please try again.",
+        variant: "destructive",
       });
       
-      // Add encouraging error message
+      // Add error message
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "I'm having trouble connecting right now. Please try again! 😊",
+        content: "I'm sorry, I'm having trouble connecting right now. Please check that your OpenAI API key is configured and try again.",
         sender: "bot",
         timestamp: new Date(),
       };
-      addMessage(errorMessage);
+      
+      const updatedMessagesWithError = [...updatedMessages, errorMessage];
+      if (updatedMessagesWithError.length > MAX_MESSAGES) {
+        updatedMessagesWithError.splice(0, updatedMessagesWithError.length - MAX_MESSAGES);
+      }
+      
+      setMessages(updatedMessagesWithError);
     } finally {
       setIsTyping(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      if (e.shiftKey) {
-        // Allow Shift+Enter for new lines
-        return;
-      } else {
-        // Enter alone sends the message
-        e.preventDefault();
-        handleSend();
-      }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
+    // Allow Shift+Enter for new lines - no need to prevent default
+    // The textarea will handle it naturally
+  };
+
+  // Auto-resize textarea based on content
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    
+    // Auto-resize the textarea
+    const textarea = e.target;
+    textarea.style.height = 'auto';
+    const scrollHeight = Math.min(textarea.scrollHeight, 120); // max-height: 120px
+    textarea.style.height = Math.max(44, scrollHeight) + 'px'; // min-height: 44px
   };
 
   const handleQuickAction = (action: string) => {
@@ -475,17 +271,17 @@ export function ChatInterface({
       return [
         {
           icon: Users,
-          label: "Team Stats",
+          label: "Employee Performance",
           action: "Show me employee performance metrics"
         },
         {
           icon: BarChart,
-          label: "Analytics",
+          label: "Company Analytics",
           action: "Give me company sales analytics"
         },
         {
           icon: TrendingUp,
-          label: "Sales",
+          label: "Sales Overview",
           action: "Show me recent policy sales"
         }
       ];
@@ -493,34 +289,58 @@ export function ChatInterface({
       return [
         {
           icon: TrendingUp,
-          label: "Add Sale",
-          action: "I just closed a new policy sale"
+          label: "Add Policy Sale",
+          action: "I sold a new policy today"
         },
         {
           icon: Star,
           label: "Add Review",
-          action: "I received client feedback to share"
+          action: "I have a client review to record"
         },
         {
           icon: Clock,
-          label: "Daily Check-in",
-          action: "I'd like to share about my day"
+          label: "Daily Summary",
+          action: "How was your day? I'd love to hear about it!"
         }
       ];
     }
   };
 
+  // Handle clock out prompt from dashboard (when employee clocks out)
   useEffect(() => {
-    if (isLoaded && isSignedIn && !hasRedirected) {
-      setHasRedirected(true);
-      setTimeout(() => {
-        router.replace('/dashboard');
-      }, 100);
+    if (
+      onClockOutPrompt && 
+      clockOutPromptMessage && 
+      userRole === 'employee' && 
+      hasInitialized && 
+      !hasShownClockOutPrompt
+    ) {
+      const botMessage: Message = {
+        id: `clock-out-prompt-${Date.now()}`,
+        content: clockOutPromptMessage,
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => {
+        const updated = [...prev, botMessage];
+        if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+        return updated;
+      });
+      
+      setHasShownClockOutPrompt(true);
     }
-  }, [isLoaded, isSignedIn, router, hasRedirected]);
+  }, [onClockOutPrompt, clockOutPromptMessage, userRole, hasInitialized, hasShownClockOutPrompt]);
 
-  // Don't render chat until we have a confirmed role
-  if (!userRole || !isLoaded) {
+  // Reset the clock out prompt flag when the prompt is cleared
+  useEffect(() => {
+    if (!onClockOutPrompt) {
+      setHasShownClockOutPrompt(false);
+    }
+  }, [onClockOutPrompt]);
+
+  // Don't render chat until we have a confirmed role and initialized
+  if (!userRole || !isLoaded || !hasInitialized) {
     return (
       <div className="h-full flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -530,112 +350,121 @@ export function ChatInterface({
 
   const quickActions = getQuickActions();
 
-  const getUserInitials = () => {
-    if (user?.firstName && user?.lastName) {
-      return `${user.firstName[0]}${user.lastName[0]}`;
-    }
-    if (user?.emailAddresses?.[0]?.emailAddress) {
-      const email = user.emailAddresses[0].emailAddress;
-      return email.substring(0, 2).toUpperCase();
-    }
-    return userRole === "admin" ? "AD" : "EM";
-  };
-
   return (
     <div className="h-full flex flex-col bg-background">
-      {/* Chat Header */}
-      <div className="p-4 border-b bg-background">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-[#005cb3] animate-pulse"></div>
-            <div>
-              <h3 className="font-semibold text-sm md:text-base">
-                {userRole === 'admin' ? 'HR Admin Assistant' : 'HR Assistant'}
-              </h3>
-              <p className="text-xs md:text-sm text-muted-foreground">
-                {userRole === 'admin' ? 'Team & Analytics' : 'Sales & Performance'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1">
-            {onToggleExpand && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onToggleExpand}
-                className="h-8 w-8 p-0 shrink-0"
-                title={isExpanded ? "Shrink chat (35%)" : "Expand chat (45%)"}
-              >
-                {isExpanded ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-              </Button>
-            )}
-            {onCollapse && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onCollapse}
-                className="h-8 w-8 p-0 shrink-0"
-                title="Close chat"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Removed duplicate header - title is now in parent component */}
       
       {/* Quick Action Buttons */}
-      <div className="px-3 py-2 border-b bg-background/95 backdrop-blur">
-        <div className="grid grid-cols-3 gap-1.5">
-          {getQuickActions().map((action, index) => (
+      <div className="p-3 border-b bg-background/95 backdrop-blur">
+        <div className="grid grid-cols-3 gap-2">
+          {quickActions.map((action, index) => (
             <Button
               key={index}
               variant="outline"
               size="sm"
               onClick={() => handleQuickAction(action.action)}
-              className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all text-xs"
+              className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all"
             >
-              <action.icon className="h-4 w-4 text-[#005cb3]" />
-              <span className="font-medium text-center leading-none">{action.label}</span>
+              <action.icon className="h-3 w-3 text-[#005cb3]" />
+              <span className="font-medium text-[10px] text-center leading-tight">{action.label}</span>
             </Button>
           ))}
         </div>
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {messages.map((message) => (
-          <MessageBubble
+          <div
             key={message.id}
-            message={message}
-            userInitials={getUserInitials()}
-            userImageUrl={user?.imageUrl}
-            isExpanded={!!isExpanded}
-          />
+            className={cn(
+              "flex items-start gap-3 max-w-[95%]",
+              message.sender === "user" ? "ml-auto flex-row-reverse" : ""
+            )}
+          >
+            <Avatar className="h-8 w-8 flex-shrink-0">
+              {message.sender === "bot" ? (
+                <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3] text-xs font-semibold">
+                  {userRole === 'admin' ? 'LA' : 'LI'}
+                </AvatarFallback>
+              ) : (
+                <>
+                  <AvatarImage src={user?.imageUrl} />
+                  <AvatarFallback className="text-xs font-semibold">{getUserInitials()}</AvatarFallback>
+                </>
+              )}
+            </Avatar>
+            <div
+              className={cn(
+                "rounded-lg px-4 py-3 max-w-full shadow-sm",
+                message.sender === "user"
+                  ? "bg-[#005cb3] text-white ml-auto"
+                  : "bg-muted/50 border"
+              )}
+            >
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+              <p className={cn(
+                "text-xs mt-2 opacity-70",
+                message.sender === "user" ? "text-blue-100" : "text-muted-foreground"
+              )}>
+                {message.timestamp.toLocaleTimeString([], { 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}
+              </p>
+            </div>
+          </div>
         ))}
-        {isTyping && <TypingIndicator isExpanded={!!isExpanded} />}
+        
+        {isTyping && (
+          <div className="flex items-start gap-3 max-w-[95%]">
+            <Avatar className="h-8 w-8 flex-shrink-0">
+              <AvatarFallback className="bg-[#005cb3]/10 text-[#005cb3] text-xs font-semibold">
+                {userRole === 'admin' ? 'LA' : 'LI'}
+              </AvatarFallback>
+            </Avatar>
+            <div className="rounded-lg px-4 py-3 bg-muted/50 border">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Assistant is thinking...</span>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <form
-        className="flex items-center gap-2 p-3 border-t bg-background"
-        onSubmit={e => {
-          e.preventDefault()
-          handleSend();
-        }}
-      >
-        <Input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={awaitingDailySummary ? "Share about your day..." : "Type your message... (Shift+Enter for new line)"}
-          disabled={isTyping}
-        />
-        <Button type="submit" disabled={isTyping || !input.trim()}>
-          {isTyping ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
-        </Button>
-      </form>
+      <div className="border-t p-3 bg-background flex-shrink-0">
+        <div className="flex w-full items-end gap-2">
+          <Textarea
+            placeholder={userRole === 'admin' 
+              ? "Ask about employee performance, company metrics, or team analytics... (Shift+Enter for new line)" 
+              : "Tell me about your day, add sales data, or ask for help... (Shift+Enter for new line)"
+            }
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            className="flex-1 border-muted-foreground/20 focus:border-[#005cb3] transition-colors resize-none min-h-[44px] max-h-[120px]"
+            disabled={isTyping}
+            rows={1}
+          />
+          <Button 
+            onClick={handleSend} 
+            disabled={!input.trim() || isTyping} 
+            className="bg-[#005cb3] hover:bg-[#004a96] px-3"
+            size="sm"
+          >
+            {isTyping ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <PaperPlaneIcon className="h-4 w-4" />
+            )}
+            <span className="sr-only">Send</span>
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -18,7 +18,8 @@ export interface ClerkUserData {
 export async function createClerkUserAndEmployee(userData: ClerkUserData) {
   try {
     // Create user in Clerk
-    const clerkUser = await clerkClient.users.createUser({
+    const client = await clerkClient();
+    const clerkUser = await client.users.createUser({
       firstName: userData.firstName,
       lastName: userData.lastName,
       emailAddress: [userData.emailAddress],
@@ -48,7 +49,7 @@ export async function createClerkUserAndEmployee(userData: ClerkUserData) {
 
     if (!employee) {
       // If employee creation fails, we should clean up the Clerk user
-      await clerkClient.users.deleteUser(clerkUser.id);
+      await client.users.deleteUser(clerkUser.id);
       throw new Error('Failed to create employee record');
     }
 
@@ -86,7 +87,8 @@ export async function updateClerkUserMetadata(clerkUserId: string, updates: {
 
     // Update public metadata
     if (updates.department || updates.position) {
-      const currentUser = await clerkClient.users.getUser(clerkUserId);
+      const client = await clerkClient();
+      const currentUser = await client.users.getUser(clerkUserId);
       updateData.publicMetadata = {
         ...currentUser.publicMetadata,
         ...(updates.department && { department: updates.department }),
@@ -94,7 +96,8 @@ export async function updateClerkUserMetadata(clerkUserId: string, updates: {
       };
     }
 
-    const updatedUser = await clerkClient.users.updateUser(clerkUserId, updateData);
+    const client2 = await clerkClient();
+    const updatedUser = await client2.users.updateUser(clerkUserId, updateData);
     
     return {
       success: true,
@@ -112,7 +115,8 @@ export async function updateClerkUserMetadata(clerkUserId: string, updates: {
  */
 export async function deleteClerkUser(clerkUserId: string) {
   try {
-    await clerkClient.users.deleteUser(clerkUserId);
+    const client = await clerkClient();
+    await client.users.deleteUser(clerkUserId);
     return { success: true };
   } catch (error) {
     console.error('Error deleting Clerk user:', error);
@@ -125,7 +129,8 @@ export async function deleteClerkUser(clerkUserId: string) {
  */
 export async function getAllClerkUsers() {
   try {
-    const users = await clerkClient.users.getUserList({
+    const client = await clerkClient();
+    const users = await client.users.getUserList({
       limit: 100,
       orderBy: '-created_at'
     });
