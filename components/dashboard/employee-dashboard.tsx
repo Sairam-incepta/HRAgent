@@ -69,6 +69,8 @@ interface EmployeeDashboardProps {
 
 export function EmployeeDashboard({ initialTab = "overview", onClockOut }: EmployeeDashboardProps) {
   console.log('🚩 EmployeeDashboard mounted', new Date().toISOString());
+  
+  // ✅ ALL HOOKS MUST BE DECLARED FIRST - NO EARLY RETURNS BEFORE THIS POINT
   const { user, isLoaded, isSignedIn } = useUser();
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
@@ -111,15 +113,18 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     avgRating: 0,
     loading: true
   });
-  const { toast } = useToast();
-  const employeeSettings = {
-    maxHoursBeforeOvertime: 8,
-    hourlyRate: 25
-  };
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
   const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
 
+  const { toast } = useToast();
+  
+  const employeeSettings = {
+    maxHoursBeforeOvertime: 8,
+    hourlyRate: 25
+  };
+
+  // Current time update effect
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
@@ -127,18 +132,143 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     return () => clearInterval(interval);
   }, []);
 
+  // Redirect effect
   useEffect(() => {
     if (isLoaded && !isSignedIn && typeof window !== 'undefined') {
       window.location.href = '/sign-in';
     }
   }, [isLoaded, isSignedIn]);
 
+  // Load employee data effect
   useEffect(() => {
     if (user?.id) {
       loadEmployeeData();
     }
   }, [user?.id]);
 
+  // Load weekly data effect
+  useEffect(() => {
+    if (user?.id) {
+      loadWeeklyData();
+    }
+  }, [user?.id]);
+
+  // Load requests effect
+  useEffect(() => {
+    if (user?.id) {
+      loadRequests();
+    }
+  }, [user?.id]);
+
+  // Refresh data periodically effect
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (user?.id) {
+        loadWeeklyData();
+        loadPerformanceData();
+      }
+    }, 30000); // Refresh every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [user?.id]);
+
+  // Day change detection effect
+  useEffect(() => {
+    const checkDayChange = () => {
+      if (!user?.id) return; // Don't check if user is logging out
+      
+      const now = new Date();
+      const currentDate = now.toDateString(); // Gets date in local timezone
+      
+      // Store the last known date
+      const lastKnownDate = localStorage.getItem('last_known_date');
+      
+      if (lastKnownDate && lastKnownDate !== currentDate) {
+        console.log('📅 Day changed detected, refreshing data');
+        logTimezoneInfo(); // Log timezone info for debugging
+        loadWeeklyData();
+        loadPerformanceData();
+        loadRequests();
+      }
+      
+      localStorage.setItem('last_known_date', currentDate);
+    };
+
+    // Check immediately
+    checkDayChange();
+    
+    // Check every minute for day changes
+    const dayChangeInterval = setInterval(checkDayChange, 60000);
+    
+    return () => clearInterval(dayChangeInterval);
+  }, [user?.id]);
+
+  // Event listeners effect
+  useEffect(() => {
+    const handlePolicySale = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Policy sale event received, refreshing performance data');
+      loadPerformanceData();
+    };
+
+    const handleClientReview = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Client review event received, refreshing performance data');
+      loadPerformanceData();
+    };
+
+    const handleRequestSubmitted = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Request submitted event received, refreshing requests');
+      loadRequests();
+    };
+
+    const handleTimeLogged = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Time logged event received, refreshing weekly data');
+      loadWeeklyData();
+    };
+
+    const handleDailySummary = () => {
+      if (!user?.id) return; // Don't refresh if user is logging out
+      console.log('🔄 Daily summary event received, refreshing all data');
+      loadWeeklyData();
+      loadPerformanceData();
+    };
+
+    // Subscribe to events
+    dashboardEvents.on('policy_sale', handlePolicySale);
+    dashboardEvents.on('client_review', handleClientReview);
+    dashboardEvents.on('request_submitted', handleRequestSubmitted);
+    dashboardEvents.on('time_logged', handleTimeLogged);
+    dashboardEvents.on('daily_summary', handleDailySummary);
+
+    // Cleanup event listeners
+    return () => {
+      dashboardEvents.off('policy_sale', handlePolicySale);
+      dashboardEvents.off('client_review', handleClientReview);
+      dashboardEvents.off('request_submitted', handleRequestSubmitted);
+      dashboardEvents.off('time_logged', handleTimeLogged);
+      dashboardEvents.off('daily_summary', handleDailySummary);
+    };
+  }, [user?.id]);
+
+  // Live pay calculation memoized
+  const livePay = useMemo(() => {
+    const hours = currentElapsedTime / 3600;
+    const regularHours = Math.min(hours, employeeSettings.maxHoursBeforeOvertime);
+    const overtimeHours = Math.max(0, hours - employeeSettings.maxHoursBeforeOvertime);
+    const regularPay = regularHours * employeeSettings.hourlyRate;
+    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.0;
+    return {
+      regularPay,
+      overtimePay,
+      totalPay: regularPay + overtimePay,
+      overtimeHours
+    };
+  }, [currentElapsedTime, employeeSettings.hourlyRate, employeeSettings.maxHoursBeforeOvertime]);
+
+  // ✅ ALL CONDITIONAL RENDERING LOGIC AFTER ALL HOOKS
   if (!isLoaded) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -146,10 +276,13 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       </div>
     );
   }
+
   if (isLoaded && !isSignedIn) {
     return null;
   }
 
+  // FUNCTION DEFINITIONS (these are safe to be after conditional returns since they're not hooks)
+  
   // Load employee data from database
   const loadEmployeeData = async () => {
     if (!user?.id) return;
@@ -247,113 +380,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       setPerformanceData(prev => ({ ...prev, loading: false }));
     }
   };
-
-  // Load weekly data on mount and when user changes
-  useEffect(() => {
-    if (user?.id) {
-      loadWeeklyData();
-    }
-  }, [user?.id]);
-
-  // Load requests on mount and when user changes
-  useEffect(() => {
-    if (user?.id) {
-      loadRequests();
-    }
-  }, [user?.id]);
-
-  // Refresh data periodically to keep it up to date
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (user?.id) {
-        loadWeeklyData();
-        loadPerformanceData();
-      }
-    }, 30000); // Refresh every 30 seconds
-
-    return () => clearInterval(interval);
-  }, [user?.id]);
-
-  // Detect day change and refresh data
-  useEffect(() => {
-    const checkDayChange = () => {
-      if (!user?.id) return; // Don't check if user is logging out
-      
-      const now = new Date();
-      const currentDate = now.toDateString(); // Gets date in local timezone
-      
-      // Store the last known date
-      const lastKnownDate = localStorage.getItem('last_known_date');
-      
-      if (lastKnownDate && lastKnownDate !== currentDate) {
-        console.log('📅 Day changed detected, refreshing data');
-        logTimezoneInfo(); // Log timezone info for debugging
-        loadWeeklyData();
-        loadPerformanceData();
-        loadRequests();
-      }
-      
-      localStorage.setItem('last_known_date', currentDate);
-    };
-
-    // Check immediately
-    checkDayChange();
-    
-    // Check every minute for day changes
-    const dayChangeInterval = setInterval(checkDayChange, 60000);
-    
-    return () => clearInterval(dayChangeInterval);
-  }, [user?.id]);
-
-  // Listen for database changes and refresh data
-  useEffect(() => {
-    const handlePolicySale = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Policy sale event received, refreshing performance data');
-      loadPerformanceData();
-    };
-
-    const handleClientReview = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Client review event received, refreshing performance data');
-      loadPerformanceData();
-    };
-
-    const handleRequestSubmitted = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Request submitted event received, refreshing requests');
-      loadRequests();
-    };
-
-    const handleTimeLogged = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Time logged event received, refreshing weekly data');
-      loadWeeklyData();
-    };
-
-    const handleDailySummary = () => {
-      if (!user?.id) return; // Don't refresh if user is logging out
-      console.log('🔄 Daily summary event received, refreshing all data');
-      loadWeeklyData();
-      loadPerformanceData();
-    };
-
-    // Subscribe to events
-    dashboardEvents.on('policy_sale', handlePolicySale);
-    dashboardEvents.on('client_review', handleClientReview);
-    dashboardEvents.on('request_submitted', handleRequestSubmitted);
-    dashboardEvents.on('time_logged', handleTimeLogged);
-    dashboardEvents.on('daily_summary', handleDailySummary);
-
-    // Cleanup event listeners
-    return () => {
-      dashboardEvents.off('policy_sale', handlePolicySale);
-      dashboardEvents.off('client_review', handleClientReview);
-      dashboardEvents.off('request_submitted', handleRequestSubmitted);
-      dashboardEvents.off('time_logged', handleTimeLogged);
-      dashboardEvents.off('daily_summary', handleDailySummary);
-    };
-  }, [user?.id]);
 
   // Handle time tracker updates
   const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
@@ -512,21 +538,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     hour: '2-digit',
     minute: '2-digit'
   });
-
-  // Live pay calculation based on currentElapsedTime
-  const livePay = useMemo(() => {
-    const hours = currentElapsedTime / 3600;
-    const regularHours = Math.min(hours, employeeSettings.maxHoursBeforeOvertime);
-    const overtimeHours = Math.max(0, hours - employeeSettings.maxHoursBeforeOvertime);
-    const regularPay = regularHours * employeeSettings.hourlyRate;
-    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.0;
-    return {
-      regularPay,
-      overtimePay,
-      totalPay: regularPay + overtimePay,
-      overtimeHours
-    };
-  }, [currentElapsedTime, employeeSettings.hourlyRate, employeeSettings.maxHoursBeforeOvertime]);
 
   // Helper to get user's first name for personalized welcome
   const getFirstName = () => {
@@ -869,11 +880,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         employeeEmail={employeeData.email}
       />
 
-      <ChatInterface 
-        defaultMessage={`Welcome back, ${getFirstName()}! 👋 This is your HR Assistant. Record sales, ask questions, or get help with your workday.`}
-        onClockOutPrompt={showClockOutPrompt}
-        clockOutPromptMessage={clockOutPromptMessage}
-      />
     </div>
   );
 }

@@ -1,22 +1,14 @@
 import { authMiddleware } from '@clerk/nextjs';
 
 export default authMiddleware({
-  // Make sign-in and sign-up routes public
-  publicRoutes: ['/sign-in', '/sign-up', '/sign-in/(.*)', '/sign-up/(.*)'],
-  // Redirect to sign-in when not authenticated
+  publicRoutes: ['/sign-in'],
+  // Force users to sign in again after server restart
   afterAuth(auth, req, evt) {
-    // If user is not authenticated and trying to access a protected route
-    if (!auth.userId && !auth.isPublicRoute) {
-      const signInUrl = new URL('/sign-in', req.url);
-      return Response.redirect(signInUrl);
+    // Clear any cached session data
+    if (!auth.userId && req.nextUrl.pathname.startsWith('/dashboard')) {
+      return Response.redirect(new URL('/sign-in', req.url));
     }
-    
-    // If user is authenticated and on a public route, redirect to dashboard
-    if (auth.userId && auth.isPublicRoute && req.nextUrl.pathname !== '/dashboard') {
-      const dashboardUrl = new URL('/dashboard', req.url);
-      return Response.redirect(dashboardUrl);
-    }
-  },
+  }
 });
 
 export const config = {
