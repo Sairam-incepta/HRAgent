@@ -452,7 +452,7 @@ export const getConversationState = async (employeeId: string): Promise<Conversa
 export const updateConversationState = async (state: {
   id?: string;
   employeeId: string;
-  currentFlow: 'policy_entry' | 'review_entry' | 'cross_sell_entry' | 'daily_summary' | 'hours_entry' | 'none';
+  currentFlow: 'policy_entry' | 'review_entry' | 'cross_sell_entry' | 'daily_summary' | 'hours_entry' | 'policy_entry_batch' | 'review_entry_batch' | 'policy_entry_natural' | 'review_entry_natural' | 'none';
   collectedData: Record<string, any>;
   nextQuestion: string;
   lastUpdated: Date;

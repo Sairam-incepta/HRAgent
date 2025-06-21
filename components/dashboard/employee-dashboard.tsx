@@ -124,6 +124,15 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     hourlyRate: 25
   };
 
+  // 🔧 ENHANCED DEBUGGING: Log state changes
+  useEffect(() => {
+    console.log('🔔 Clock out state changed:', {
+      showClockOutPrompt,
+      clockOutPromptMessage,
+      timestamp: new Date().toISOString()
+    });
+  }, [showClockOutPrompt, clockOutPromptMessage]);
+
   // Current time update effect
   useEffect(() => {
     const interval = setInterval(() => {
@@ -268,6 +277,24 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     };
   }, [currentElapsedTime, employeeSettings.hourlyRate, employeeSettings.maxHoursBeforeOvertime]);
 
+  // Reset clock out prompt state when appropriate
+  useEffect(() => {
+    // Reset the clock out prompt after 5 minutes to prevent it from getting stuck
+    if (showClockOutPrompt) {
+      console.log('⏰ Clock out prompt shown, setting 5-minute timeout');
+      const timeout = setTimeout(() => {
+        console.log('🔄 Resetting clock out prompt after timeout');
+        setShowClockOutPrompt(false);
+        setClockOutPromptMessage(undefined);
+      }, 5 * 60 * 1000); // 5 minutes
+
+      return () => {
+        console.log('⏰ Clearing clock out timeout');
+        clearTimeout(timeout);
+      };
+    }
+  }, [showClockOutPrompt]);
+
   // ✅ ALL CONDITIONAL RENDERING LOGIC AFTER ALL HOOKS
   if (!isLoaded) {
     return (
@@ -394,34 +421,69 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     }
   };
 
-  // Handle clock out to refresh data
+  // 🔧 ENHANCED DEBUGGING: Clock out handler
   const handleClockOut = async () => {
-    console.log('🚪 Clock out triggered, will refresh data in 500ms');
+    console.log('🚪 ===== CLOCK OUT TRIGGERED =====');
+    console.log('🚪 User ID:', user?.id);
+    console.log('🚪 Current state:', { showClockOutPrompt, clockOutPromptMessage });
+    
     // Add a small delay to ensure the database operation completes
     setTimeout(() => {
       console.log('🔄 Clock out delay completed, refreshing data');
       loadWeeklyData();
       loadPerformanceData();
     }, 500);
+    
     onClockOut?.();
+    
+    console.log('🤖 Attempting to fetch AI clock out message...');
+    
     // Fetch AI-generated message
     try {
+      const requestPayload = {
+        message: "CLOCK_OUT_PROMPT",
+        userRole: 'employee',
+        employeeId: user?.id,
+        userName: getFirstName(),
+        isClockOutPrompt: true
+      };
+      
+      console.log('📤 Sending request to /api/chat:', requestPayload);
+      
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: "The user just finished their workday. Please generate an encouraging, conversational message asking about their day and inviting them to share a summary.",
-          userRole: 'bot',
-          employeeId: user?.id,
-          isClockOutPrompt: true
-        }),
+        body: JSON.stringify(requestPayload),
       });
+      
+      console.log('📥 Response status:', res.status);
+      console.log('📥 Response ok:', res.ok);
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
       const data = await res.json();
-      setClockOutPromptMessage(data.reply || "How was your day? Please share a brief summary before you clock out!");
-    } catch {
-      setClockOutPromptMessage("How was your day? Please share a brief summary before you clock out!");
+      console.log('📥 Response data:', data);
+      
+      const message = data.response || "How was your day? I'd love to hear about it!";
+      console.log('💬 Setting clock out message:', message);
+      
+      setClockOutPromptMessage(message);
+      setShowClockOutPrompt(true);
+      
+      console.log('✅ Clock out prompt state updated');
+      
+    } catch (error) {
+      console.error('❌ Error getting clock out message:', error);
+      const fallbackMessage = "How was your day? I'd love to hear about it!";
+      console.log('💬 Using fallback message:', fallbackMessage);
+      
+      setClockOutPromptMessage(fallbackMessage);
+      setShowClockOutPrompt(true);
     }
-    setShowClockOutPrompt(true);
+    
+    console.log('🚪 ===== CLOCK OUT COMPLETE =====');
   };
 
   // Format time for display (hours and minutes)
@@ -548,6 +610,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
     return 'there';
   };
 
+  // 🔧 ENHANCED DEBUGGING: Props being passed to ChatInterface
+  const chatProps = {
+    onClockOutPrompt: showClockOutPrompt,
+    clockOutPromptMessage: clockOutPromptMessage
+  };
+  
+  console.log('🔧 ChatInterface props:', chatProps);
+
   return (
     <div className="space-y-6">
       {/* Header with Live Date/Time */}
@@ -571,6 +641,46 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
           </div>
         </div>
       </div>
+
+      {/* 🔧 ENHANCED DEBUGGING: Current State Display */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="p-4">
+          <h3 className="font-semibold text-blue-700 mb-2">🔧 Debug Information</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <p><strong>showClockOutPrompt:</strong> {showClockOutPrompt.toString()}</p>
+              <p><strong>clockOutPromptMessage:</strong> {clockOutPromptMessage ? 'Set' : 'Not set'}</p>
+              <p><strong>User ID:</strong> {user?.id || 'Not loaded'}</p>
+            </div>
+            <div>
+              <p><strong>timeStatus:</strong> {timeStatus}</p>
+              <p><strong>isClockedIn:</strong> {isClockedIn.toString()}</p>
+              <p><strong>First Name:</strong> {getFirstName()}</p>
+            </div>
+          </div>
+          <div className="mt-2">
+            <Button 
+              onClick={handleClockOut}
+              variant="outline"
+              className="border-blue-300 text-blue-700 hover:bg-blue-100 mr-2"
+            >
+              🧪 Test Clock Out Message
+            </Button>
+            <Button 
+              onClick={() => {
+                console.log('🔧 Manual state reset triggered');
+                setShowClockOutPrompt(false);
+                setClockOutPromptMessage(undefined);
+              }}
+              variant="outline"
+              size="sm"
+              className="border-red-300 text-red-700 hover:bg-red-100"
+            >
+              Reset State
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Performance Metrics - Compact Design */}
       <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
@@ -622,12 +732,21 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
         <div className="flex flex-col sm:flex-row gap-2 w-full">
           <TimeTracker 
-            onClockInChange={setIsClockedIn} 
-            onLunchChange={setIsOnLunch}
+            onClockInChange={(clockedIn) => {
+              console.log('🕐 TimeTracker onClockInChange:', clockedIn);
+              setIsClockedIn(clockedIn);
+            }} 
+            onLunchChange={(lunch) => {
+              console.log('🍽️ TimeTracker onLunchChange:', lunch);
+              setIsOnLunch(lunch);
+            }}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
             hourlyRate={employeeSettings.hourlyRate}
-            onClockOut={handleClockOut}
+            onClockOut={(data) => {
+              console.log('🕐 TimeTracker onClockOut triggered with:', data);
+              handleClockOut();
+            }}
           />
         </div>
       </div>
@@ -880,6 +999,18 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut }: Emplo
         employeeEmail={employeeData.email}
       />
 
+      {/* 🔧 ENHANCED DEBUGGING: ChatInterface with debug info */}
+      <div className="border-2 border-dashed border-purple-300 p-4 rounded-lg">
+        <h3 className="text-purple-700 font-semibold mb-2">🔧 ChatInterface Debug Zone</h3>
+        <p className="text-sm text-purple-600 mb-2">
+          Props: onClockOutPrompt={showClockOutPrompt.toString()}, 
+          clockOutPromptMessage={(clockOutPromptMessage ? 'SET' : 'UNSET')}
+        </p>
+        <ChatInterface 
+          onClockOutPrompt={showClockOutPrompt}
+          clockOutPromptMessage={clockOutPromptMessage}
+        />
+      </div>
     </div>
   );
 }

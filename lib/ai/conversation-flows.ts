@@ -18,6 +18,7 @@ function cleanMarkdownResponse(response: string): string {
     .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
     .trim();
 }
+
 import { 
   updateConversationState,
   clearConversationState,
@@ -29,7 +30,7 @@ import {
 } from '@/lib/database';
 
 // Helper function to extract structured data from user responses
-export const extractDataFromResponse = (message: string, dataType: string) => {
+export const extractDataFromResponse = (message: string, dataType: string): string | number | null => {
   const lowerMessage = message.toLowerCase();
   
   console.log('extractDataFromResponse called with:', { message, dataType });
@@ -108,7 +109,142 @@ export const extractDataFromResponse = (message: string, dataType: string) => {
         return 'no';
       }
       return null;
+    
+    default:
+      return null;
   }
+};
+
+// NEW: Parse batch policy data from a single message
+export const parsePolicyBatchData = (message: string): any => {
+  const data: any = {};
+  
+  // Extract policy number
+  const policyNumberPatterns = [
+    /(?:policy\s*(?:number|#)\s*:?\s*)([A-Z0-9\-_]+)/gi,
+    /(?:pol\s*#?\s*:?\s*)([A-Z0-9\-_]+)/gi,
+    /^([A-Z0-9\-_]{3,})/gmi
+  ];
+  
+  for (const pattern of policyNumberPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.policy_number = match[1].toUpperCase();
+      break;
+    }
+  }
+  
+  // Extract client name - look for patterns like "client: John Doe" or just proper names
+  const clientPatterns = [
+    /(?:client\s*(?:name)?\s*:?\s*)([A-Za-z\s]{2,30})/gi,
+    /(?:customer\s*:?\s*)([A-Za-z\s]{2,30})/gi,
+    /(?:for\s+)([A-Z][a-z]+\s+[A-Z][a-z]+)/g  // "for John Smith"
+  ];
+  
+  for (const pattern of clientPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.client_name = match[1].trim();
+      break;
+    }
+  }
+  
+  // Extract policy type
+  const typePatterns = [
+    /(?:type\s*:?\s*)([A-Za-z\s]{2,20})/gi,
+    /(?:policy\s*type\s*:?\s*)([A-Za-z\s]{2,20})/gi,
+    /\b(auto|home|life|health|dental|vision|commercial|business)\b/gi
+  ];
+  
+  for (const pattern of typePatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.policy_type = match[1].trim();
+      break;
+    }
+  }
+  
+  // Extract amounts
+  const amountPatterns = [
+    /(?:amount\s*:?\s*)?\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g,
+    /\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g
+  ];
+  
+  const amounts = [];
+  let match;
+  const amountRegex = /\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
+  while ((match = amountRegex.exec(message)) !== null) {
+    amounts.push(parseFloat(match[1].replace(/,/g, '')));
+  }
+  
+  if (amounts.length > 0) {
+    // Assume the larger amount is the policy amount, smaller is broker fee
+    amounts.sort((a, b) => b - a);
+    data.policy_amount = amounts[0];
+    if (amounts.length > 1) {
+      data.broker_fee = amounts[1];
+    } else {
+      // Default broker fee to 10% if not provided
+      data.broker_fee = Math.round(amounts[0] * 0.1 * 100) / 100;
+    }
+  }
+  
+  return data;
+};
+
+// NEW: Parse batch review data from a single message
+export const parseReviewBatchData = (message: string): any => {
+  const data: any = {};
+  
+  // Extract client name
+  const clientPatterns = [
+    /(?:client\s*(?:name)?\s*:?\s*)([A-Za-z\s]{2,30})/gi,
+    /(?:customer\s*:?\s*)([A-Za-z\s]{2,30})/gi,
+    /^([A-Z][a-z]+\s+[A-Z][a-z]+)/g  // Names at start
+  ];
+  
+  for (const pattern of clientPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.client_name = match[1].trim();
+      break;
+    }
+  }
+  
+  // Extract rating
+  const ratingPatterns = [
+    /(?:rating\s*:?\s*)(\d)/gi,
+    /(\d)\s*(?:stars?|\/5)/gi,
+    /(\d)\s*out\s*of\s*5/gi
+  ];
+  
+  for (const pattern of ratingPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      const rating = parseInt(match[1]);
+      if (rating >= 1 && rating <= 5) {
+        data.rating = rating;
+        break;
+      }
+    }
+  }
+  
+  // Extract review text - anything in quotes or after "said" or "review"
+  const reviewPatterns = [
+    /"([^"]+)"/g,
+    /(?:said|review|feedback)\s*:?\s*["']?([^"'\n]+)["']?/gi,
+    /(?:they said|client said|review was)\s*:?\s*["']?([^"'\n]+)["']?/gi
+  ];
+  
+  for (const pattern of reviewPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.review_text = match[1].trim();
+      break;
+    }
+  }
+  
+  return data;
 };
 
 export async function handleConversationFlow(conversationState: any, message: string, employeeId: string) {
@@ -122,6 +258,24 @@ export async function handleConversationFlow(conversationState: any, message: st
   
   // Ensure collectedData is an object
   const safeCollectedData = typeof collectedData === 'object' && collectedData !== null ? collectedData : {};
+  
+  // Handle new natural flows (step-by-step approach)
+  if (currentFlow === 'policy_entry_natural') {
+    return await handlePolicyNaturalFlow(message, employeeId, nextQuestion, safeCollectedData);
+  }
+  
+  if (currentFlow === 'review_entry_natural') {
+    return await handleReviewNaturalFlow(message, employeeId, nextQuestion, safeCollectedData);
+  }
+  
+  // Handle new batch flows
+  if (currentFlow === 'policy_entry_batch') {
+    return await handlePolicyBatchFlow(message, employeeId);
+  }
+  
+  if (currentFlow === 'review_entry_batch') {
+    return await handleReviewBatchFlow(message, employeeId);
+  }
   
   // Extract data based on the current question
   let extractedValue: any;
@@ -216,6 +370,396 @@ export async function handleConversationFlow(conversationState: any, message: st
   }
 
   return NextResponse.json({ response: cleanMarkdownResponse(response) });
+}
+
+// NEW: Handle natural policy flow (step-by-step)
+async function handlePolicyNaturalFlow(message: string, employeeId: string, nextQuestion: string, collectedData: any) {
+  try {
+    if (nextQuestion === 'core_policy_info') {
+      // Parse the core information from their response
+      const parsedData = parsePolicyBatchData(message);
+      
+      // Check what we got
+      const coreInfo = {
+        policy_number: parsedData.policy_number,
+        client_name: parsedData.client_name,
+        policy_type: parsedData.policy_type,
+        policy_amount: parsedData.policy_amount
+      };
+      
+      const missing = [];
+      if (!coreInfo.policy_number) missing.push('policy number');
+      if (!coreInfo.client_name) missing.push('client name');
+      if (!coreInfo.policy_type) missing.push('policy type');
+      if (!coreInfo.policy_amount) missing.push('sale amount');
+      
+      if (missing.length > 0) {
+        return NextResponse.json({
+          response: `I need the missing details:\n\n${missing.map(item => `• **${item.charAt(0).toUpperCase() + item.slice(1)}**`).join('\n')}\n\nPlease provide these in your next message!`
+        });
+      }
+      
+      // Store core info and move to next step
+      const updatedData = { ...collectedData, ...coreInfo };
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'broker_fee_info',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Perfect! I have the core details:
+
+**✅ Policy:** ${coreInfo.policy_number}
+**✅ Client:** ${coreInfo.client_name}  
+**✅ Type:** ${coreInfo.policy_type}
+**✅ Amount:** $${coreInfo.policy_amount.toLocaleString()}
+
+Now, what's the **broker fee** for this policy?`
+      });
+    }
+    
+    if (nextQuestion === 'broker_fee_info') {
+      const brokerFee = extractDataFromResponse(message, 'broker_fee');
+      if (!brokerFee) {
+        return NextResponse.json({
+          response: "Please provide the broker fee amount (e.g., $250, 500, etc.)"
+        });
+      }
+      
+      const updatedData = { ...collectedData, broker_fee: brokerFee };
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'cross_sell_info',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Great! Broker fee: **$${brokerFee.toLocaleString()}**
+
+Did you **cross-sell** any additional policies to this client? (yes/no)`
+      });
+    }
+    
+    if (nextQuestion === 'cross_sell_info') {
+      const crossSold = extractDataFromResponse(message, 'cross_sold');
+      const updatedData = { ...collectedData, cross_sold: crossSold };
+      
+      if (crossSold === 'yes') {
+        await updateConversationState({
+          employeeId,
+          currentFlow: 'policy_entry_natural',
+          collectedData: updatedData,
+          nextQuestion: 'cross_sell_details',
+          lastUpdated: new Date()
+        });
+        
+        return NextResponse.json({
+          response: "Excellent! What type of policy did you cross-sell? (e.g., auto, home, life, etc.)"
+        });
+      } else {
+        // No cross-sell, move to final step
+        await updateConversationState({
+          employeeId,
+          currentFlow: 'policy_entry_natural',
+          collectedData: updatedData,
+          nextQuestion: 'final_details',
+          lastUpdated: new Date()
+        });
+        
+        return NextResponse.json({
+          response: "Got it! Finally, please provide a brief description of the client or any special notes about this policy:"
+        });
+      }
+    }
+    
+    if (nextQuestion === 'cross_sell_details') {
+      const crossSoldType = message.trim();
+      const updatedData = { ...collectedData, cross_sold_type: crossSoldType };
+      
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'final_details',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Perfect! Cross-sold: **${crossSoldType}**
+
+Finally, please provide a brief description of the client or any special notes about this policy:`
+      });
+    }
+    
+    if (nextQuestion === 'final_details') {
+      const clientDescription = message.trim();
+      const finalData = { ...collectedData, client_description: clientDescription };
+      
+      // Save the policy
+      const result = await addPolicySale({
+        policyNumber: finalData.policy_number,
+        clientName: finalData.client_name,
+        policyType: finalData.policy_type,
+        amount: finalData.policy_amount,
+        brokerFee: finalData.broker_fee,
+        employeeId,
+        saleDate: new Date(),
+        crossSold: finalData.cross_sold === 'yes',
+        crossSoldType: finalData.cross_sold_type,
+        crossSoldTo: finalData.cross_sold === 'yes' ? finalData.client_name : undefined,
+        clientDescription: finalData.client_description
+      });
+      
+      if (result) {
+        await clearConversationState(employeeId);
+        return NextResponse.json({
+          response: `🎉 **Outstanding work!** I've successfully recorded your policy sale:
+
+**📋 Complete Policy Details:**
+• **Policy:** ${finalData.policy_number}
+• **Client:** ${finalData.client_name}
+• **Type:** ${finalData.policy_type}
+• **Amount:** **$${finalData.policy_amount.toLocaleString()}**
+• **Broker Fee:** **$${finalData.broker_fee.toLocaleString()}**
+${finalData.cross_sold === 'yes' ? `• **Cross-sold:** ${finalData.cross_sold_type}` : '• **Cross-sold:** No'}
+• **Notes:** ${finalData.client_description}
+
+Your performance metrics have been updated! Keep up the fantastic work! 💪✨`
+        });
+      } else {
+        return NextResponse.json({
+          response: "I had trouble saving that policy sale. Could you please try again?"
+        });
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error in handlePolicyNaturalFlow:', error);
+    return NextResponse.json({
+      response: "Something went wrong. Please try again!"
+    });
+  }
+}
+
+// NEW: Handle natural review flow (step-by-step)
+async function handleReviewNaturalFlow(message: string, employeeId: string, nextQuestion: string, collectedData: any) {
+  try {
+    if (nextQuestion === 'basic_review_info') {
+      // Parse the basic review information
+      const parsedData = parseReviewBatchData(message);
+      
+      const basicInfo = {
+        client_name: parsedData.client_name,
+        rating: parsedData.rating,
+        review_text: parsedData.review_text
+      };
+      
+      const missing = [];
+      if (!basicInfo.client_name) missing.push('client name');
+      if (!basicInfo.rating) missing.push('rating (1-5 stars)');
+      if (!basicInfo.review_text) missing.push('review text');
+      
+      if (missing.length > 0) {
+        return NextResponse.json({
+          response: `I need the missing information:\n\n${missing.map(item => `• **${item.charAt(0).toUpperCase() + item.slice(1)}**`).join('\n')}\n\nPlease provide these details!`
+        });
+      }
+      
+      // Store basic info and move to optional details
+      const updatedData = { ...collectedData, ...basicInfo };
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'review_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'policy_number_optional',
+        lastUpdated: new Date()
+      });
+      
+      const starRating = '⭐'.repeat(basicInfo.rating);
+      return NextResponse.json({
+        response: `Great! I have the review details:
+
+**✅ Client:** ${basicInfo.client_name}
+**✅ Rating:** ${starRating} (${basicInfo.rating}/5)
+**✅ Review:** "${basicInfo.review_text}"
+
+**Optional:** Do you have the policy number for this review? (You can type it or just say "no")`
+      });
+    }
+    
+    if (nextQuestion === 'policy_number_optional') {
+      let policyNumber: string = "REVIEW-ENTRY";
+      
+      if (message.toLowerCase().includes('no') || message.toLowerCase().includes('none')) {
+        policyNumber = "REVIEW-ENTRY";
+      } else {
+        const extractedPolicy = extractDataFromResponse(message, 'policy_number');
+        if (extractedPolicy && typeof extractedPolicy === 'string') {
+          policyNumber = extractedPolicy;
+        } else if (extractedPolicy && typeof extractedPolicy === 'number') {
+          policyNumber = extractedPolicy.toString();
+        }
+      }
+      
+      const finalData = { ...collectedData, policy_number: policyNumber };
+      
+      // Save the review
+      const result = await addClientReview({
+        clientName: finalData.client_name,
+        policyNumber: finalData.policy_number,
+        rating: finalData.rating,
+        review: finalData.review_text,
+        reviewDate: new Date(),
+        employeeId
+      });
+      
+      if (result) {
+        await clearConversationState(employeeId);
+        const starRating = '⭐'.repeat(finalData.rating);
+        return NextResponse.json({
+          response: `🌟 **Fantastic feedback recorded!** 
+
+**📝 Review Summary:**
+• **Client:** ${finalData.client_name}
+• **Rating:** ${starRating} (**${finalData.rating}/5**)
+• **Review:** "${finalData.review_text}"
+${policyNumber !== "REVIEW-ENTRY" ? `• **Policy:** ${policyNumber}` : ''}
+
+${finalData.rating >= 4 ? 'Outstanding work! ' : 'Great job getting feedback! '}Reviews like this show the real impact you're making! 🎯`
+        });
+      } else {
+        return NextResponse.json({
+          response: "I had trouble saving that review. Could you please try again?"
+        });
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error in handleReviewNaturalFlow:', error);
+    return NextResponse.json({
+      response: "Something went wrong. Please try again!"
+    });
+  }
+}
+
+// NEW: Handle policy batch flow
+async function handlePolicyBatchFlow(message: string, employeeId: string) {
+  try {
+    const parsedData = parsePolicyBatchData(message);
+    
+    console.log('Parsed policy batch data:', parsedData);
+    
+    // Validate required fields
+    const missing = [];
+    if (!parsedData.policy_number) missing.push('policy number');
+    if (!parsedData.client_name) missing.push('client name');
+    if (!parsedData.policy_type) missing.push('policy type');
+    if (!parsedData.policy_amount) missing.push('sale amount');
+    
+    if (missing.length > 0) {
+      return NextResponse.json({
+        response: `I need a bit more information. Please provide the missing details:\n\n${missing.map(item => `• **${item.charAt(0).toUpperCase() + item.slice(1)}**`).join('\n')}\n\nYou can include them all in one message!`
+      });
+    }
+    
+    // Save the policy sale
+    const result = await addPolicySale({
+      policyNumber: parsedData.policy_number,
+      clientName: parsedData.client_name,
+      policyType: parsedData.policy_type,
+      amount: parsedData.policy_amount,
+      brokerFee: parsedData.broker_fee,
+      employeeId,
+      saleDate: new Date(),
+      crossSold: false,
+      clientDescription: "Added via batch entry"
+    });
+    
+    if (result) {
+      await clearConversationState(employeeId);
+      return NextResponse.json({
+        response: `🎉 **Excellent work!** I've successfully recorded your policy sale:
+
+**Policy Details:**
+• Policy #${parsedData.policy_number}
+• Client: ${parsedData.client_name}
+• Type: ${parsedData.policy_type}
+• Amount: **$${parsedData.policy_amount.toLocaleString()}**
+• Broker Fee: **$${parsedData.broker_fee.toLocaleString()}**
+
+Your performance metrics have been updated! Keep up the fantastic work! 💪✨`
+      });
+    } else {
+      return NextResponse.json({
+        response: "I had trouble saving that policy sale. Could you please try again?"
+      });
+    }
+  } catch (error) {
+    console.error('Error in handlePolicyBatchFlow:', error);
+    return NextResponse.json({
+      response: "Something went wrong while processing your policy sale. Please try again!"
+    });
+  }
+}
+
+// NEW: Handle review batch flow
+async function handleReviewBatchFlow(message: string, employeeId: string) {
+  try {
+    const parsedData = parseReviewBatchData(message);
+    
+    console.log('Parsed review batch data:', parsedData);
+    
+    // Validate required fields
+    const missing = [];
+    if (!parsedData.client_name) missing.push('client name');
+    if (!parsedData.rating) missing.push('rating (1-5 stars)');
+    if (!parsedData.review_text) missing.push('review text');
+    
+    if (missing.length > 0) {
+      return NextResponse.json({
+        response: `I need a few more details to record this review:\n\n${missing.map(item => `• **${item.charAt(0).toUpperCase() + item.slice(1)}**`).join('\n')}\n\nPlease provide all the missing information in your next message!`
+      });
+    }
+    
+    // Save the client review
+    const result = await addClientReview({
+      clientName: parsedData.client_name,
+      policyNumber: parsedData.policy_number || "BATCH-ENTRY",
+      rating: parsedData.rating,
+      review: parsedData.review_text,
+      reviewDate: new Date(),
+      employeeId
+    });
+    
+    if (result) {
+      await clearConversationState(employeeId);
+      const starRating = '⭐'.repeat(parsedData.rating);
+      return NextResponse.json({
+        response: `🌟 **Fantastic feedback!** I've recorded this ${parsedData.rating}-star review:
+
+**Review Details:**
+• Client: ${parsedData.client_name}
+• Rating: ${starRating} (**${parsedData.rating}/5**)
+• Review: "${parsedData.review_text}"
+
+${parsedData.rating >= 4 ? 'Outstanding work! ' : 'Great job getting feedback! '}Reviews like this show the real impact you're making with clients! 🎯`
+      });
+    } else {
+      return NextResponse.json({
+        response: "I had trouble saving that review. Could you please try again?"
+      });
+    }
+  } catch (error) {
+    console.error('Error in handleReviewBatchFlow:', error);
+    return NextResponse.json({
+      response: "Something went wrong while processing your review. Please try again!"
+    });
+  }
 }
 
 function getPolicyEntryNextQuestion(data: any): [string, boolean] {
@@ -356,8 +900,8 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       // Calculate values from actual data
       const hoursWorked = todayTimeTracking.totalHours || 0;
       const policiesSold = todayPolicies.length;
-      const totalSalesAmount = todayPolicies.reduce((sum, policy) => sum + policy.amount, 0);
-      const totalBrokerFees = todayPolicies.reduce((sum, policy) => sum + policy.broker_fee, 0);
+      const totalSalesAmount = todayPolicies.reduce((sum: number, policy: any) => sum + policy.amount, 0);
+      const totalBrokerFees = todayPolicies.reduce((sum: number, policy: any) => sum + policy.broker_fee, 0);
       
       await addDailySummary({
         employeeId,
@@ -371,4 +915,4 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
       });
       break;
   }
-} 
+}

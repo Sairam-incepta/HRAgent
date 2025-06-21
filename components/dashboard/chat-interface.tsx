@@ -21,44 +21,6 @@ type Message = {
 
 const MAX_MESSAGES = 35;
 
-// Enhanced welcome messages with personalization
-const getWelcomeMessage = (userRole: string, userName: string) => {
-  const currentHour = new Date().getHours();
-  let greeting = "Hello";
-  
-  if (currentHour < 12) {
-    greeting = "Good morning";
-  } else if (currentHour < 17) {
-    greeting = "Good afternoon";
-  } else {
-    greeting = "Good evening";
-  }
-
-  if (userRole === 'admin') {
-    return `${greeting}, ${userName}! 👋 I'm your Let's Insure Admin Assistant, ready to help you manage your team and analyze company performance.
-
-🎯 **Quick Admin Actions:**
-• 👥 View employee performance metrics
-• 📊 Analyze company-wide sales data  
-• 💼 Review overtime requests and approvals
-• 📈 Track department performance and KPIs
-• 💰 Monitor payroll and compensation data
-
-What would you like to know about your team or company performance today?`;
-  } else {
-    return `${greeting}, ${userName}! 🌟 I'm your Let's Insure Employee Assistant, here to help you track your success and achieve your goals.
-
-✨ **I'm here to help you:**
-• 📊 Track your policy sales and performance
-• ⏰ Log your work hours efficiently  
-• ⭐ Record amazing client reviews
-• 📝 Create meaningful daily summaries
-• 🎯 Celebrate your achievements
-
-Ready to make today productive? Just tell me what you'd like to do, or try one of the quick actions below! 💪`;
-  }
-};
-
 // Dedicated MessageBubble component with better responsive design
 const MessageBubble = ({ 
   message, 
@@ -155,7 +117,6 @@ export function ChatInterface({
   onCollapse,
   isExpanded,
   onToggleExpand,
-  defaultMessage,
   onClockOutPrompt,
   clockOutPromptMessage
 }: { 
@@ -164,7 +125,6 @@ export function ChatInterface({
   onCollapse?: () => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
-  defaultMessage?: string;
   onClockOutPrompt?: boolean;
   clockOutPromptMessage?: string;
 }) {
@@ -190,7 +150,7 @@ export function ChatInterface({
     }
   }, [isLoaded, user]);
 
-  // Load messages from backend on mount OR show enhanced welcome
+  // Load messages from backend on mount
   useEffect(() => {
     const loadMessages = async () => {
       if (!user?.id || !userRole) return;
@@ -205,66 +165,60 @@ export function ChatInterface({
             timestamp: new Date(msg.timestamp)
           })));
         } else {
-          // Show enhanced welcome message if no previous messages
-          const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
-          const welcomeMessage: Message = {
-            id: "welcome",
-            content: getWelcomeMessage(userRole, userName),
-            sender: "bot",
-            timestamp: new Date(),
-          };
-          setMessages([welcomeMessage]);
+          // Send initial greeting to backend to get AI-generated welcome message
+          sendInitialGreeting();
         }
       } catch (error) {
-        // Fallback to enhanced welcome message
-        const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
+        console.error('Error loading messages:', error);
+        // Send initial greeting on error as fallback
+        sendInitialGreeting();
+      }
+    };
+
+    // Always load messages when user and role are available
+    if (user?.id && userRole) {
+      loadMessages();
+    }
+  }, [user?.id, userRole]);
+
+  // Send initial greeting to get AI-generated welcome message
+  const sendInitialGreeting = async () => {
+    if (!user?.id || !userRole) return;
+    
+    try {
+      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message: "INITIAL_GREETING", 
+          userRole: userRole, 
+          employeeId: user.id,
+          userName: userName
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
         const welcomeMessage: Message = {
           id: "welcome",
-          content: getWelcomeMessage(userRole, userName),
+          content: data.response,
           sender: "bot",
           timestamp: new Date(),
         };
         setMessages([welcomeMessage]);
       }
-    };
-
-    loadMessages();
-  }, [user?.id, userRole]);
-
-  // Show default message on mount if provided and no other messages
-  useEffect(() => {
-    if (defaultMessage && messages.length === 0 && userRole) {
-      setMessages([
-        {
-          id: `default-message-${Date.now()}`,
-          content: defaultMessage,
-          sender: "bot",
-          timestamp: new Date(),
-        },
-      ]);
+    } catch (error) {
+      console.error('Error getting initial greeting:', error);
     }
-  }, [defaultMessage, userRole]);
+  };
 
-  // Enhanced daily summary prompt with motivational messages
+  // Handle daily summary prompt
   useEffect(() => {
     if (dailySummaryPrompt && userRole === 'employee') {
-      const motivationalPrompts = [
-        "🌟 Hey superstar! What an accomplishment clocking out after a productive day! I'd love to hear about your wins, challenges, and everything in between. What made today special?",
-        "💪 You did it! Another day of hard work complete! I'm excited to hear about your journey today - the highs, the lessons, and all the moments that made it yours. How was your day?",
-        "🎉 Time to celebrate another day of dedication! You've put in the effort, and that's something to be proud of. Tell me about your day - what went well, what you learned, or just how you're feeling!",
-        "✨ What a champion! You've wrapped up another day of making things happen. I'm here to listen to your story - the victories, the challenges, the growth. How did today treat you?",
-        "🚀 Amazing work today! You've invested your time and energy into your goals, and that's incredible. Share with me how your day unfolded - I'd love to hear about your experiences!",
-        "🌈 You've reached the finish line of another productive day! Whether it was smooth sailing or had its bumps, every day is a step forward. What's your story from today?",
-        "💎 Look at you, completing another day of pursuing excellence! Each day is a building block in your success story. Tell me about today's chapter - what happened?",
-        "🎯 Fantastic! You've dedicated another day to your professional growth and goals. I'm genuinely curious about your journey today - the good, the challenging, and everything in between!"
-      ];
-
-      // Pick a random motivational prompt
-      const randomPrompt = motivationalPrompts[Math.floor(Math.random() * motivationalPrompts.length)];
-      
       const botMessage: Message = {
-        id: `motivational-prompt-${Date.now()}`,
-        content: randomPrompt,
+        id: `daily-summary-prompt-${Date.now()}`,
+        content: dailySummaryPrompt,
         sender: "bot",
         timestamp: new Date(),
       };
@@ -279,24 +233,77 @@ export function ChatInterface({
 
   // Show post-clock-out prompt when onClockOutPrompt becomes true
   useEffect(() => {
+    console.log('Clock out effect triggered:', { onClockOutPrompt, hasShownClockOutPrompt, userRole });
+    
     if (onClockOutPrompt && !hasShownClockOutPrompt && userRole === 'employee') {
+      console.log('Showing clock out prompt with message:', clockOutPromptMessage);
       setAwaitingDailySummary(true);
       setHasShownClockOutPrompt(true);
-      // Add the prompt as a bot message
+      
+      // Always add the message (either custom or fallback)
+      const messageToShow = clockOutPromptMessage || "How was your day? I'd love to hear about it!";
+      
       setMessages(prev => [
         ...prev,
         {
           id: `clockout-prompt-${Date.now()}`,
-          content: clockOutPromptMessage || "How was your day? Please share a brief summary before you clock out!",
+          content: messageToShow,
           sender: "bot",
           timestamp: new Date(),
         },
       ]);
     }
+    
     if (!onClockOutPrompt) {
       setHasShownClockOutPrompt(false);
+      setAwaitingDailySummary(false);
     }
   }, [onClockOutPrompt, userRole, hasShownClockOutPrompt, clockOutPromptMessage]);
+
+  // Get AI-generated clock out message
+  const getAIClockOutMessage = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: "CLOCK_OUT_PROMPT",
+          userRole: 'employee',
+          employeeId: user.id,
+          userName: userName,
+          isClockOutPrompt: true
+        }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `clockout-prompt-${Date.now()}`,
+            content: data.response,
+            sender: "bot",
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error('Error getting clock out message:', error);
+      // Fallback message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `clockout-prompt-${Date.now()}`,
+          content: "How was your day? I'd love to hear about it!",
+          sender: "bot",
+          timestamp: new Date(),
+        },
+      ]);
+    }
+  };
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -306,46 +313,68 @@ export function ChatInterface({
   // Handle daily summary submission (after clock out)
   const handleDailySummarySubmit = async () => {
     if (!input.trim() || isTyping || !userRole || !user?.id) return;
+    
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: input,
+      sender: "user",
+      timestamp: new Date(),
+    };
+    addMessage(userMessage);
+    
+    const messageToSend = input;
+    setInput("");
     setIsTyping(true);
+    
     try {
+      const userName = user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there';
+      
       // Send to /api/chat with isDailySummarySubmission flag
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          message: input, 
+          message: messageToSend, 
           userRole: userRole, 
           employeeId: user.id, 
           isDailySummarySubmission: true,
-          userName: user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there'
+          userName: userName
         })
       });
-      const data = await response.json();
-      // Add user message
-      addMessage({
-        id: Date.now().toString(),
-        content: input,
-        sender: "user",
-        timestamp: new Date(),
-      });
-      // Add bot response
+      
+      if (response.ok) {
+        const data = await response.json();
+        // Add bot response
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          content: data.response || "Thank you for sharing about your day!",
+          sender: "bot",
+          timestamp: new Date(),
+        });
+      } else {
+        throw new Error('Failed to submit daily summary');
+      }
+      
+      setAwaitingDailySummary(false);
+    } catch (error) {
+      console.error('Error submitting daily summary:', error);
+      toast({ title: "Error", description: "Failed to submit summary.", variant: "destructive" });
+      
+      // Add encouraging error message
       addMessage({
         id: (Date.now() + 1).toString(),
-        content: data.response || "Thank you for your summary!",
+        content: "I had trouble saving your summary, but I appreciate you sharing! Please try again if you'd like. 😊",
         sender: "bot",
         timestamp: new Date(),
       });
-      setAwaitingDailySummary(false);
-      setInput("");
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to submit summary.", variant: "destructive" });
+      
       setAwaitingDailySummary(false);
     } finally {
       setIsTyping(false);
     }
   };
 
-  // When adding a new message, keep only the latest 35 (excluding the welcome message)
+  // When adding a new message, keep only the latest messages
   const addMessage = (newMsg: Message) => {
     setMessages(prev => {
       const updated = [...prev, newMsg];
@@ -383,7 +412,7 @@ export function ChatInterface({
           message: input, 
           userRole: userRole, 
           employeeId: user.id,
-          userName: userName // Add userName for personalized responses
+          userName: userName
         })
       });
       
@@ -413,7 +442,7 @@ export function ChatInterface({
       // Add encouraging error message
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "I'm having a bit of trouble connecting right now, but don't worry! 😊 Please check that the OpenAI API is configured and try again. I'm here to help you succeed! 💪",
+        content: "I'm having trouble connecting right now. Please try again! 😊",
         sender: "bot",
         timestamp: new Date(),
       };
@@ -424,9 +453,15 @@ export function ChatInterface({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+    if (e.key === "Enter") {
+      if (e.shiftKey) {
+        // Allow Shift+Enter for new lines
+        return;
+      } else {
+        // Enter alone sends the message
+        e.preventDefault();
+        handleSend();
+      }
     }
   };
 
@@ -506,22 +541,6 @@ export function ChatInterface({
     return userRole === "admin" ? "AD" : "EM";
   };
 
-  // Always show the welcome message at the top
-  const renderMessages = () => {
-    const welcomeMsg: Message[] = defaultMessage
-      ? [{
-          id: 'welcome-message',
-          content: defaultMessage,
-          sender: 'bot',
-          timestamp: new Date(0),
-        }]
-      : [];
-    return [
-      ...welcomeMsg,
-      ...messages.slice(-MAX_MESSAGES)
-    ];
-  };
-
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Chat Header */}
@@ -565,49 +584,27 @@ export function ChatInterface({
         </div>
       </div>
       
-      {/* Employee Quick Action Buttons - Only for employees */}
-      {userRole === 'employee' && (
-        <div className="px-3 py-2 border-b bg-background/95 backdrop-blur">
-          <div className="grid grid-cols-3 gap-1.5">
-            {getQuickActions().map((action, index) => (
-              <Button
-                key={index}
-                variant="outline"
-                size="sm"
-                onClick={() => handleQuickAction(action.action)}
-                className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all text-xs"
-              >
-                <action.icon className="h-4 w-4 text-[#005cb3]" />
-                <span className="font-medium text-center leading-none">{action.label}</span>
-              </Button>
-            ))}
-          </div>
+      {/* Quick Action Buttons */}
+      <div className="px-3 py-2 border-b bg-background/95 backdrop-blur">
+        <div className="grid grid-cols-3 gap-1.5">
+          {getQuickActions().map((action, index) => (
+            <Button
+              key={index}
+              variant="outline"
+              size="sm"
+              onClick={() => handleQuickAction(action.action)}
+              className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all text-xs"
+            >
+              <action.icon className="h-4 w-4 text-[#005cb3]" />
+              <span className="font-medium text-center leading-none">{action.label}</span>
+            </Button>
+          ))}
         </div>
-      )}
-      
-      {/* Admin Quick Action Buttons - Only for admins */}
-      {userRole === 'admin' && (
-        <div className="px-3 py-2 border-b bg-background/95 backdrop-blur">
-          <div className="grid grid-cols-3 gap-1.5">
-            {getQuickActions().map((action, index) => (
-              <Button
-                key={index}
-                variant="outline"
-                size="sm"
-                onClick={() => handleQuickAction(action.action)}
-                className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all text-xs"
-              >
-                <action.icon className="h-4 w-4 text-[#005cb3]" />
-                <span className="font-medium text-center leading-none">{action.label}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-        {renderMessages().map((message) => (
+        {messages.map((message) => (
           <MessageBubble
             key={message.id}
             message={message}
@@ -632,7 +629,7 @@ export function ChatInterface({
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={awaitingDailySummary ? "Share a brief summary of your day..." : "Type your message..."}
+          placeholder={awaitingDailySummary ? "Share about your day..." : "Type your message... (Shift+Enter for new line)"}
           disabled={isTyping}
         />
         <Button type="submit" disabled={isTyping || !input.trim()}>

@@ -4,7 +4,9 @@ import {
   getTodayTimeTracking,
   getTodayPolicySales,
   addDailySummary,
-  addChatMessage
+  addChatMessage,
+  addPolicySale,
+  addClientReview
 } from '@/lib/database';
 import { handleAdminChat } from '@/lib/ai/admin-chat';
 import { handleEmployeeChat } from '@/lib/ai/employee-chat';
@@ -28,17 +30,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, userRole, isDailySummarySubmission } = await request.json();
+    const { message, userRole, isDailySummarySubmission, userName, isClockOutPrompt } = await request.json();
 
     // Determine actual user role if not provided
     const actualUserRole = userRole || getUserRole(userId);
 
-    // Save the user's message to the database
-    await addChatMessage({ userId, role: actualUserRole, content: message });
+    // Handle special message types
+    if (message === 'INITIAL_GREETING') {
+      const greeting = await generateInitialGreeting(actualUserRole, userName);
+      await addChatMessage({ userId, role: 'bot', content: greeting });
+      return NextResponse.json({ response: greeting });
+    }
+
+    if (message === 'CLOCK_OUT_PROMPT') {
+      const clockOutMessage = await generateClockOutMessage(userName);
+      await addChatMessage({ userId, role: 'bot', content: clockOutMessage });
+      return NextResponse.json({ response: clockOutMessage });
+    }
+
+    // Save the user's message to the database (unless it's a system message)
+    if (!message.startsWith('INITIAL_') && !message.startsWith('CLOCK_OUT_')) {
+      await addChatMessage({ userId, role: actualUserRole, content: message });
+    }
 
     // Handle daily summary submission directly
     if (isDailySummarySubmission) {
-      return await handleDailySummarySubmission(message, userId);
+      return await handleDailySummarySubmission(message, userId, userName);
     }
 
     // Handle admin vs employee differently
@@ -72,7 +89,65 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleDailySummarySubmission(description: string, employeeId: string) {
+async function generateInitialGreeting(userRole: string, userName: string) {
+  const currentHour = new Date().getHours();
+  let greeting = "Hello";
+  
+  if (currentHour < 12) {
+    greeting = "Good morning";
+  } else if (currentHour < 17) {
+    greeting = "Good afternoon";
+  } else {
+    greeting = "Good evening";
+  }
+
+  if (userRole === 'admin') {
+    return `${greeting}, ${userName}! 👋 I'm your Let's Insure Admin Assistant. I'm here to help you manage your team and analyze company performance.
+
+🎯 **I can help you with:**
+• View employee performance metrics and analytics
+• Analyze company-wide sales data and trends  
+• Review overtime requests and team management
+• Track department performance and KPIs
+
+What would you like to know about your team today?`;
+  } else {
+    return `${greeting}, ${userName}! 🌟 I'm your HR Assistant, ready to help you track your achievements and support your success.
+
+✨ **I'm here to help you:**
+• Record policy sales and track performance
+• Log client reviews and feedback  
+• Share daily summaries and achievements
+• Answer questions about work
+
+Ready to make today productive? What can I help you with?`;
+  }
+}
+
+async function generateClockOutMessage(userName: string) {
+  const encouraging_openings = [
+    `Hey ${userName}! 🌟 What a day you've had!`,
+    `${userName}, you did it! 💪 Another productive day complete!`,
+    `Great work today, ${userName}! 🎉`,
+    `${userName}, you've earned this moment! ✨`,
+    `Amazing effort today, ${userName}! 🚀`,
+  ];
+
+  const questions = [
+    "How did your day go? I'd love to hear about the highlights and challenges!",
+    "Tell me about your day - what went well, what did you learn, or just how you're feeling!",
+    "I'm curious about your journey today. What made it special or memorable?",
+    "Share with me how today unfolded - the wins, the lessons, everything in between!",
+    "What's your story from today? I'm here to listen and celebrate with you!",
+  ];
+
+  const randomOpening = encouraging_openings[Math.floor(Math.random() * encouraging_openings.length)];
+  const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
+
+  return `${randomOpening} ${randomQuestion}`;
+}
+
+async function handleDailySummarySubmission(description: string, employeeId: string, userName: string) {
   try {
     // Get today's data automatically from the database
     const [todayTimeTracking, todayPolicies] = await Promise.all([
@@ -97,8 +172,19 @@ async function handleDailySummarySubmission(description: string, employeeId: str
       keyActivities: ['Work activities', 'Client interactions', 'Administrative tasks']
     });
 
+    // Generate encouraging response based on their day
+    const encouragingResponses = [
+      `Thank you for sharing, ${userName}! 🌟 It sounds like you put in great effort today. Every day is a step forward in your journey, and I'm proud of your dedication!`,
+      `${userName}, I really appreciate you taking the time to reflect on your day! 💫 Your commitment to growth and excellence shows, and tomorrow is another opportunity to shine!`,
+      `What a thoughtful summary, ${userName}! 🚀 It's clear you care about what you do, and that makes all the difference. Rest well - you've earned it!`,
+      `Thanks for sharing your day with me, ${userName}! ✨ Whether it was smooth sailing or had its challenges, you showed up and that's what matters. Keep being amazing!`,
+      `${userName}, I love hearing about your experiences! 🎯 Your dedication to reflecting and improving is inspiring. Have a wonderful evening!`,
+    ];
+
+    const randomResponse = encouragingResponses[Math.floor(Math.random() * encouragingResponses.length)];
+
     return NextResponse.json({ 
-      response: "Daily summary submitted successfully! You can now clock out." 
+      response: randomResponse
     });
   } catch (error) {
     console.error('Error submitting daily summary:', error);
