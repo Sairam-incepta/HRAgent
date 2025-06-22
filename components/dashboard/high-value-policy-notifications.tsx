@@ -45,20 +45,11 @@ export function HighValuePolicyNotifications() {
     checkUrgentReviews();
   }, []);
 
-  // Reduce refresh interval and use silent background updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadHighValuePolicies(false, true); // Background loading, silent update
-      checkUrgentReviews();
-    }, 15000); // Increased to 15 seconds
-
-    return () => clearInterval(interval);
-  }, []);
-
   // Listen for real-time events for immediate updates
   useEffect(() => {
     const handlePolicyUpdate = () => {
-      loadHighValuePolicies(false, false); // Immediate non-silent refresh
+      // Use silent update to prevent infinite loops
+      loadHighValuePolicies(false, true);
     };
 
     // Subscribe to events and store cleanup functions
@@ -97,28 +88,44 @@ export function HighValuePolicyNotifications() {
         setLoading(true);
       }
       
+      console.log('🔍 Starting to fetch data...');
       const [notifications, employees] = await Promise.all([
         getHighValuePolicyNotificationsList(),
         getEmployees()
       ]);
+      console.log('🔍 Data fetched successfully');
       
       // Create a map of employee IDs to names
       const employeeMap = new Map(employees.map(emp => [emp.clerk_user_id, emp.name]));
       
+      // Debug: Check if John Smith is in the map
+      const johnSmithInMap = employeeMap.get('user_2yQeD2Af9ndPLFcOiLMoQ2QyFmO');
+      console.log('🔍 John Smith lookup result:', johnSmithInMap);
+      
       // Add employee names to notifications
-      const policiesWithNames = notifications.map(notification => ({
-        ...notification,
-        employee_name: employeeMap.get(notification.employee_id) || "Unknown Employee"
-      }));
+      const policiesWithNames = notifications.map(notification => {
+        const foundName = employeeMap.get(notification.employee_id);
+        const willShow = foundName || "Unknown Employee";
+        
+        // Only log for the specific policies we're interested in
+        if (notification.policy_number === 'POL-2025-232' || notification.policy_number === 'POL-2025-233') {
+          console.log(`🔍 Policy ${notification.policy_number}: employee_id="${notification.employee_id}", found_name="${foundName}", will_show="${willShow}"`);
+        }
+        
+        return {
+          ...notification,
+          employee_name: willShow
+        };
+      });
       
       // Store successful data for future reference
       lastSuccessfulData.current = policiesWithNames;
       
-      // Only update state if this is not a silent update or if there's actually a change
-      if (!silentUpdate || JSON.stringify(policiesWithNames) !== JSON.stringify(highValuePolicies)) {
-        setHighValuePolicies(policiesWithNames);
-        
-        // Emit event to update admin dashboard alert count automatically
+      // Always update the state with fresh data
+      setHighValuePolicies(policiesWithNames);
+      
+      // Emit event to update admin dashboard alert count automatically (only for non-silent updates)
+      if (!silentUpdate) {
         dashboardEvents.emit('high_value_policy_updated');
       }
       
@@ -139,8 +146,8 @@ export function HighValuePolicyNotifications() {
     }
   };
 
-  const handleReviewPayroll = (employeeName: string) => {
-    setSelectedEmployee(employeeName);
+  const handleReviewPayroll = (employeeName: string, employeeId?: string) => {
+    setSelectedEmployee(employeeId || employeeName);
     setPayrollDialogOpen(true);
   };
 
@@ -198,9 +205,13 @@ export function HighValuePolicyNotifications() {
 
   const handleUnresolve = async (notificationId: string) => {
     try {
-      await updateHighValuePolicyNotification(notificationId, {
+      console.log('🔄 Attempting to unresolve policy with ID:', notificationId);
+      
+      const result = await updateHighValuePolicyNotification(notificationId, {
         status: 'pending'
       });
+      
+      console.log('✅ Unresolve result:', result);
       
       toast({
         title: "Policy Unresolved",
@@ -213,7 +224,7 @@ export function HighValuePolicyNotifications() {
       // Immediate refresh after user action (not silent)
       loadHighValuePolicies(false, false);
     } catch (error) {
-      console.error('Error unresolving notification:', error);
+      console.error('❌ Error unresolving notification:', error);
       toast({
         title: "Error",
         description: "Failed to unresolve notification.",
@@ -339,6 +350,16 @@ export function HighValuePolicyNotifications() {
                 const isUrgent = daysUntilEnd !== null && daysUntilEnd <= 2;
                 const periodExpired = isPeriodExpired(policy.biweekly_period_end);
                 
+                console.log('🔍 Rendering policy:', {
+                  id: policy.id,
+                  policy_number: policy.policy_number,
+                  status: policy.status,
+                  periodExpired,
+                  biweekly_period_end: policy.biweekly_period_end,
+                  daysUntilEnd,
+                  shouldShowUnresolve: policy.status === 'resolved' && !periodExpired
+                });
+                
                 return (
                   <div 
                     key={policy.id}
@@ -458,7 +479,10 @@ export function HighValuePolicyNotifications() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleUnresolve(policy.id)}
+                              onClick={() => {
+                                console.log('🖱️ Unresolve button clicked for policy:', policy.id, 'status:', policy.status, 'periodExpired:', periodExpired);
+                                handleUnresolve(policy.id);
+                              }}
                               title="Mark this policy as pending again"
                               className="text-amber-700 border-amber-300 hover:bg-amber-50"
                             >
@@ -471,7 +495,7 @@ export function HighValuePolicyNotifications() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleReviewPayroll(policy.employee_name || "Unknown")}
+                              onClick={() => handleReviewPayroll(policy.employee_name || "Unknown", policy.employee_id)}
                               title="Review and set additional bonus for this high-value policy"
                             >
                               <Eye className="mr-1 h-3 w-3" />

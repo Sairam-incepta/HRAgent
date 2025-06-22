@@ -13,28 +13,45 @@ import type {
 import { notifyPolicySale, notifyClientReview, notifyRequestSubmitted, notifyTimeLogged, notifyDailySummary } from './events';
 import { createClient } from '@supabase/supabase-js';
 
-// Timezone-aware date utilities
+// Auto-detect timezone utilities
+const getUserTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch (error) {
+    console.warn('Could not detect timezone, falling back to America/Los_Angeles');
+    return 'America/Los_Angeles';
+  }
+};
+
+const getLocalTimezoneDate = (date: Date = new Date()): Date => {
+  // Create a date in user's detected timezone
+  const timezone = getUserTimezone();
+  return new Date(date.toLocaleString("en-US", { timeZone: timezone }));
+};
+
 const getLocalDateString = (date: Date = new Date()): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  // Get date string in user's timezone
+  const localDate = getLocalTimezoneDate(date);
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, '0');
+  const day = String(localDate.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
 const getLocalStartOfDay = (date: Date = new Date()): Date => {
-  const localDate = new Date(date);
+  const localDate = getLocalTimezoneDate(date);
   localDate.setHours(0, 0, 0, 0);
   return localDate;
 };
 
 const getLocalEndOfDay = (date: Date = new Date()): Date => {
-  const localDate = new Date(date);
+  const localDate = getLocalTimezoneDate(date);
   localDate.setHours(23, 59, 59, 999);
   return localDate;
 };
 
 const getLocalStartOfWeek = (date: Date = new Date()): Date => {
-  const localDate = new Date(date);
+  const localDate = getLocalTimezoneDate(date);
   const day = localDate.getDay();
   const diff = localDate.getDate() - day; // Sunday is 0
   localDate.setDate(diff);
@@ -43,7 +60,7 @@ const getLocalStartOfWeek = (date: Date = new Date()): Date => {
 };
 
 const getLocalEndOfWeek = (date: Date = new Date()): Date => {
-  const localDate = new Date(date);
+  const localDate = getLocalTimezoneDate(date);
   const day = localDate.getDay();
   const diff = localDate.getDate() - day + 6; // Saturday is 6
   localDate.setDate(diff);
@@ -54,13 +71,16 @@ const getLocalEndOfWeek = (date: Date = new Date()): Date => {
 // Debug utility to log timezone information
 export const logTimezoneInfo = () => {
   const now = new Date();
+  const localDate = getLocalTimezoneDate(now);
+  const userTimezone = getUserTimezone();
   console.log('🌍 Timezone Debug Info:');
-  console.log('  Local time:', now.toString());
+  console.log('  Server time:', now.toString());
   console.log('  UTC time:', now.toISOString());
+  console.log('  Local time:', localDate.toString());
   console.log('  Local date string:', getLocalDateString(now));
   console.log('  UTC date string:', now.toISOString().split('T')[0]);
-  console.log('  Timezone offset:', now.getTimezoneOffset(), 'minutes');
-  console.log('  Timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+  console.log('  Server timezone offset:', now.getTimezoneOffset(), 'minutes');
+  console.log('  Detected user timezone:', userTimezone);
 };
 
 // Helper function to calculate bonus based on broker fees (not policy amount)
@@ -751,35 +771,22 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         return reqDate >= startDate && reqDate <= endDate && req.status === 'approved';
       });
       
-      // Calculate hours and pay
-      const regularHours = periodSummaries.reduce((sum, summary) => {
-        const regularHoursWorked = Math.min(summary.hours_worked, 8);
-        return sum + regularHoursWorked;
+      // Calculate total hours and pay (no overtime distinction since rates are same)
+      const totalHours = periodSummaries.reduce((sum, summary) => {
+        return sum + summary.hours_worked;
       }, 0);
       
-      const overtimeHours = periodSummaries.reduce((sum, summary) => {
-        const overtimeHoursWorked = Math.max(0, summary.hours_worked - 8);
-        return sum + overtimeHoursWorked;
-      }, 0) + periodOvertime.reduce((sum, req) => sum + req.current_overtime_hours, 0);
-      
       // Calculate total pay
-      const regularPay = activeEmployees.reduce((sum, emp) => {
+      const totalPay = activeEmployees.reduce((sum, emp) => {
         const empHours = periodSummaries
           .filter(s => s.employee_id === emp.clerk_user_id)
-          .reduce((total, s) => total + Math.min(s.hours_worked, 8), 0);
+          .reduce((total, s) => total + s.hours_worked, 0);
         return sum + (empHours * emp.hourly_rate);
       }, 0);
       
-      const overtimePay = activeEmployees.reduce((sum, emp) => {
-        const empOvertimeHours = periodSummaries
-          .filter(s => s.employee_id === emp.clerk_user_id)
-          .reduce((total, s) => total + Math.max(0, s.hours_worked - 8), 0);
-        return sum + (empOvertimeHours * emp.hourly_rate * 1.0);
-      }, 0);
-      
-      const totalSales = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
-      const totalBonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
-      const totalPay = regularPay + overtimePay + totalBonuses;
+              const totalSales = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
+        const totalBonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
+        const finalTotalPay = totalPay + totalBonuses;
       
       // Department breakdown
       const departmentMap = new Map();
@@ -799,15 +806,11 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         const empHours = periodSummaries
           .filter(s => s.employee_id === emp.clerk_user_id)
           .reduce((total, s) => total + s.hours_worked, 0);
-        const empRegularHours = Math.min(empHours, emp.max_hours_before_overtime * 10); // 10 working days
-        const empOvertimeHours = Math.max(0, empHours - empRegularHours);
         const empBonuses = periodSales
           .filter(s => s.employee_id === emp.clerk_user_id)
           .reduce((total, s) => total + s.bonus, 0);
         
-        dept.totalPay += (empRegularHours * emp.hourly_rate) + 
-                        (empOvertimeHours * emp.hourly_rate * 1.0) + 
-                        empBonuses;
+        dept.totalPay += (empHours * emp.hourly_rate) + empBonuses;
       });
       
       const departmentBreakdown = Array.from(departmentMap.entries()).map(([dept, data]) => ({
@@ -820,13 +823,13 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       periods.push({
         period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
         employees: activeEmployees.length,
-        total: Math.round(totalPay),
+        total: Math.round(finalTotalPay),
         status: i === 0 ? 'current' : 'completed',
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
         details: {
-          regularHours: Math.round(regularHours * 10) / 10,
-          overtimeHours: Math.round(overtimeHours * 10) / 10,
+          regularHours: Math.round(totalHours * 10) / 10,
+          overtimeHours: 0, // No overtime distinction since rates are same
           totalSales: Math.round(totalSales),
           totalBonuses: Math.round(totalBonuses),
           departmentBreakdown
@@ -910,13 +913,8 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const empSales = periodSales.filter(s => s.employee_id === emp.clerk_user_id);
       
       const totalHours = empSummaries.reduce((sum, s) => sum + s.hours_worked, 0);
-      const regularHours = Math.min(totalHours, emp.max_hours_before_overtime * 10); // 10 working days
-      const overtimeHours = Math.max(0, totalHours - regularHours);
-      
-      const regularPay = regularHours * emp.hourly_rate;
-      const overtimePay = overtimeHours * emp.hourly_rate * 1.0;
       const bonuses = empSales.reduce((sum, s) => sum + s.bonus, 0);
-      const totalPay = regularPay + overtimePay + bonuses;
+      const totalPay = (totalHours * emp.hourly_rate) + bonuses;
       
       const salesAmount = empSales.reduce((sum, s) => sum + s.amount, 0);
 
@@ -926,10 +924,10 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         department: emp.department,
         position: emp.position,
         hourlyRate: emp.hourly_rate,
-        regularHours: Math.round(regularHours * 10) / 10,
-        overtimeHours: Math.round(overtimeHours * 10) / 10,
-        regularPay: Math.round(regularPay * 100) / 100,
-        overtimePay: Math.round(overtimePay * 100) / 100,
+        regularHours: Math.round(totalHours * 10) / 10,
+        overtimeHours: 0, // No overtime distinction since rates are same
+        regularPay: Math.round((totalHours * emp.hourly_rate) * 100) / 100,
+        overtimePay: 0, // No overtime distinction since rates are same
         bonuses: Math.round(bonuses * 100) / 100,
         totalPay: Math.round(totalPay * 100) / 100,
         salesCount: empSales.length,
@@ -940,9 +938,9 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const summary = {
       totalEmployees: employees.length,
       totalRegularHours: employeeDetails.reduce((sum, emp) => sum + emp.regularHours, 0),
-      totalOvertimeHours: employeeDetails.reduce((sum, emp) => sum + emp.overtimeHours, 0),
+      totalOvertimeHours: 0, // No overtime distinction since rates are same
       totalRegularPay: employeeDetails.reduce((sum, emp) => sum + emp.regularPay, 0),
-      totalOvertimePay: employeeDetails.reduce((sum, emp) => sum + emp.overtimePay, 0),
+      totalOvertimePay: 0, // No overtime distinction since rates are same
       totalBonuses: employeeDetails.reduce((sum, emp) => sum + emp.bonuses, 0),
       totalPay: employeeDetails.reduce((sum, emp) => sum + emp.totalPay, 0),
       totalSales: periodSales.length,
@@ -1016,13 +1014,8 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       
       // Calculate hours and pay
       const totalHours = periodSummaries.reduce((sum, s) => sum + s.hours_worked, 0);
-      const regularHours = Math.min(totalHours, employee.max_hours_before_overtime * 10); // 10 working days
-      const overtimeHours = Math.max(0, totalHours - regularHours);
-      
-      const regularPay = regularHours * employee.hourly_rate;
-      const overtimePay = overtimeHours * employee.hourly_rate * 1.0;
       const bonuses = periodSales.reduce((sum, s) => sum + s.bonus, 0);
-      const totalPay = regularPay + overtimePay + bonuses;
+      const totalPay = (totalHours * employee.hourly_rate) + bonuses;
       
       const salesAmount = periodSales.reduce((sum, s) => sum + s.amount, 0);
 
@@ -1030,10 +1023,10 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
-        regularHours: Math.round(regularHours * 10) / 10,
-        overtimeHours: Math.round(overtimeHours * 10) / 10,
-        regularPay: Math.round(regularPay * 100) / 100,
-        overtimePay: Math.round(overtimePay * 100) / 100,
+        regularHours: Math.round(totalHours * 10) / 10,
+        overtimeHours: 0, // No overtime distinction since rates are same
+        regularPay: Math.round((totalHours * employee.hourly_rate) * 100) / 100,
+        overtimePay: 0, // No overtime distinction since rates are same
         bonuses: Math.round(bonuses * 100) / 100,
         totalPay: Math.round(totalPay * 100) / 100,
         salesCount: periodSales.length,
@@ -1106,7 +1099,21 @@ export const getHighValuePolicyNotificationsList = async (): Promise<HighValuePo
     return [];
   }
 
-  return data || [];
+  // Deduplicate by policy_number, keeping the most recent entry for each policy
+  const policyMap = new Map<string, HighValuePolicyNotification>();
+  
+  if (data) {
+    data.forEach(notification => {
+      const existingEntry = policyMap.get(notification.policy_number);
+      if (!existingEntry || new Date(notification.created_at) > new Date(existingEntry.created_at)) {
+        policyMap.set(notification.policy_number, notification);
+      }
+    });
+  }
+
+  return Array.from(policyMap.values()).sort((a, b) => 
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 };
 
 export const updateHighValuePolicyNotification = async (
@@ -1117,11 +1124,15 @@ export const updateHighValuePolicyNotification = async (
     status?: 'pending' | 'reviewed' | 'resolved';
   }
 ): Promise<HighValuePolicyNotification | null> => {
+  console.log('🔄 updateHighValuePolicyNotification called with:', { notificationId, updates });
+  
   const updateData: any = { ...updates };
   
   if (updates.status === 'reviewed') {
     updateData.reviewed_at = new Date().toISOString();
   }
+
+  console.log('📝 About to update with data:', updateData);
 
   const { data, error } = await supabase
     .from('high_value_policy_notifications')
@@ -1131,10 +1142,11 @@ export const updateHighValuePolicyNotification = async (
     .single();
 
   if (error) {
-    console.error('Error updating high-value policy notification:', error);
+    console.error('❌ Error updating high-value policy notification:', error);
     return null;
   }
 
+  console.log('✅ Update successful, returning data:', data);
   return data;
 };
 

@@ -36,9 +36,13 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
     setLoading(true);
     
     try {
-      // Get policies over $5000 for manual bonus setting
-      const policies = await getPolicySales(); // Get all policies to find high-value ones
-      const highValuePols = policies.filter(policy => policy.amount > 5000);
+      // Get policies over $5000 for manual bonus setting - FOR THIS EMPLOYEE ONLY
+      const allPolicies = await getPolicySales(); // Get all policies
+      // Filter by employee ID (employeeName is actually employee ID now) and high-value amount
+      const highValuePols = allPolicies.filter(policy => 
+        policy.amount > 5000 && 
+        policy.employee_id === employeeName // employeeName is actually employee ID
+      );
       setHighValuePolicies(highValuePols);
       
       // Initialize additional bonuses for high-value policies (separate from base bonus)
@@ -300,12 +304,8 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Regular Hours:</span>
+                    <span className="text-sm text-muted-foreground">Total Hours:</span>
                     <span className="text-sm font-medium">{payrollData.regularHours} hrs @ ${payrollData.hourlyRate}/hr</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Overtime Hours:</span>
-                    <span className="text-sm font-medium">{payrollData.overtimeHours} hrs @ ${payrollData.overtimeRate}/hr</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Standard Bonuses:</span>

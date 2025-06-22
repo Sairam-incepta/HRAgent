@@ -123,7 +123,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
                 <Card>
                   <CardContent className="p-4 text-center">
                     <Clock className="h-6 w-6 mx-auto mb-2 text-[#005cb3]" />
-                    <div className="text-2xl font-bold">{Math.round(payrollData.summary.totalRegularHours + payrollData.summary.totalOvertimeHours)}</div>
+                    <div className="text-2xl font-bold">{Math.round(payrollData.summary.totalRegularHours)}</div>
                     <div className="text-xs text-muted-foreground">Total Hours</div>
                   </CardContent>
                 </Card>
@@ -152,11 +152,11 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Regular Hours:</span>
+                        <span className="text-sm text-muted-foreground">Total Hours:</span>
                         <span className="text-sm font-medium">{Math.round(payrollData.summary.totalRegularHours)} hrs</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Regular Pay:</span>
+                        <span className="text-sm text-muted-foreground">Base Pay:</span>
                         <span className="text-sm font-medium">${Math.round(payrollData.summary.totalRegularPay).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
@@ -166,12 +166,12 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Overtime Hours:</span>
-                        <span className="text-sm font-medium">{Math.round(payrollData.summary.totalOvertimeHours)} hrs</span>
+                        <span className="text-sm text-muted-foreground">Total Pay:</span>
+                        <span className="text-sm font-medium">${Math.round(payrollData.summary.totalPay).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Overtime Pay:</span>
-                        <span className="text-sm font-medium">${Math.round(payrollData.summary.totalOvertimePay).toLocaleString()}</span>
+                        <span className="text-sm text-muted-foreground">Avg Hourly Rate:</span>
+                        <span className="text-sm font-medium">${(payrollData.summary.totalRegularPay / payrollData.summary.totalRegularHours || 0).toFixed(2)}/hr</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Total Sales:</span>

@@ -156,33 +156,33 @@ export function EmployeePayrollHistoryDialog({
                           </div>
                         </div>
                         
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Regular Hours:</span>
-                            <div className="font-medium">{period.regularHours}h</div>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Overtime Hours:</span>
-                            <div className="font-medium">{period.overtimeHours}h</div>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Sales Bonus:</span>
-                            <div className="font-medium">${period.bonuses.toLocaleString()}</div>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Policies Sold:</span>
-                            <div className="font-medium">{period.salesCount}</div>
-                          </div>
-                        </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Total Hours:</span>
+                        <div className="font-medium">{period.regularHours}h</div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Hourly Rate:</span>
+                        <div className="font-medium">${employee?.hourly_rate || 25}/hr</div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Sales Bonus:</span>
+                        <div className="font-medium">${period.bonuses.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Policies Sold:</span>
+                        <div className="font-medium">{period.salesCount}</div>
+                      </div>
+                    </div>
                         
-                        <div className="mt-3 pt-3 border-t grid grid-cols-3 gap-4 text-sm">
+                        <div className="mt-3 pt-3 border-t grid grid-cols-3 gap-4 text-sm">                        
                           <div>
-                            <span className="text-muted-foreground">Regular Pay:</span>
+                            <span className="text-muted-foreground">Base Pay:</span>
                             <div className="font-medium">${period.regularPay.toLocaleString()}</div>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Overtime Pay:</span>
-                            <div className="font-medium">${period.overtimePay.toLocaleString()}</div>
+                            <span className="text-muted-foreground">Total Pay:</span>
+                            <div className="font-medium">${period.totalPay.toLocaleString()}</div>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Sales Amount:</span>

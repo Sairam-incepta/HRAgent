@@ -541,19 +541,7 @@ export function EmployeeDetailsDialog({
                                 </div>
                               )}
                               
-                              {summary.key_activities && summary.key_activities.length > 0 && (
-                                <div className="bg-blue-50 dark:bg-blue-900/20 rounded p-3">
-                                  <p className="text-sm font-medium mb-2">Key Activities:</p>
-                                  <ul className="text-sm space-y-1">
-                                    {summary.key_activities.map((activity: string, actIndex: number) => (
-                                      <li key={actIndex} className="flex items-start">
-                                        <span className="text-blue-600 mr-2">•</span>
-                                        <span>{activity}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
+
                             </div>
                           );
                         })}

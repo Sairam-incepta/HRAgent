@@ -182,7 +182,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       if (!user?.id) return; // Don't check if user is logging out
       
       const now = new Date();
-      const currentDate = now.toDateString(); // Gets date in local timezone
+      // Get date in user's timezone
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const localDate = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
+      const currentDate = localDate.toDateString(); // Gets date in user's timezone
       
       // Store the last known date
       const lastKnownDate = localStorage.getItem('last_known_date');
@@ -252,20 +255,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
   // Computed values
   const livePay = useMemo(() => {
-    const regularHours = Math.min(currentElapsedTime / 3600, employeeSettings.maxHoursBeforeOvertime);
-    const overtimeHours = Math.max(0, (currentElapsedTime / 3600) - employeeSettings.maxHoursBeforeOvertime);
-    
-    const regularPay = regularHours * employeeSettings.hourlyRate;
-    const overtimePay = overtimeHours * employeeSettings.hourlyRate * 1.5;
+    const totalHours = currentElapsedTime / 3600;
+    const totalPay = totalHours * employeeSettings.hourlyRate;
     
     return {
-      regularHours,
-      overtimeHours,
-      regularPay,
-      overtimePay,
-      totalPay: regularPay + overtimePay
+      totalHours,
+      totalPay
     };
-  }, [currentElapsedTime, employeeSettings.maxHoursBeforeOvertime, employeeSettings.hourlyRate]);
+  }, [currentElapsedTime, employeeSettings.hourlyRate]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter(request => {
@@ -627,9 +624,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
                     : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime
-                    ? "You&apos;re in overtime - earning 1x rate"
+                    ? "Tracking your extended hours"
                     : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime * 0.8
-                    ? "You&apos;ll be notified when you reach overtime"
+                    ? "Approaching your daily target hours"
                     : "Tracking your work hours"
                   }
                 </p>
@@ -644,9 +641,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                 <span className="text-xs font-medium text-muted-foreground">Today's Pay</span>
                 <span className="text-xs font-bold">
                   ${isClockedIn ? livePay.totalPay.toFixed(2) : (todayHours * employeeSettings.hourlyRate).toFixed(2)}
-                  {isClockedIn && livePay.overtimeHours > 0 && (
-                    <span className="ml-2 text-amber-600">(Overtime: ${livePay.overtimePay.toFixed(2)})</span>
-                  )}
                 </span>
               </div>
             </div>

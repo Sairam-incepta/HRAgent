@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { getChatMessages, addChatMessage } from "@/lib/database";
 
 type Message = {
   id: string;
@@ -53,21 +54,24 @@ export function ChatInterface({
     }
   }, [isLoaded, user]);
 
-  const STORAGE_KEY = userRole ? `letsinsure_chat_messages_${userRole}_${user?.id || 'anonymous'}` : null;
-
-  // Load messages from localStorage and send initial AI greeting
+  // Load messages from database and send initial AI greeting
   useEffect(() => {
-    if (!STORAGE_KEY || !userRole || hasInitialized) return;
+    if (!userRole || hasInitialized || !user?.id) return;
 
     const loadMessagesAndInitialize = async () => {
       try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsedMessages = JSON.parse(stored).map((msg: any) => ({
-            ...msg,
+        // Load existing chat messages from database
+        const chatMessages = await getChatMessages({ userId: user.id, limit: MAX_MESSAGES });
+        
+        if (chatMessages && chatMessages.length > 0) {
+          // Convert database messages to UI format
+          const formattedMessages = chatMessages.map((msg: any) => ({
+            id: msg.id,
+            content: msg.content,
+            sender: (msg.role === 'bot' ? 'bot' : 'user') as "user" | "bot",
             timestamp: new Date(msg.timestamp)
           }));
-          setMessages(parsedMessages);
+          setMessages(formattedMessages);
         } else {
           // If no stored messages, get AI greeting
           await getInitialAIGreeting();
@@ -82,11 +86,11 @@ export function ChatInterface({
     };
 
     loadMessagesAndInitialize();
-  }, [userRole, STORAGE_KEY, user?.id, hasInitialized]);
+  }, [userRole, user?.id, hasInitialized]);
 
   // Get initial AI greeting
   const getInitialAIGreeting = async () => {
-    if (!userRole) return;
+    if (!userRole || !user?.id) return;
 
     setIsTyping(true);
     try {
@@ -100,7 +104,7 @@ export function ChatInterface({
             ? "Hello, I'm the new admin. Please introduce yourself and tell me how you can help."
             : "Hello, I'm a new employee. Please introduce yourself and tell me how you can help.",
           userRole: userRole,
-          employeeId: user?.id || "emp-001"
+          employeeId: user.id
         }),
       });
 
@@ -112,6 +116,18 @@ export function ChatInterface({
           sender: "bot",
           timestamp: new Date(),
         };
+        
+        // Save AI greeting to database
+        try {
+          await addChatMessage({
+            userId: user.id,
+            role: 'bot',
+            content: data.response
+          });
+        } catch (dbError) {
+          console.error('Error saving AI greeting to database:', dbError);
+        }
+        
         setMessages([aiMessage]);
       }
     } catch (error) {
@@ -120,17 +136,6 @@ export function ChatInterface({
       setIsTyping(false);
     }
   };
-
-  // Save messages to localStorage whenever messages change
-  useEffect(() => {
-    if (messages.length > 0 && STORAGE_KEY && hasInitialized) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-      } catch (error) {
-        console.error('Error saving chat messages:', error);
-      }
-    }
-  }, [messages, STORAGE_KEY, hasInitialized]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -152,7 +157,7 @@ export function ChatInterface({
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isTyping || !userRole) return;
+    if (!input.trim() || isTyping || !userRole || !user?.id) return;
 
     // Add user message
     const userMessage: Message = {
@@ -162,6 +167,17 @@ export function ChatInterface({
       timestamp: new Date(),
     };
     
+    // Save user message to database
+    try {
+      await addChatMessage({
+        userId: user.id,
+        role: userRole,
+        content: input
+      });
+    } catch (error) {
+      console.error('Error saving user message to database:', error);
+    }
+    
     // Remove oldest messages if limit is reached
     const updatedMessages = [...messages, userMessage];
     if (updatedMessages.length > MAX_MESSAGES) {
@@ -169,6 +185,7 @@ export function ChatInterface({
     }
     
     setMessages(updatedMessages);
+    const currentInput = input;
     setInput("");
     setIsTyping(true);
     
@@ -188,9 +205,9 @@ export function ChatInterface({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: input,
+          message: currentInput,
           userRole: userRole,
-          employeeId: user?.id || "emp-001"
+          employeeId: user.id
         }),
       });
 
@@ -206,6 +223,17 @@ export function ChatInterface({
         sender: "bot",
         timestamp: new Date(),
       };
+      
+      // Save bot message to database
+      try {
+        await addChatMessage({
+          userId: user.id,
+          role: 'bot',
+          content: data.response
+        });
+      } catch (error) {
+        console.error('Error saving bot message to database:', error);
+      }
       
       // Remove oldest messages if limit is reached
       const updatedMessagesWithBot = [...updatedMessages, botMessage];
@@ -313,7 +341,8 @@ export function ChatInterface({
       clockOutPromptMessage && 
       userRole === 'employee' && 
       hasInitialized && 
-      !hasShownClockOutPrompt
+      !hasShownClockOutPrompt &&
+      user?.id
     ) {
       const botMessage: Message = {
         id: `clock-out-prompt-${Date.now()}`,
@@ -321,6 +350,17 @@ export function ChatInterface({
         sender: "bot",
         timestamp: new Date(),
       };
+      
+      // Save clock out prompt to database
+      try {
+        addChatMessage({
+          userId: user.id,
+          role: 'bot',
+          content: clockOutPromptMessage
+        });
+      } catch (error) {
+        console.error('Error saving clock out prompt to database:', error);
+      }
       
       setMessages((prev) => {
         const updated = [...prev, botMessage];
@@ -330,7 +370,7 @@ export function ChatInterface({
       
       setHasShownClockOutPrompt(true);
     }
-  }, [onClockOutPrompt, clockOutPromptMessage, userRole, hasInitialized, hasShownClockOutPrompt]);
+  }, [onClockOutPrompt, clockOutPromptMessage, userRole, hasInitialized, hasShownClockOutPrompt, user?.id]);
 
   // Reset the clock out prompt flag when the prompt is cleared
   useEffect(() => {

@@ -127,10 +127,13 @@ export function TimeTracker({
   // Get current date in user's timezone
   const getCurrentDate = () => {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`; // YYYY-MM-DD format in local timezone
+    // Convert to user's detected timezone
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const localDate = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
+    const year = localDate.getFullYear();
+    const month = String(localDate.getMonth() + 1).padStart(2, '0');
+    const day = String(localDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`; // YYYY-MM-DD format in user's timezone
   };
 
   // Add this function to calculate total time worked today
