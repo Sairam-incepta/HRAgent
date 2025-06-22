@@ -49,8 +49,12 @@ export async function createClerkUserAndEmployee(userData: ClerkUserData) {
 
     if (!employee) {
       // If employee creation fails, we should clean up the Clerk user
-      await client.users.deleteUser(clerkUser.id);
-      throw new Error('Failed to create employee record');
+      try {
+        await client.users.deleteUser(clerkUser.id);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup Clerk user after employee creation failed:', cleanupError);
+      }
+      throw new Error('Failed to create employee record in database');
     }
 
     return {
@@ -59,8 +63,26 @@ export async function createClerkUserAndEmployee(userData: ClerkUserData) {
       success: true
     };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating Clerk user and employee:', error);
+    
+    // Handle specific Clerk errors
+    if (error.clerkError && error.errors) {
+      const clerkError = error.errors[0];
+      if (clerkError.code === 'form_identifier_exists') {
+        throw new Error(`Email address "${userData.emailAddress}" is already in use. Please use a different email address.`);
+      }
+      if (clerkError.code === 'form_password_pwned') {
+        throw new Error('The password has been found in an online data breach. Please choose a different password.');
+      }
+      if (clerkError.code === 'form_password_not_strong_enough') {
+        throw new Error('Password is not strong enough. Please use a stronger password.');
+      }
+      // Generic Clerk error
+      throw new Error(`Account creation failed: ${clerkError.message || clerkError.longMessage || 'Unknown Clerk error'}`);
+    }
+    
+    // Re-throw the error with context
     throw error;
   }
 }

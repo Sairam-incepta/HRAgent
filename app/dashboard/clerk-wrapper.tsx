@@ -8,6 +8,7 @@ import { AdminDashboard } from "@/components/dashboard/admin-dashboard";
 import { ChatInterface } from "@/components/dashboard/chat-interface";
 import { Loader2, MessageSquare, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getEmployee } from "@/lib/database";
 
 export default function ClerkWrapper() {
   const { user, isLoaded, isSignedIn } = useUser();
@@ -17,6 +18,14 @@ export default function ClerkWrapper() {
   const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
   const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
   const [authError, setAuthError] = useState(false);
+  // Welcome message state removed per user request
+  const [employeeData, setEmployeeData] = useState<{
+    name: string;
+    email: string;
+  }>({
+    name: "",
+    email: ""
+  });
 
   // Single effect to handle authentication and role determination
   useEffect(() => {
@@ -24,24 +33,64 @@ export default function ClerkWrapper() {
     
     if (isLoaded) {
       if (isSignedIn && user) {
-        // Determine user role
-        const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
-                       user.publicMetadata?.role === 'admin' ||
-                       user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
-        
-        const role = isAdmin ? "admin" : "employee";
-        console.log('ClerkWrapper: User role determined', { role, email: user.emailAddresses[0]?.emailAddress });
-        
-        setUserRole(role);
-        setAuthError(false);
+        // Only set role if it hasn't been set yet to prevent loops
+        if (!userRole) {
+          // Determine user role
+          const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
+                         user.publicMetadata?.role === 'admin' ||
+                         user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+          
+          const role = isAdmin ? "admin" : "employee";
+          console.log('ClerkWrapper: User role determined', { role, email: user.emailAddresses[0]?.emailAddress });
+          
+          setUserRole(role);
+          setAuthError(false);
+          
+          // Load employee data for header
+          loadEmployeeData();
+        }
       } else if (isSignedIn === false) {
         // User is definitely not signed in, redirect to sign-in
         console.log('ClerkWrapper: User not signed in, redirecting to sign-in');
-        window.location.href = '/sign-in';
+        // Use replace to prevent back button issues
+        window.location.replace('/sign-in');
       }
       // If isSignedIn is undefined, we're still loading
     }
-  }, [isLoaded, isSignedIn, user]);
+  }, [isLoaded, isSignedIn, user, userRole]);
+
+  // Welcome message functions removed per user request
+
+  // Load employee data for header
+  const loadEmployeeData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const employee = await getEmployee(user.id);
+      
+      if (employee) {
+        setEmployeeData({
+          name: employee.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || '',
+          email: employee.email || user.emailAddresses[0]?.emailAddress || '',
+        });
+      } else {
+        // Use Clerk user data as fallback
+        const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+        setEmployeeData({
+          name: clerkName || '',
+          email: user.emailAddresses[0]?.emailAddress || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error loading employee data for header:', error);
+      // Use Clerk user data as fallback
+      const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+      setEmployeeData({
+        name: clerkName || '',
+        email: user.emailAddresses[0]?.emailAddress || '',
+      });
+    }
+  };
 
   // Timeout to prevent infinite loading
   useEffect(() => {
@@ -153,7 +202,14 @@ export default function ClerkWrapper() {
 
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
-      <DashboardHeader userRole={userRole} />
+      <DashboardHeader 
+        userRole={userRole} 
+        employeeName={employeeData.name}
+        employeeEmail={employeeData.email}
+      />
+      
+      {/* Welcome Message Banner removed per user request */}
+      
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Main Dashboard Content - 65% when chat is open, 100% when collapsed */}
         <main 

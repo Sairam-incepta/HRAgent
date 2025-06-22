@@ -22,7 +22,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" suppressHydrationWarning className="dark h-full">
-        <body className={`${inter.className} h-full`}>
+        <body className={`${inter.className} h-full`} suppressHydrationWarning>
           <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
             {children}
             <Toaster />

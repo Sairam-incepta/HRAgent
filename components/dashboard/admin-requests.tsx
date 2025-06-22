@@ -44,7 +44,11 @@ interface Request {
   reason?: string;
 }
 
-export function AdminRequests() {
+interface AdminRequestsProps {
+  pendingCount?: number;
+}
+
+export function AdminRequests({ pendingCount }: AdminRequestsProps) {
   const [requests, setRequests] = useState<Request[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,7 +192,6 @@ export function AdminRequests() {
     }
   };
 
-  const pendingCount = requests.filter(r => r.status === "pending").length;
   const overtimeCount = requests.filter(r => r.type === "overtime" && r.status === "pending").length;
 
   if (loading) {
@@ -211,10 +214,10 @@ export function AdminRequests() {
         <CardHeader>
           <div className="flex justify-between items-center">
             <div>
-              <CardTitle>Employee Requests</CardTitle>
+              <CardTitle>Employee Requests ({pendingCount ?? requests.filter(r => r.status === "pending").length})</CardTitle>
               <div className="flex gap-2 mt-2">
                 <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
-                  {pendingCount} Pending
+                  {pendingCount ?? requests.filter(r => r.status === "pending").length} Pending
                 </Badge>
                 {overtimeCount > 0 && (
                   <Badge variant="outline" className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
@@ -264,7 +267,7 @@ export function AdminRequests() {
           </div>
 
           {/* Requests List */}
-          <div className="space-y-3">
+          <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
             {filteredRequests.length > 0 ? (
               filteredRequests.map((request) => (
                 <div

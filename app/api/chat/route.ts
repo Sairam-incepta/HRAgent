@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import openai from '@/lib/openai';
+import { supabase } from '@/lib/supabase';
 import { 
   getPolicySales, 
   getEmployeeBonus, 
@@ -34,13 +35,21 @@ const extractPolicyDetails = (message: string) => {
   for (const line of lines) {
     const lowerLine = line.toLowerCase();
     
-    // Policy number patterns
+    // Policy number patterns - more flexible to handle any format
     if ((lowerLine.includes('policy') && lowerLine.includes('number')) || lowerLine.includes('policy:')) {
-      const policyMatch = line.match(/([A-Z]{2,4}[-_]?\d{3,}[A-Z0-9]*)/i) || 
-                          line.match(/([A-Z]+\d+[A-Z0-9]*)/i) ||
-                          line.match(/(\d+[A-Z]+\d*)/i);
+      // First try structured format with colon
+      let policyMatch = line.match(/(?:policy.*?number.*?:?\s*|policy:?\s*)([A-Z0-9\-_]{3,20})/i);
+      
+      // If that fails, try to extract any alphanumeric sequence that could be a policy number
+      if (!policyMatch) {
+        policyMatch = line.match(/([A-Z]{2,4}[-_]?\d{3,}[A-Z0-9]*)/i) || 
+                      line.match(/([A-Z]+\d+[A-Z0-9]*)/i) ||
+                      line.match(/(\d{4,}[A-Z]*)/i) || // Pure numbers 4+ digits
+                      line.match(/(\d+[A-Z]+\d*)/i);
+      }
+      
       if (policyMatch) {
-        details.policy_number = policyMatch[1].toUpperCase().replace(/[-_]/g, '-');
+        details.policy_number = policyMatch[1].toUpperCase();
       }
     }
     
@@ -73,10 +82,18 @@ const extractPolicyDetails = (message: string) => {
     }
     
     // Policy amount patterns
-    if ((lowerLine.includes('policy') && lowerLine.includes('amount')) || lowerLine.includes('amount:') || lowerLine.includes('$')) {
-      const amountMatch = line.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+    if ((lowerLine.includes('policy') && lowerLine.includes('amount')) || lowerLine.includes('amount:')) {
+      const amountMatch = line.match(/\$?(\d{1,8}(?:,\d{3})*(?:\.\d{2})?)/);
       if (amountMatch) {
         details.policy_amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+      }
+    }
+    
+    // Broker fee patterns
+    if ((lowerLine.includes('broker') && lowerLine.includes('fee')) || lowerLine.includes('broker fee:') || lowerLine.includes('fee:')) {
+      const feeMatch = line.match(/\$?(\d{1,8}(?:,\d{3})*(?:\.\d{2})?)/);
+      if (feeMatch) {
+        details.broker_fee = parseFloat(feeMatch[1].replace(/,/g, ''));
       }
     }
   }
@@ -86,12 +103,13 @@ const extractPolicyDetails = (message: string) => {
     const text = message.replace(/\n/g, ' ');
     
     // Policy number from anywhere in text - more flexible patterns
-    const policyMatch = text.match(/(?:policy|pol)[\s\-#:]*([A-Z]{2,4}[-_]?\d{3,}[A-Z0-9]*)/i) || 
+    const policyMatch = text.match(/(?:policy|pol)[\s\-#:]*([A-Z0-9\-_]{3,20})/i) || 
                        text.match(/([A-Z]{2,4}[-_]?\d{4,})/i) ||
                        text.match(/([A-Z]+\d{3,}[A-Z0-9]*)/i) ||
+                       text.match(/(\d{4,}[A-Z]*)/i) || // Pure numbers 4+ digits
                        text.match(/(POL-?\d{4}-?\d{3})/i);
     if (policyMatch) {
-      details.policy_number = policyMatch[1].toUpperCase().replace(/[-_]/g, '-');
+      details.policy_number = policyMatch[1].toUpperCase();
     }
     
     // Client name extraction - look for common patterns
@@ -192,23 +210,24 @@ const extractDataFromResponse = (message: string, dataType: string) => {
         return null;
       }
       
-      // Accept various policy number formats
+      // Accept various policy number formats - be very flexible
       const policyPatterns = [
         /^([A-Z]{2,4}[-_]?\d{4}[-_]?\d{3})$/i,     // POL-2025-001
         /^([A-Z]{2,4}[-_]?\d{3,})$/i,              // POL-001, ABC-123
         /^([A-Z]+\d+[A-Z]*)$/i,                    // ABC123, POL001A
         /^(\d+[A-Z]+\d*)$/i,                       // 123ABC, 123ABC456
+        /^(\d{4,})$/i,                             // Pure numbers like 2435546
       ];
       
       for (const pattern of policyPatterns) {
         const match = trimmed.match(pattern);
         if (match) {
-          return match[1].toUpperCase().replace(/[-_]/g, '-');
+          return match[1].toUpperCase();
         }
       }
       
-      // If it looks like a policy number (has both letters and numbers), accept it
-      if (trimmed.length >= 3 && /[A-Za-z]/.test(trimmed) && /\d/.test(trimmed) && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
+      // If it looks like a policy number (alphanumeric, at least 3 chars), accept it
+      if (trimmed.length >= 3 && /^[A-Z0-9\-_]+$/i.test(trimmed)) {
         return trimmed.toUpperCase();
       }
       
@@ -225,6 +244,66 @@ const extractDataFromResponse = (message: string, dataType: string) => {
         return 'no';
       }
       return null;
+    
+    case 'cross_sold_count':
+      // Extract number of cross-sold policies
+      const countMatch = message.match(/(\d+)/);
+      if (countMatch) {
+        const count = parseInt(countMatch[1]);
+        if (count > 0 && count <= 10) { // Reasonable limit
+          return count.toString();
+        }
+      }
+      return null;
+    
+    case 'cross_sold_policy_details':
+      // Extract cross-sold policy details - look for all three values
+             const lines = message.split('\n').map(line => line.trim());
+       let policyNumber = '';
+       let policyType = '';
+       let amount = 0;
+       let brokerFee = 0;
+      
+             for (const line of lines) {
+                  // Policy number line
+         if (line.toLowerCase().includes('policy number')) {
+           const policyMatch = line.match(/:\s*([A-Z0-9\-_]{3,20})/i);
+           if (policyMatch) {
+             policyNumber = policyMatch[1].toUpperCase();
+           }
+         }
+         // Policy type line
+         else if (line.toLowerCase().includes('policy type') || line.toLowerCase().includes('type')) {
+           const typeMatch = line.match(/:\s*([A-Za-z\s]+)/);
+           if (typeMatch) {
+             policyType = typeMatch[1].trim();
+           }
+         }
+         // Amount line
+         else if (line.toLowerCase().includes('amount')) {
+           const amountMatch = line.match(/:\s*\$?(\d{1,8}(?:,\d{3})*(?:\.\d{2})?)/);
+           if (amountMatch) {
+             amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+           }
+         }
+         // Broker fee line
+         else if (line.toLowerCase().includes('broker') || line.toLowerCase().includes('fee')) {
+           const feeMatch = line.match(/:\s*\$?(\d{1,8}(?:,\d{3})*(?:\.\d{2})?)/);
+           if (feeMatch) {
+             brokerFee = parseFloat(feeMatch[1].replace(/,/g, ''));
+           }
+         }
+      }
+      
+             if (policyNumber && amount > 0) {
+         return {
+           policy_number: policyNumber,
+           policy_type: policyType || 'Cross-sold Policy',
+           amount: amount,
+           broker_fee: brokerFee || 0
+         };
+       }
+      return null;
   }
 };
 
@@ -236,15 +315,46 @@ const getUserRole = (userId: string, userEmail?: string) => {
 };
 
 // Helper function to generate unique policy number
+const checkPolicyNumberExists = async (policyNumber: string): Promise<boolean> => {
+  try {
+    const { data } = await supabase
+      .from('policy_sales')
+      .select('id')
+      .eq('policy_number', policyNumber)
+      .limit(1);
+    
+    return !!(data && data.length > 0);
+  } catch (error) {
+    console.error('Error checking policy number:', error);
+    return false;
+  }
+};
+
 const generateUniquePolicyNumber = async (baseNumber?: string): Promise<string> => {
   const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
   const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
   
   if (baseNumber) {
-    // If base number provided, try to make it unique
+    // If base number provided, try to make variations
+    const match = baseNumber.match(/^([A-Z-]+)(\d+)(-\d+)?$/);
+    if (match) {
+      const prefix = match[1];
+      const number = parseInt(match[2]);
+      const suffix = match[3] || '';
+      
+      // Try incrementing the number
+      for (let i = 1; i <= 20; i++) {
+        const newNumber = `${prefix}${number + i}${suffix}`;
+        const exists = await checkPolicyNumberExists(newNumber);
+        if (!exists) {
+          return newNumber;
+        }
+      }
+    }
+    
+    // If pattern matching fails, append timestamp
     const cleanBase = baseNumber.replace(/[-_]/g, '').toUpperCase();
-    const uniqueNumber = `${cleanBase}-${timestamp}`;
-    return uniqueNumber;
+    return `${cleanBase}-${timestamp}`;
   } else {
     // Generate completely new policy number
     return `POL-${new Date().getFullYear()}-${timestamp}${random}`;
@@ -326,6 +436,52 @@ async function handleDailySummarySubmission(description: string, employeeId: str
 }
 
 async function handleAdminChat(message: string, userId: string) {
+  // Handle welcome message generation for admin
+  if (message === "ADMIN_WELCOME_MESSAGE") {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional HR assistant for administrators. Generate a welcoming message for an admin who just logged into their dashboard. The message should:
+            - Be professional and confident
+            - Acknowledge their administrative role
+            - Set a productive tone for their workday
+            - Be brief (1-2 sentences)
+            - Sound authoritative but friendly
+            - Vary in style (don't always say the same thing)
+            - Focus on management and oversight
+            
+            Examples of good admin welcome messages:
+            - "Good morning! Ready to oversee another successful day? I'm here to help you manage your team and track performance metrics."
+            - "Welcome back! Hope you're ready to lead your team to success. Let's see what insights we can uncover today!"
+            - "Hello! Great to see you in command. I'm here to assist with employee management and performance analysis."
+            - "Ready to make strategic decisions today? I'm here to provide you with all the data and support you need!"
+            - "Welcome! Your team is counting on your leadership. Let's make today productive and successful!"
+            
+            Generate a unique, professional admin welcome message now.`
+          },
+          {
+            role: "user",
+            content: "Generate a welcome message for an admin logging in"
+          }
+        ],
+        max_tokens: 150,
+        temperature: 0.8,
+      });
+
+      let response = completion.choices[0]?.message?.content || "Welcome! I'm here to help you manage your team and track performance.";
+      
+      // Remove any surrounding quotes that might be added by the AI
+      response = response.replace(/^["']|["']$/g, '');
+      
+      return NextResponse.json({ response });
+    } catch (error) {
+      console.error('Error generating admin welcome message:', error);
+      return NextResponse.json({ response: "Welcome! I'm here to help you manage your team and track performance." });
+    }
+  }
   try {
     // Get admin data for context - get ALL policy sales for company-wide view
     const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([
@@ -456,6 +612,52 @@ async function handleEmployeeChat(message: string, userId: string) {
     return NextResponse.json({ 
       response: "✅ Conversation reset! You can now start fresh with a new policy entry, client review, or daily summary. What would you like to do?" 
     });
+  }
+
+  // Handle welcome message generation for employees
+  if (message === "WELCOME_MESSAGE") {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a friendly HR assistant. Generate a warm, welcoming message for an employee who just logged into their dashboard. The message should:
+            - Be enthusiastic and welcoming
+            - Set a positive tone for their workday
+            - Be brief (1-2 sentences)
+            - Sound natural and encouraging
+            - Vary in style (don't always say the same thing)
+            - Be professional but friendly
+            
+            Examples of good welcome messages:
+            - "Good morning! Ready to make today amazing? I'm here to help you track your progress and celebrate your wins!"
+            - "Welcome back! Hope you're having a great day. Let's see what awesome things you'll accomplish today!"
+            - "Hey there! Great to see you. I'm excited to help you track your sales and achievements today!"
+            - "Hello! Ready to tackle another successful day? I'm here whenever you need assistance!"
+            - "Welcome! Hope your day is off to a fantastic start. Let's make it a productive one!"
+            
+            Generate a unique, friendly welcome message now.`
+          },
+          {
+            role: "user",
+            content: "Generate a welcome message for an employee logging in"
+          }
+        ],
+        max_tokens: 150,
+        temperature: 0.8,
+      });
+
+      let response = completion.choices[0]?.message?.content || "Welcome! I'm here to help you track your progress today!";
+      
+      // Remove any surrounding quotes that might be added by the AI
+      response = response.replace(/^["']|["']$/g, '');
+      
+      return NextResponse.json({ response });
+    } catch (error) {
+      console.error('Error generating welcome message:', error);
+      return NextResponse.json({ response: "Welcome! I'm here to help you track your progress today!" });
+    }
   }
 
   // Handle special clock out prompt generation
@@ -667,13 +869,14 @@ Be conversational and helpful. Extract specific data points (numbers, names, amo
     });
     
     return NextResponse.json({ 
-      response: "Great! Let's record this policy sale. Please provide the following details:\n\n• Policy number: [your policy number]\n• Client name: [client name]\n• Policy type: [Auto/Home/Life/etc.]\n• Policy amount: [dollar amount]\n\nYou can provide all details at once or one at a time." 
+      response: "Great! Let's record this policy sale. Please provide the following details:\n\n• Policy number: [your policy number]\n• Client name: [client name]\n• Policy type: [Auto/Home/Life/etc.]\n• Policy amount: [dollar amount]\n• Broker fee: [dollar amount]\n\nYou can provide all details at once or one at a time." 
     });
   }
   
   // Check for review entry triggers
   const reviewEntryTriggers = [
-    'client review', 'customer review', 'add review', 'client feedback', 'customer feedback'
+    'client review', 'customer review', 'add review', 'client feedback', 'customer feedback',
+    'review to record', 'record a review', 'record review', 'have a review', 'got a review'
   ];
   
   const isReviewEntryTrigger = reviewEntryTriggers.some(trigger => lowerMessage.includes(trigger));
@@ -764,34 +967,7 @@ Be supportive and positive while being authentic. This is their daily summary su
     }
   }
   
-  if (lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy')) {
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'policy_entry',
-      collectedData: {},
-      nextQuestion: 'policy_details',
-      lastUpdated: new Date()
-    });
-    response += "\n\nGreat! Let's record this new policy sale. I need a few details:\n\n📋 **Please provide:**\n• Policy number (e.g., POL-2025-001, ABC123)\n• Client name\n• Policy type (Auto, Home, Life, etc.)\n• Policy amount (in dollars)\n\nJust give me all of these in your response and I'll organize them!";
-  } else if (lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review')) {
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'review_entry',
-      collectedData: {},
-      nextQuestion: 'client_name',
-      lastUpdated: new Date()
-    });
-    response += "\n\nI'll help you record a client review. What's the client's name?";
-  } else if (lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary')) {
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'daily_summary',
-      collectedData: {},
-      nextQuestion: 'description',
-      lastUpdated: new Date()
-    });
-    response += "\n\n🌟 Hey there! How was your day? I'd love to hear about your accomplishments, any challenges you faced, or just how things went overall. Don't worry about the technical details - I'll automatically calculate your hours and policies from the system!";
-  }
+  // This duplicate logic is removed - the triggers above handle conversation flows
 
   return NextResponse.json({ response });
 }
@@ -827,6 +1003,23 @@ async function handleConversationFlow(conversationState: any, message: string, e
     // Merge the extracted details into the collected data directly
     if (extractedValue && typeof extractedValue === 'object') {
       Object.assign(safeCollectedData, extractedValue);
+    }
+  } else if (nextQuestion === 'cross_sold_policy_details') {
+    // Handle cross-sold policy details collection
+    extractedValue = extractDataFromResponse(message, nextQuestion);
+    
+    if (extractedValue && typeof extractedValue === 'object') {
+      // Initialize cross_sold_policies array if it doesn't exist
+      if (!safeCollectedData.cross_sold_policies) {
+        safeCollectedData.cross_sold_policies = [];
+      }
+      
+      // Add the new cross-sold policy
+      safeCollectedData.cross_sold_policies.push(extractedValue);
+    } else {
+      return NextResponse.json({ 
+        response: "I need the cross-sold policy details in this format:\n\n• Policy number: [policy number]\n• Amount: [dollar amount]\n• Broker fee: [broker fee amount]\n\nPlease provide all three pieces of information." 
+      });
     }
   } else {
     extractedValue = extractDataFromResponse(message, nextQuestion);
@@ -881,13 +1074,34 @@ async function handleConversationFlow(conversationState: any, message: string, e
 
   if (isComplete) {
     // Save the collected data
-    await saveCollectedData(currentFlow, safeCollectedData, employeeId);
-    await clearConversationState(employeeId);
-    
-    if (currentFlow === 'daily_summary') {
-      response += "\n\n🎉 Thanks for sharing! Your daily summary has been recorded. You're doing great work, and I appreciate you taking the time to reflect on your day. Keep up the amazing effort! 💪";
-    } else {
-      response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
+    try {
+      await saveCollectedData(currentFlow, safeCollectedData, employeeId);
+      await clearConversationState(employeeId);
+      
+      if (currentFlow === 'daily_summary') {
+        response += "\n\n🎉 Thanks for sharing! Your daily summary has been recorded. You're doing great work, and I appreciate you taking the time to reflect on your day. Keep up the amazing effort! 💪";
+      } else {
+        response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
+      }
+    } catch (error: any) {
+      console.error('❌ Error saving data:', error);
+      
+      // Clear conversation state on error
+      await clearConversationState(employeeId);
+      
+      // If it's a duplicate policy number error, provide specific guidance
+      if (error.message && error.message.includes('already exists')) {
+        const suggestedNumber = await generateUniquePolicyNumber(safeCollectedData.policy_number);
+        return NextResponse.json({
+          response: `${error.message}\n\nSuggested unique policy number: **${suggestedNumber}**\n\nI've cleared your current entry. To record a new policy, please say "I want to record a policy sale" and use the suggested number or a different unique policy number.`,
+          error: false
+        });
+      }
+      
+      return NextResponse.json({
+        response: `I encountered an error while saving your information: ${error.message}. Please try again with different details.`,
+        error: true
+      }, { status: 500 });
     }
   } else {
     // Update conversation state with next question
@@ -916,14 +1130,25 @@ function getPolicyEntryNextQuestion(data: any): [string, boolean] {
     return ['policy_details', false];
   }
   
-  // Then ask for broker fee
+  // Then ask for broker fee (only if not already provided)
   if (!data.broker_fee) return ['broker_fee', false];
   
-  // Then ask about cross-selling (but don't ask for details yet)
+  // Then ask about cross-selling
   if (!data.cross_sold) return ['cross_sold', false];
   
-  // Only ask for cross-sell details if they said yes
-  if (data.cross_sold === 'yes' && !data.cross_sold_type) return ['cross_sold_type', false];
+  // If they said yes to cross-selling, ask how many
+  if (data.cross_sold === 'yes' && !data.cross_sold_count) return ['cross_sold_count', false];
+  
+  // If they have cross-sold policies, collect details for each one
+  if (data.cross_sold === 'yes' && data.cross_sold_count) {
+    const crossSoldCount = parseInt(data.cross_sold_count);
+    const crossSoldPolicies = data.cross_sold_policies || [];
+    
+    // Check if we need to collect more cross-sold policy details
+    if (crossSoldPolicies.length < crossSoldCount) {
+      return ['cross_sold_policy_details', false];
+    }
+  }
   
   // Finally ask for client description
   if (!data.client_description) return ['client_description', false];
@@ -990,12 +1215,27 @@ async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedV
       }
       return "Please provide a valid broker fee amount:";
     
-    case 'cross_sold_type':
-      return "Excellent! What type of policy did you cross-sell? (e.g., Auto, Home, Life, etc.)";
+    case 'cross_sold_count':
+      return "Excellent! How many policies did you cross-sell to this client?";
+    
+    case 'cross_sold_policy_details':
+      const crossSoldPolicies = data.cross_sold_policies || [];
+      const crossSoldCount = parseInt(data.cross_sold_count) || 0;
+      const currentPolicyIndex = crossSoldPolicies.length;
+      
+      if (currentPolicyIndex === 0) {
+        return `Great! I need details for ${crossSoldCount} cross-sold ${crossSoldCount === 1 ? 'policy' : 'policies'}.\n\nFor cross-sold policy #1, please provide:\n• Policy number: [your policy number]\n• Policy type: [Auto/Home/Life/etc.]\n• Policy amount: [dollar amount]\n• Broker fee: [dollar amount]\n\n(Remember: Cross-sold policies get 2x bonus on broker fees!)`;
+      } else if (currentPolicyIndex < crossSoldCount) {
+        const nextIndex = currentPolicyIndex + 1;
+        return `Perfect! Got cross-sold policy #${currentPolicyIndex}.\n\nNow for cross-sold policy #${nextIndex}, please provide:\n• Policy number: [your policy number]\n• Policy type: [Auto/Home/Life/etc.]\n• Policy amount: [dollar amount]\n• Broker fee: [dollar amount]`;
+      } else {
+        return `Excellent! I have all ${crossSoldCount} cross-sold policies recorded.`;
+      }
     
     case 'client_description':
-      if (data.cross_sold === 'yes' && data.cross_sold_type) {
-        return `Cross-sold policy: ${data.cross_sold_type}. Finally, can you provide a brief description of the client or any additional policy details?`;
+      if (data.cross_sold === 'yes' && data.cross_sold_policies) {
+        const policyCount = data.cross_sold_policies.length;
+        return `Perfect! I have ${policyCount} cross-sold ${policyCount === 1 ? 'policy' : 'policies'} recorded. Finally, can you provide a brief description of the client or any additional policy details?`;
       }
       return "Great! Finally, can you provide a brief description of the client or any additional policy details?";
     
@@ -1070,30 +1310,10 @@ Be supportive and positive while being authentic. This is their daily summary su
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {
   switch (flowType) {
     case 'policy_entry':
-      let policyNumber = data.policy_number;
-      
-      // Try to save with original policy number first
-      let result = await addPolicySale({
-        policyNumber,
-        clientName: data.client_name,
-        policyType: data.policy_type,
-        amount: parseFloat(data.policy_amount) || 0,
-        brokerFee: parseFloat(data.broker_fee) || 0,
-        employeeId,
-        saleDate: new Date(),
-        crossSold: data.cross_sold === 'yes',
-        crossSoldType: data.cross_sold_type || undefined,
-        crossSoldTo: data.cross_sold === 'yes' ? data.client_name : undefined,
-        clientDescription: data.client_description
-      });
-      
-      // If it failed due to duplicate policy number, generate a unique one
-      if (!result) {
-        console.log('Policy number collision detected, generating unique number...');
-        policyNumber = await generateUniquePolicyNumber(data.policy_number);
-        
-        result = await addPolicySale({
-          policyNumber,
+      try {
+        // Save the main policy
+        const result = await addPolicySale({
+          policyNumber: data.policy_number,
           clientName: data.client_name,
           policyType: data.policy_type,
           amount: parseFloat(data.policy_amount) || 0,
@@ -1101,14 +1321,43 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
           employeeId,
           saleDate: new Date(),
           crossSold: data.cross_sold === 'yes',
-          crossSoldType: data.cross_sold_type || undefined,
+          crossSoldType: data.cross_sold_policies?.[0]?.policy_type || data.cross_sold_type,
           crossSoldTo: data.cross_sold === 'yes' ? data.client_name : undefined,
           clientDescription: data.client_description
         });
         
-        if (result) {
-          console.log(`Policy saved with unique number: ${policyNumber}`);
+        // If there are cross-sold policies with detailed information, save each one
+        if (data.cross_sold === 'yes' && data.cross_sold_policies && Array.isArray(data.cross_sold_policies)) {
+          for (const crossPolicy of data.cross_sold_policies) {
+            await addPolicySale({
+              policyNumber: crossPolicy.policy_number,
+              clientName: data.client_name, // Same client
+              policyType: crossPolicy.policy_type || 'Cross-sold Policy',
+              amount: parseFloat(crossPolicy.amount) || 0,
+              brokerFee: parseFloat(crossPolicy.broker_fee) || 0,
+              employeeId,
+              saleDate: new Date(),
+              crossSold: true,
+              crossSoldType: crossPolicy.policy_type || 'Cross-sold Policy',
+              crossSoldTo: data.client_name,
+              clientDescription: `Cross-sold to ${data.client_name}`,
+              isCrossSoldPolicy: true // Mark as cross-sold policy for 2x bonus
+            });
+          }
         }
+        
+        if (result) {
+          console.log(`✅ Policy saved successfully: ${result.policy_number}`);
+        }
+      } catch (error: any) {
+        console.error('❌ Error saving policy:', error);
+        
+        // If it's a duplicate policy number, throw a user-friendly error
+        if (error.message && error.message.includes('already exists')) {
+          throw new Error(`Policy number ${data.policy_number} already exists. Please use a different policy number and try again.`);
+        }
+        
+        throw error;
       }
       break;
       

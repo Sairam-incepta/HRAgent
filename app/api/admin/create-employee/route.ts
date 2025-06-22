@@ -32,11 +32,28 @@ export async function POST(request: NextRequest) {
       result
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Employee creation error:', error);
+    
+    // Provide specific error messages based on the error type
+    let errorMessage = 'Failed to create employee';
+    let statusCode = 500;
+    
+    if (error.message) {
+      // Use the specific error message from our improved error handling
+      errorMessage = error.message;
+      
+      // Set appropriate status codes for different error types
+      if (error.message.includes('already in use') || error.message.includes('Email address')) {
+        statusCode = 409; // Conflict
+      } else if (error.message.includes('password')) {
+        statusCode = 400; // Bad Request
+      }
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to create employee' },
-      { status: 500 }
+      { error: errorMessage },
+      { status: statusCode }
     );
   }
 } 

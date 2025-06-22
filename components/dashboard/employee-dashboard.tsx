@@ -230,20 +230,23 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       loadPerformanceData();
     };
 
-    // Subscribe to events
-    dashboardEvents.on('policy_sale', handlePolicySale);
-    dashboardEvents.on('client_review', handleClientReview);
-    dashboardEvents.on('request_submitted', handleRequestSubmitted);
-    dashboardEvents.on('time_logged', handleTimeLogged);
-    dashboardEvents.on('daily_summary', handleDailySummary);
+    const handleHighValuePolicyUpdate = () => {
+      loadPerformanceData(); // Update performance metrics when high-value policies are resolved/unresolved
+    };
+
+    // Subscribe to events and store cleanup functions
+    const cleanupFunctions = [
+      dashboardEvents.on('policy_sale', handlePolicySale),
+      dashboardEvents.on('client_review', handleClientReview),
+      dashboardEvents.on('request_submitted', handleRequestSubmitted),
+      dashboardEvents.on('time_logged', handleTimeLogged),
+      dashboardEvents.on('daily_summary', handleDailySummary),
+      dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate)
+    ];
 
     return () => {
-      // Cleanup event listeners
-      dashboardEvents.off('policy_sale', handlePolicySale);
-      dashboardEvents.off('client_review', handleClientReview);
-      dashboardEvents.off('request_submitted', handleRequestSubmitted);
-      dashboardEvents.off('time_logged', handleTimeLogged);
-      dashboardEvents.off('daily_summary', handleDailySummary);
+      // Call all cleanup functions
+      cleanupFunctions.forEach(cleanup => cleanup());
     };
   }, []);
 
@@ -286,16 +289,17 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       
       if (employee) {
         setEmployeeData({
-          name: employee.name || user.firstName + ' ' + user.lastName || 'Employee',
+          name: employee.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Employee',
           email: employee.email || user.emailAddresses[0]?.emailAddress || '',
           department: employee.department || 'Sales',
           position: employee.position || 'Insurance Agent',
           loading: false
         });
       } else {
-        // Use Clerk user data as fallback
+        // Use Clerk user data as fallback - construct proper name
+        const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
         setEmployeeData({
-          name: user.firstName + ' ' + user.lastName || 'Employee',
+          name: clerkName || 'Employee',
           email: user.emailAddresses[0]?.emailAddress || '',
           department: 'Sales',
           position: 'Insurance Agent',
@@ -304,9 +308,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       }
     } catch (error) {
       console.error('Error loading employee data:', error);
-      // Use Clerk user data as fallback
+      // Use Clerk user data as fallback - construct proper name
+      const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
       setEmployeeData({
-        name: user.firstName + ' ' + user.lastName || 'Employee',
+        name: clerkName || 'Employee',
         email: user.emailAddresses[0]?.emailAddress || '',
         department: 'Sales',
         position: 'Insurance Agent',
@@ -351,14 +356,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
       const totalReviews = clientReviews.length;
       const avgRating = totalReviews > 0 
-        ? (clientReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews).toFixed(1)
+        ? (clientReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews)
         : 0;
       
       setPerformanceData({
         totalPolicies: policySales.length,
         totalSales,
         totalReviews,
-        avgRating: parseFloat(avgRating.toString()),
+        avgRating: parseFloat(avgRating.toFixed(2)),
         loading: false
       });
     } catch (error) {
@@ -539,7 +544,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                 </p>
                 {performanceData.totalReviews > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    Avg: {performanceData.avgRating}★
+                    Avg: {performanceData.avgRating.toFixed(2)}★
                   </p>
                 )}
               </div>

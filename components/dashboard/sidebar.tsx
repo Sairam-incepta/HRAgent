@@ -154,6 +154,7 @@ export function DashboardSidebar({ userRole, onToggleRole, employeeName, employe
         onOpenChange={setSettingsOpen}
         employeeName={employeeName}
         employeeEmail={employeeEmail}
+        userRole={userRole}
       />
     </>
   );

@@ -47,11 +47,18 @@ export interface HighValuePolicyNotification {
   broker_fee: number;
   current_bonus: number;
   is_cross_sold_policy: boolean;
-  status: 'pending' | 'reviewed';
+  status: 'pending' | 'reviewed' | 'resolved';
   admin_bonus?: number;
   admin_notes?: string;
   reviewed_at?: string;
   created_at: string;
+  client_name?: string;
+  policy_id?: string;
+  employee_name?: string;
+  reviewed_by?: string;
+  biweekly_period_start?: string;
+  biweekly_period_end?: string;
+  is_editable?: boolean;
 }
 
 export interface EmployeeBonus {

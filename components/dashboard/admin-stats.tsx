@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Users, Clock, AlertCircle, TrendingUp } from "lucide-react";
 import { getEmployees, getPolicySales, getOvertimeRequests } from "@/lib/database";
+import { dashboardEvents } from "@/lib/events";
 
 export function AdminStats() {
   const [stats, setStats] = useState({
@@ -15,6 +16,28 @@ export function AdminStats() {
 
   useEffect(() => {
     loadStats();
+  }, []);
+
+  // Listen for real-time events
+  useEffect(() => {
+    const handlePolicySale = () => {
+      loadStats(); // Refresh stats when new policy is added
+    };
+
+    const handleRequest = () => {
+      loadStats(); // Refresh stats when new request is added
+    };
+
+    // Subscribe to events and store cleanup functions
+    const cleanupFunctions = [
+      dashboardEvents.on('policy_sale', handlePolicySale),
+      dashboardEvents.on('request_submitted', handleRequest)
+    ];
+
+    return () => {
+      // Call all cleanup functions
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
   }, []);
 
   const loadStats = async () => {

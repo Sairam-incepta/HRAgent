@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Moon, Settings, Sun, LogOut } from "lucide-react";
+import { Bell, Moon, Settings, Sun, LogOut, DollarSign, Clock, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,9 +12,11 @@ import {
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useClerk, useUser } from "@clerk/nextjs";
+import { getHighValuePolicyNotificationsList, getAllRequests } from "@/lib/database";
+import { dashboardEvents } from "@/lib/events";
 
 interface DashboardHeaderProps {
   userRole: "admin" | "employee";
@@ -22,12 +24,109 @@ interface DashboardHeaderProps {
   employeeEmail?: string;
 }
 
+interface NotificationItem {
+  id: string;
+  type: 'high_value_policy' | 'request';
+  title: string;
+  description: string;
+  isUrgent?: boolean;
+  policyId?: string;
+}
+
 export function DashboardHeader({ userRole, employeeName, employeeEmail }: DashboardHeaderProps) {
   const { setTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notificationRef = useRef<HTMLDivElement>(null);
   const { signOut } = useClerk();
   const { user } = useUser();
+
+  useEffect(() => {
+    if (userRole === "admin") {
+      const fetchNotifications = async () => {
+        try {
+          const [highValueNotifications, requests] = await Promise.all([
+            getHighValuePolicyNotificationsList(),
+            getAllRequests()
+          ]);
+          
+          const notificationItems: NotificationItem[] = [];
+          
+          // Process high-value policy notifications
+          highValueNotifications?.forEach((notification: any) => {
+            if (notification.status === 'pending' || notification.status === 'reviewed') {
+              const daysUntilEnd = notification.biweekly_period_end 
+                ? Math.ceil((new Date(notification.biweekly_period_end).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                : null;
+              const isUrgent = daysUntilEnd !== null && daysUntilEnd <= 2;
+              
+              notificationItems.push({
+                id: notification.id,
+                type: 'high_value_policy',
+                title: `Policy ${notification.policy_number}`,
+                description: `$${notification.policy_amount.toLocaleString()} - ${notification.employee_name || 'Unknown Employee'}`,
+                isUrgent,
+                policyId: notification.id
+              });
+            }
+          });
+          
+          // Process requests
+          requests?.forEach((request: any) => {
+            if (request.status === 'pending') {
+              notificationItems.push({
+                id: request.id,
+                type: 'request',
+                title: request.title || `${request.type} Request`,
+                description: request.description || `${request.type} request from employee`,
+                isUrgent: request.type === 'overtime'
+              });
+            }
+          });
+          
+          setNotifications(notificationItems);
+          setPendingCount(notificationItems.length);
+        } catch (error) {
+          console.error('Error fetching notifications:', error);
+        }
+      };
+
+      fetchNotifications();
+      const interval = setInterval(fetchNotifications, 30000); // Update every 30 seconds
+      
+      // Listen for real-time updates
+      const cleanupFunctions = [
+        dashboardEvents.on('high_value_policy_updated', fetchNotifications),
+        dashboardEvents.on('request_submitted', fetchNotifications),
+        dashboardEvents.on('policy_sale', fetchNotifications)
+      ];
+
+      return () => {
+        clearInterval(interval);
+        cleanupFunctions.forEach(cleanup => cleanup());
+      };
+    }
+  }, [userRole]);
+
+  // Close notifications when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+
+    if (showNotifications) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotifications]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -36,6 +135,38 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
     } catch (error) {
       console.error('Logout error:', error);
       setIsLoggingOut(false);
+    }
+  };
+
+  const handleNotificationClick = (notification: NotificationItem) => {
+    setShowNotifications(false);
+    
+    if (notification.type === 'high_value_policy' && notification.policyId) {
+      // Scroll to the specific policy in the high-value section
+      const element = document.getElementById(`policy-${notification.policyId}`);
+      if (element) {
+        element.scrollIntoView({ 
+          behavior: 'smooth',
+          block: 'center'
+        });
+        // Add a highlight effect
+        element.classList.add('ring-2', 'ring-blue-500', 'ring-opacity-50');
+        setTimeout(() => {
+          element.classList.remove('ring-2', 'ring-blue-500', 'ring-opacity-50');
+        }, 3000);
+      } else {
+        // If element not found, scroll to high-value section
+        const highValueSection = document.querySelector('[data-section="high-value-policies"]');
+        if (highValueSection) {
+          highValueSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    } else if (notification.type === 'request') {
+      // Scroll to requests section
+      const requestsSection = document.querySelector('[data-section="requests"]');
+      if (requestsSection) {
+        requestsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   };
 
@@ -64,11 +195,13 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
     }
     
     if (user?.firstName && user?.lastName) {
-      return `${user.firstName} ${user.lastName}`;
+      const fullName = `${user.firstName} ${user.lastName}`;
+      return userRole === "admin" ? `${fullName} (Admin)` : fullName;
     }
     if (user?.firstName) {
-      return user.firstName;
+      return userRole === "admin" ? `${user.firstName} (Admin)` : user.firstName;
     }
+    
     return userRole === "admin" ? "Admin User" : "Employee";
   };
 
@@ -96,10 +229,21 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
           </div>
           
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" className="relative">
-              <Bell className="h-4 w-4" />
-              <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-[#ff9211] border-2 border-background"></span>
-            </Button>
+            {userRole === "admin" && (
+              <Button 
+                variant="outline" 
+                size="icon" 
+                className="relative"
+                onClick={() => setShowNotifications(!showNotifications)}
+              >
+                <Bell className="h-4 w-4" />
+                {pendingCount > 0 && (
+                  <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#ff9211] border-2 border-background text-white text-xs flex items-center justify-center">
+                    {pendingCount}
+                  </span>
+                )}
+              </Button>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -160,11 +304,68 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
         </div>
       </header>
 
+      {/* Notifications Dropdown */}
+      {userRole === "admin" && showNotifications && (
+        <div ref={notificationRef} className="absolute top-14 right-4 w-96 bg-background border rounded-lg shadow-lg z-50">
+          <div className="p-4 border-b">
+            <h3 className="font-semibold">Notifications ({pendingCount})</h3>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {notifications.length === 0 ? (
+              <div className="p-4 text-center text-muted-foreground">
+                <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No pending notifications</p>
+              </div>
+            ) : (
+              <div className="p-2">
+                {notifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    onClick={() => handleNotificationClick(notification)}
+                    className="w-full p-3 text-left hover:bg-muted rounded-lg transition-colors border-b border-border/50 last:border-b-0"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        notification.isUrgent 
+                          ? 'bg-red-100 dark:bg-red-900/30' 
+                          : notification.type === 'high_value_policy'
+                          ? 'bg-amber-100 dark:bg-amber-900/30'
+                          : 'bg-blue-100 dark:bg-blue-900/30'
+                      }`}>
+                        {notification.type === 'high_value_policy' ? (
+                          <DollarSign className={`h-4 w-4 ${
+                            notification.isUrgent 
+                              ? 'text-red-600 dark:text-red-400' 
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`} />
+                        ) : (
+                          <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-sm truncate">{notification.title}</p>
+                          {notification.isUrgent && (
+                            <AlertTriangle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">{notification.description}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         employeeName={employeeName}
         employeeEmail={employeeEmail}
+        userRole={userRole}
       />
     </>
   );

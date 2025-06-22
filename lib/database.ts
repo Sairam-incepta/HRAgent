@@ -11,6 +11,7 @@ import type {
   HighValuePolicyNotification
 } from './supabase';
 import { notifyPolicySale, notifyClientReview, notifyRequestSubmitted, notifyTimeLogged, notifyDailySummary } from './events';
+import { createClient } from '@supabase/supabase-js';
 
 // Timezone-aware date utilities
 const getLocalDateString = (date: Date = new Date()): string => {
@@ -127,6 +128,12 @@ export const addPolicySale = async (sale: {
     if (error) {
       console.error('❌ Error adding policy sale:', error);
       console.error('📝 Sale data that failed:', sale);
+      
+      // If it's a duplicate policy number error, return null to let caller handle it
+      if (error.code === '23505' && error.message.includes('policy_number')) {
+        throw new Error(`Policy number ${sale.policyNumber} already exists. Please use a different policy number.`);
+      }
+      
       return null;
     }
     
@@ -135,27 +142,16 @@ export const addPolicySale = async (sale: {
     // Update employee bonus
     await updateEmployeeBonus(sale.employeeId, data.bonus);
     
-    // Create high-value policy notification if amount > $5,000
-    if (sale.amount > 5000) {
-      console.log('💰 Creating high-value policy notification for policy over $5,000');
-      await createHighValuePolicyNotification({
-        employeeId: sale.employeeId,
-        policyNumber: sale.policyNumber,
-        policyAmount: sale.amount,
-        brokerFee: sale.brokerFee,
-        currentBonus: data.bonus,
-        isCrossSoldPolicy: sale.isCrossSoldPolicy || false
-      });
-    }
+    // Note: High-value policy notifications are now handled by database trigger
+    // No need to create them manually here anymore
     
     // Notify dashboard to refresh
-    notifyPolicySale();
+    notifyPolicySale(sale.employeeId);
     
     return data;
   } catch (error) {
     console.error('❌ Exception in addPolicySale:', error);
-    console.error('📝 Sale data that failed:', sale);
-    return null;
+    throw error; // Re-throw to let caller handle it
   }
 };
 
@@ -303,8 +299,7 @@ export const addClientReview = async (review: {
         review_date: review.reviewDate.toISOString(),
         employee_id: review.employeeId,
         bonus: bonus,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: new Date().toISOString()
       })
       .select()
       .single();
@@ -373,8 +368,7 @@ export const addDailySummary = async (summary: {
         total_broker_fees: summary.totalBrokerFees,
         description: summary.description,
         key_activities: summary.keyActivities,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: new Date().toISOString()
       })
       .select()
       .single();
@@ -537,27 +531,33 @@ export const createEmployee = async (employee: {
   maxHoursBeforeOvertime?: number;
   hourlyRate?: number;
 }): Promise<Employee | null> => {
-  const { data, error } = await supabase
-    .from('employees')
-    .insert({
-      clerk_user_id: employee.clerkUserId,
-      name: employee.name,
-      email: employee.email,
-      department: employee.department,
-      position: employee.position,
-      status: employee.status || 'active',
-      max_hours_before_overtime: employee.maxHoursBeforeOvertime || 8,
-      hourly_rate: employee.hourlyRate || 25.00
-    })
-    .select()
-    .single();
+  try {
+    // Since RLS is disabled, we can use the regular supabase client
+    const { data, error } = await supabase
+      .from('employees')
+      .insert({
+        clerk_user_id: employee.clerkUserId,
+        name: employee.name,
+        email: employee.email,
+        department: employee.department,
+        position: employee.position,
+        status: employee.status || 'active',
+        max_hours_before_overtime: employee.maxHoursBeforeOvertime || 8,
+        hourly_rate: employee.hourlyRate || 25.00
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error creating employee:', error);
+    if (error) {
+      console.error('Error creating employee:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Exception in createEmployee:', error);
     return null;
   }
-
-  return data;
 };
 
 export const updateEmployee = async (
@@ -1099,7 +1099,6 @@ export const getHighValuePolicyNotificationsList = async (): Promise<HighValuePo
   const { data, error } = await supabase
     .from('high_value_policy_notifications')
     .select('*')
-    .eq('status', 'pending')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -1115,7 +1114,7 @@ export const updateHighValuePolicyNotification = async (
   updates: {
     adminBonus?: number;
     adminNotes?: string;
-    status?: 'pending' | 'reviewed';
+    status?: 'pending' | 'reviewed' | 'resolved';
   }
 ): Promise<HighValuePolicyNotification | null> => {
   const updateData: any = { ...updates };
@@ -1457,5 +1456,41 @@ export const updateRequestStatus = async (
   } catch (error) {
     console.error('Error in updateRequestStatus:', error);
     return false;
+  }
+};
+
+// Get urgent policies that need review (period ending soon)
+export const getUrgentReviewPolicies = async () => {
+  const { data, error } = await supabase
+    .rpc('get_urgent_review_policies');
+
+  if (error) {
+    console.error('Error fetching urgent review policies:', error);
+    return null;
+  }
+
+  return data && data.length > 0 ? data[0] : null;
+};
+
+// Check if period end notification should be shown
+export const shouldShowPeriodEndNotification = async (): Promise<boolean> => {
+  const { data, error } = await supabase
+    .rpc('should_send_period_end_notification');
+
+  if (error) {
+    console.error('Error checking period end notification:', error);
+    return false;
+  }
+
+  return data || false;
+};
+
+// Close expired biweekly periods
+export const closeExpiredBiweeklyPeriods = async (): Promise<void> => {
+  const { error } = await supabase
+    .rpc('close_expired_biweekly_periods');
+
+  if (error) {
+    console.error('Error closing expired biweekly periods:', error);
   }
 };

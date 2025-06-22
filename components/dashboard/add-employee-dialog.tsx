@@ -77,9 +77,10 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
     }
 
     setIsSubmitting(true);
+    let response: Response | undefined;
 
     try {
-      const response = await fetch('/api/admin/create-employee', {
+      response = await fetch('/api/admin/create-employee', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -101,7 +102,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
       if (response.ok && result.success) {
         toast({
           title: "Employee Added Successfully",
-          description: `${firstName} ${lastName} has been added to both Clerk and the employee database. They can now sign in with their email and password.`,
+          description: `${firstName} ${lastName} has been added to the system and can now sign in with their email and password.`,
         });
 
         // Reset form
@@ -119,13 +120,22 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
         onAddEmployee(); // Refresh the employee list
         onOpenChange(false);
       } else {
-        throw new Error("Failed to create employee");
+        // If response is not ok, the error message is in result.error
+        throw new Error(result.error || "Failed to create employee");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating employee:', error);
+      
+      // Use the error message from the exception
+      let errorMessage = "Failed to add employee. Please try again.";
+      
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: "Error",
-        description: "Failed to add employee. Please check if the email already exists or try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -271,16 +281,6 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
                 <SelectItem value="on_leave">On Leave</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-            <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Important Notes</h4>
-            <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-              <li>• Employee will be created in both Clerk and the employee database</li>
-              <li>• Employee can sign in immediately with their email and password</li>
-              <li>• Employee will be prompted to change password on first login</li>
-              <li>• Employee will be notified when they exceed max hours per day</li>
-            </ul>
           </div>
 
           <div className="flex justify-end gap-2 pt-4">

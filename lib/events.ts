@@ -1,40 +1,53 @@
 // Simple event system for dashboard refreshes
-type EventType = 'policy_sale' | 'client_review' | 'request_submitted' | 'time_logged' | 'daily_summary';
+type EventType = 'policy_sale' | 'client_review' | 'request_submitted' | 'time_logged' | 'daily_summary' | 'policy_sales_updated' | 'high_value_policy_updated';
 
-type EventListener = () => void;
+interface EventData {
+  policy_sale: { employeeId: string; policyId: string };
+  client_review: { employeeId: string; reviewId: string };
+  request_submitted: { employeeId: string; requestId: string };
+  time_logged: { employeeId: string; logId: string };
+  daily_summary: { employeeId: string; summaryId: string };
+  policy_sales_updated: { employeeId?: string; type: 'new' | 'updated' | 'deleted' };
+  high_value_policy_updated: { notificationId: string; status: string };
+}
 
-class EventEmitter {
-  private listeners: Map<EventType, EventListener[]> = new Map();
+class DashboardEvents {
+  private listeners: Map<EventType, Set<(data?: any) => void>> = new Map();
 
-  on(event: EventType, listener: EventListener) {
+  on<T extends EventType>(event: T, callback: (data?: EventData[T]) => void) {
     if (!this.listeners.has(event)) {
-      this.listeners.set(event, []);
+      this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.push(listener);
+    this.listeners.get(event)!.add(callback);
+    
+    return () => {
+      this.listeners.get(event)?.delete(callback);
+    };
   }
 
-  off(event: EventType, listener: EventListener) {
-    const eventListeners = this.listeners.get(event);
-    if (eventListeners) {
-      const index = eventListeners.indexOf(listener);
-      if (index > -1) {
-        eventListeners.splice(index, 1);
-      }
-    }
+  emit<T extends EventType>(event: T, data?: EventData[T]) {
+    this.listeners.get(event)?.forEach(callback => callback(data));
   }
 
-  emit(event: EventType) {
-    const eventListeners = this.listeners.get(event);
-    if (eventListeners) {
-      eventListeners.forEach(listener => listener());
-    }
+  // Helper method to emit policy sales update with employee context
+  emitPolicySaleUpdate(employeeId: string, type: 'new' | 'updated' | 'deleted' = 'new') {
+    this.emit('policy_sales_updated', { employeeId, type });
+    // Also emit the legacy event for backward compatibility
+    this.emit('policy_sale', { employeeId, policyId: '' });
   }
 }
 
-export const dashboardEvents = new EventEmitter();
+export const dashboardEvents = new DashboardEvents();
 
 // Helper functions to emit events when data changes
-export const notifyPolicySale = () => dashboardEvents.emit('policy_sale');
+export const notifyPolicySale = (employeeId?: string) => {
+  if (employeeId) {
+    dashboardEvents.emitPolicySaleUpdate(employeeId, 'new');
+  } else {
+    dashboardEvents.emit('policy_sale');
+  }
+};
+
 export const notifyClientReview = () => dashboardEvents.emit('client_review');
 export const notifyRequestSubmitted = () => dashboardEvents.emit('request_submitted');
 export const notifyTimeLogged = () => dashboardEvents.emit('time_logged');

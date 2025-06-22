@@ -33,7 +33,7 @@ import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
 import { AdminRequests } from "@/components/dashboard/admin-requests";
 import { HighValuePolicyNotifications } from "@/components/dashboard/high-value-policy-notifications";
-import { BulkUserCreationDialog } from "@/components/dashboard/bulk-user-creation-dialog";
+
 import {
   Collapsible,
   CollapsibleContent,
@@ -48,14 +48,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotificationsList, type PayrollPeriod } from "@/lib/database";
+import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotificationsList, getAllRequests, type PayrollPeriod } from "@/lib/database";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
+import { dashboardEvents } from "@/lib/events";
 
 export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [companyPayrollDialogOpen, setCompanyPayrollDialogOpen] = useState(false);
-  const [bulkUserCreationOpen, setBulkUserCreationOpen] = useState(false);
+
   const [selectedPayrollPeriod, setSelectedPayrollPeriod] = useState("");
   const [expenditureFilter, setExpenditureFilter] = useState("month");
   const [expenditureData, setExpenditureData] = useState({
@@ -63,10 +64,15 @@ export function AdminDashboard() {
     quarter: { amount: 0, period: "Q2 2025", change: "+0%" },
     year: { amount: 0, period: "2025", change: "+0%" }
   });
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [policySales, setPolicySales] = useState<any[]>([]);
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
   const [highValueNotifications, setHighValueNotifications] = useState<HighValuePolicyNotification[]>([]);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
+  const [stablePendingCount, setStablePendingCount] = useState(0);
 
   // Add ref for scrolling to high-value notifications
   const highValueNotificationsRef = useRef<HTMLDivElement>(null);
@@ -82,59 +88,85 @@ export function AdminDashboard() {
     loadData();
   }, []);
 
-  // Auto-refresh data every 30 seconds to catch new high-value policies
+  // Auto-refresh data every 15 seconds with background loading to minimize visible refresh
   useEffect(() => {
     const interval = setInterval(() => {
-      loadData();
-    }, 30000);
+      // Use a more subtle refresh that doesn't show loading states
+      loadData(true); // Background refresh
+    }, 15000); // Reduced from 30 seconds to 15 seconds
 
     return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
+  // Listen for real-time events
+  useEffect(() => {
+    const handlePolicySale = () => {
+      loadData(true); // Silent refresh when new policy is added
+    };
+
+    const handleClientReview = () => {
+      loadData(true); // Silent refresh when new review is added
+    };
+
+    const handleRequest = () => {
+      loadData(true); // Silent refresh when new request is added
+    };
+
+    const handleHighValuePolicyUpdate = () => {
+      loadData(true); // Silent refresh when high-value policies are updated (resolved/unresolved)
+    };
+
+    // Subscribe to events and store cleanup functions
+    const cleanupFunctions = [
+      dashboardEvents.on('policy_sale', handlePolicySale),
+      dashboardEvents.on('client_review', handleClientReview),
+      dashboardEvents.on('request_submitted', handleRequest),
+      dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate)
+    ];
+
+    return () => {
+      // Call all cleanup functions
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
+  }, []);
+
+  const loadData = async (silentUpdate = false) => {
+    if (!silentUpdate) {
+      setLoading(true);
+    }
+    
     try {
-      const [employees, periods, notifications] = await Promise.all([
+      const [employeesData, salesData, periodsData, notificationsData, requestsData] = await Promise.all([
         getEmployees(),
+        getPolicySales(),
         getPayrollPeriods(),
-        getHighValuePolicyNotificationsList()
+        getHighValuePolicyNotificationsList(),
+        getAllRequests()
       ]);
       
-      // Calculate real expenditure based on employee hourly rates
-      // Assuming average 160 hours per month per employee
-      const monthlyExpenditure = employees.reduce((total, emp) => {
-        if (emp.status === 'active') {
-          return total + (emp.hourly_rate * 160); // 160 hours per month
-        }
-        return total;
-      }, 0);
-
-      const quarterlyExpenditure = monthlyExpenditure * 3;
-      const yearlyExpenditure = monthlyExpenditure * 12;
-
-      setExpenditureData({
-        month: { 
-          amount: Math.round(monthlyExpenditure), 
-          period: "May 2025", 
-          change: employees.length > 0 ? "+8.2%" : "+0%" 
-        },
-        quarter: { 
-          amount: Math.round(quarterlyExpenditure), 
-          period: "Q2 2025", 
-          change: employees.length > 0 ? "+12.5%" : "+0%" 
-        },
-        year: { 
-          amount: Math.round(yearlyExpenditure), 
-          period: "2025", 
-          change: employees.length > 0 ? "+15.3%" : "+0%" 
-        }
-      });
-
-      setPayrollPeriods(periods);
-      setHighValueNotifications(notifications);
+      setEmployees(employeesData);
+      setPolicySales(salesData);
+      setPayrollPeriods(periodsData);
+      setHighValueNotifications(notificationsData);
+      
+      // Count pending requests
+      const pendingCount = requestsData.filter(req => req.status === 'pending').length;
+      setPendingRequestsCount(pendingCount);
+      
+      // Update stable count for high-value policies (exclude resolved)
+      const unresolvedCount = notificationsData.filter(n => n.status !== 'resolved').length;
+      setStablePendingCount(unresolvedCount);
+      
+      if (!hasInitiallyLoaded) {
+        setHasInitiallyLoaded(true);
+      }
+      
     } catch (error) {
-      console.error('Error loading admin dashboard data:', error);
+      console.error('Error loading dashboard data:', error);
     } finally {
-      setLoading(false);
+      if (!silentUpdate) {
+        setLoading(false);
+      }
     }
   };
 
@@ -166,7 +198,8 @@ export function AdminDashboard() {
     }
   };
 
-  const pendingHighValueCount = highValueNotifications.length;
+  // Use stable count to prevent flicker during refreshes - exclude resolved policies
+  const pendingHighValueCount = hasInitiallyLoaded ? stablePendingCount : highValueNotifications.filter(n => n.status !== 'resolved').length;
 
   return (
     <div className="space-y-6">
@@ -275,28 +308,21 @@ export function AdminDashboard() {
           </Card>
 
           {/* High-Value Policy Alerts - Full Width Below */}
-          <div ref={highValueNotificationsRef}>
+          <div ref={highValueNotificationsRef} data-section="high-value-policies">
             <HighValuePolicyNotifications />
           </div>
 
           {/* Requests Section */}
-          <AdminRequests />
+          <div data-section="requests">
+            <AdminRequests pendingCount={pendingRequestsCount} />
+          </div>
         </TabsContent>
 
         <TabsContent value="employee-overview" className="space-y-4">
           {/* Employee Directory */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Employee Directory</CardTitle>
-              </div>
-              <Button 
-                onClick={() => setBulkUserCreationOpen(true)}
-                className="bg-[#005cb3] hover:bg-[#005cb3]/90"
-              >
-                <Users className="mr-2 h-4 w-4" />
-                Bulk Create Users
-              </Button>
+            <CardHeader>
+              <CardTitle>Employee Directory</CardTitle>
             </CardHeader>
             <CardContent>
               <EmployeeTable showInOverview={true} />
@@ -392,11 +418,7 @@ export function AdminDashboard() {
         payrollPeriod={selectedPayrollPeriod}
       />
 
-      <BulkUserCreationDialog
-        open={bulkUserCreationOpen}
-        onOpenChange={setBulkUserCreationOpen}
-        onUsersCreated={loadData}
-      />
+
     </div>
   );
 }

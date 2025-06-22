@@ -596,13 +596,15 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Clock In</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to clock in and start tracking your work time?
-              {elapsedTime > 0 && (
-                <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
-                  You have {formatTime(elapsedTime)} of work time from earlier today that will continue.
-                </div>
-              )}
+            <AlertDialogDescription asChild>
+              <div>
+                Are you sure you want to clock in and start tracking your work time?
+                {elapsedTime > 0 && (
+                  <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
+                    You have {formatTime(elapsedTime)} of work time from earlier today that will continue.
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -623,17 +625,19 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Clock Out</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to clock out? Your work session will end.
-              <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
-                <div className="text-sm space-y-1">
-                  <div><strong>Total time worked:</strong> {formatTime(elapsedTime)}</div>
-                  <div><strong>Total pay:</strong> ${payInfo.totalPay.toFixed(2)}</div>
-                  {payInfo.overtimeHours > 0 && (
-                    <div className="text-amber-600 dark:text-amber-400">
-                      <strong>Overtime pay:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)} hours)
-                    </div>
-                  )}
+            <AlertDialogDescription asChild>
+              <div>
+                Are you sure you want to clock out? Your work session will end.
+                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
+                  <div className="text-sm space-y-1">
+                    <div><strong>Total time worked:</strong> {formatTime(elapsedTime)}</div>
+                    <div><strong>Total pay:</strong> ${payInfo.totalPay.toFixed(2)}</div>
+                    {payInfo.overtimeHours > 0 && (
+                      <div className="text-amber-600 dark:text-amber-400">
+                        <strong>Overtime pay:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)} hours)
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </AlertDialogDescription>
@@ -656,10 +660,12 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Start Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to start your lunch break? Your work timer will be paused.
-              <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-sm">
-                Current work time: {formatTime(elapsedTime)}
+            <AlertDialogDescription asChild>
+              <div>
+                Are you sure you want to start your lunch break? Your work timer will be paused.
+                <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-sm">
+                  Current work time: {formatTime(elapsedTime)}
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -681,10 +687,12 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>End Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to end your lunch break and resume work? Your timer will continue from where it was paused.
-              <div className="mt-2 p-2 bg-green-50 dark:bg-green-950/20 rounded text-sm">
-                Work time when paused: {formatTime(elapsedTime)}
+            <AlertDialogDescription asChild>
+              <div>
+                Are you sure you want to end your lunch break and resume work? Your timer will continue from where it was paused.
+                <div className="mt-2 p-2 bg-green-50 dark:bg-green-950/20 rounded text-sm">
+                  Work time when paused: {formatTime(elapsedTime)}
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -705,13 +713,15 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Overtime Notification</AlertDialogTitle>
-            <AlertDialogDescription>
-              You've worked {hoursWorked.toFixed(1)} hours today.
-              {isInOvertime && (
-                <div className="mt-2 p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-sm">
-                  You've worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
-                </div>
-              )}
+            <AlertDialogDescription asChild>
+              <div>
+                You've worked {hoursWorked.toFixed(1)} hours today.
+                {isInOvertime && (
+                  <div className="mt-2 p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-sm">
+                    You've worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
