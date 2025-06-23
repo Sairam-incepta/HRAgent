@@ -97,9 +97,13 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
       let crossSellingBonuses = 0; 
       let lifeInsuranceBonuses = 0;
       let highValuePolicyBonuses = 0;
+      let totalBrokerFees = 0;
       
       // Process policy sales for bonuses
       policySales.forEach(sale => {
+        // Track total broker fees
+        totalBrokerFees += sale.broker_fee || 0;
+        
         // Broker fee bonus: 10% of (broker fee - 100)
         if (sale.broker_fee > 100) {
           const baseBrokerBonus = (sale.broker_fee - 100) * 0.1;
@@ -157,6 +161,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         reviewBonuses,
         highValuePolicyBonuses,
         totalBonuses,
+        totalBrokerFees,
         totalPay,
         period: `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`
       });
@@ -391,7 +396,11 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                     <span className="ml-2 font-medium text-amber-600">${payrollData.highValuePolicyBonuses.toFixed(2)}</span>
                   </div>
                 </div>
-                <div className="border-t pt-3">
+                <div className="border-t pt-3 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Total Broker Fees Earned:</span>
+                    <span className="text-sm font-medium text-blue-600">${payrollData.totalBrokerFees.toFixed(2)}</span>
+                  </div>
                   <div className="flex justify-between items-center">
                     <span className="font-medium">Total Bonuses:</span>
                     <span className="font-medium text-lg text-green-600">${payrollData.totalBonuses.toFixed(2)}</span>
@@ -422,7 +431,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                 <div className="text-center">
                   <div className="text-3xl font-bold text-primary">${payrollData.totalPay.toFixed(2)}</div>
                   <div className="text-sm text-muted-foreground mt-2">
-                    Hours: ${payrollData.totalHourlyPay.toFixed(2)} + Bonuses: ${payrollData.totalBonuses.toFixed(2)}
+                    Hours: ${payrollData.totalHourlyPay.toFixed(2)} + Bonuses: ${payrollData.totalBonuses.toFixed(2)} | Broker Fees: ${payrollData.totalBrokerFees.toFixed(2)}
                   </div>
                 </div>
               </CardContent>

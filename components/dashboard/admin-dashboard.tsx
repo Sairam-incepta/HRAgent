@@ -59,20 +59,15 @@ import {
 } from "@/lib/database";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
-import { toast } from "@/hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 
 export function AdminDashboard() {
+  const { toast } = useToast();
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [companyPayrollDialogOpen, setCompanyPayrollDialogOpen] = useState(false);
 
   const [selectedPayrollPeriod, setSelectedPayrollPeriod] = useState("");
-  const [expenditureFilter, setExpenditureFilter] = useState("month");
-  const [expenditureData, setExpenditureData] = useState({
-    month: { amount: 0, period: "Current Month", change: "+0%" },
-    quarter: { amount: 0, period: "Current Quarter", change: "+0%" },
-    year: { amount: 0, period: "Current Year", change: "+0%" }
-  });
   const [employees, setEmployees] = useState<any[]>([]);
   const [policySales, setPolicySales] = useState<any[]>([]);
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
@@ -180,8 +175,7 @@ export function AdminDashboard() {
       const unresolvedCount = notificationsData.filter(n => n.status !== 'resolved').length;
       setStablePendingCount(unresolvedCount);
       
-      // Calculate company expenditure using the fresh data
-      calculateCompanyExpenditureWithData(employeesData, salesData);
+
       
       if (!hasInitiallyLoaded) {
         setHasInitiallyLoaded(true);
@@ -196,94 +190,7 @@ export function AdminDashboard() {
     }
   };
 
-  // Calculate company expenditure using provided data (simplified and fast)
-  const calculateCompanyExpenditureWithData = (employeesData: any[], salesData: any[]) => {
-    try {
-      console.log('💰 Company expenditure calculation starting...');
-      console.log('👥 Employees data:', employeesData.map(emp => ({
-        name: emp.name,
-        department: emp.department,
-        hourlyRate: emp.hourly_rate,
-        status: emp.status
-      })));
-      console.log('📈 Sales data sample:', salesData.slice(0, 5).map(sale => ({
-        employee_id: sale.employee_id,
-        amount: sale.amount,
-        bonus: sale.bonus,
-        sale_date: sale.sale_date
-      })));
-      
-      // Simple calculation based on sales data only (much faster)
-      const now = new Date();
-      
-      // Get total sales bonuses for different periods
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
-      
-      console.log('📅 Date ranges:', {
-        startOfMonth: startOfMonth.toISOString(),
-        startOfQuarter: startOfQuarter.toISOString(),
-        startOfYear: startOfYear.toISOString(),
-        now: now.toISOString()
-      });
-      
-      // Filter sales by periods (much faster than complex payroll calculations)
-      const monthlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfMonth);
-      const quarterlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfQuarter);
-      const yearlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfYear);
-      
-      // Simple expenditure calculation: bonuses + estimated base pay
-      const employeeCount = employeesData.length;
-      const estimatedMonthlyBasePay = employeeCount * 25 * 160; // 25/hr * 160 hours/month
-      const estimatedQuarterlyBasePay = estimatedMonthlyBasePay * 3;
-      const estimatedYearlyBasePay = estimatedMonthlyBasePay * 12;
-      
-      const monthlyBonuses = monthlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
-      const quarterlyBonuses = quarterlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
-      const yearlyBonuses = yearlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
-      
-      console.log('💰 Company expenditure calculation details:', {
-        employeeCount,
-        estimatedMonthlyBasePay,
-        monthlyBonuses,
-        quarterlyBonuses,
-        yearlyBonuses,
-        totalMonthlySales: monthlySales.length,
-        totalQuarterlySales: quarterlySales.length,
-        totalYearlySales: yearlySales.length,
-        monthlyTotal: estimatedMonthlyBasePay + monthlyBonuses,
-        quarterlyTotal: estimatedQuarterlyBasePay + quarterlyBonuses,
-        yearlyTotal: estimatedYearlyBasePay + yearlyBonuses
-      });
-      
-      setExpenditureData({
-        month: { 
-          amount: Math.round(estimatedMonthlyBasePay + monthlyBonuses), 
-          period: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }), 
-          change: "+0%" 
-        },
-        quarter: { 
-          amount: Math.round(estimatedQuarterlyBasePay + quarterlyBonuses), 
-          period: `Q${Math.floor(now.getMonth() / 3) + 1} ${now.getFullYear()}`, 
-          change: "+0%" 
-        },
-        year: { 
-          amount: Math.round(estimatedYearlyBasePay + yearlyBonuses), 
-          period: now.getFullYear().toString(), 
-          change: "+0%" 
-        }
-      });
-    } catch (error) {
-      console.error('Error calculating company expenditure:', error);
-      // Set fallback values if calculation fails
-      setExpenditureData({
-        month: { amount: 0, period: "Current Month", change: "+0%" },
-        quarter: { amount: 0, period: "Current Quarter", change: "+0%" },
-        year: { amount: 0, period: "Current Year", change: "+0%" }
-      });
-    }
-  };
+
 
   const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
     weekday: 'long',
@@ -297,7 +204,7 @@ export function AdminDashboard() {
     minute: '2-digit'
   });
 
-  const currentExpenditure = expenditureData[expenditureFilter as keyof typeof expenditureData];
+
 
   const handleCompanyPayrollView = (period: string) => {
     // Find the payroll period to check if it's upcoming
@@ -357,50 +264,7 @@ export function AdminDashboard() {
         <TabsContent value="overview" className="space-y-4">
           <AdminStats />
           
-          {/* Company Expenditure - Compact Top Section */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div>
-                    <h3 className="text-lg font-semibold">Company Expenditure</h3>
-                    {loading ? (
-                      <div className="animate-pulse space-y-1 mt-1">
-                        <div className="h-6 bg-muted rounded w-24"></div>
-                        <div className="h-3 bg-muted rounded w-16"></div>
-                      </div>
-                    ) : (
-                      <div className="mt-1">
-                        <p className="text-2xl font-bold">${currentExpenditure.amount.toLocaleString()}</p>
-                        <p className="text-sm text-muted-foreground">{currentExpenditure.period}</p>
-                      </div>
-                    )}
-                  </div>
-                  {!loading && (
-                    <div className="flex items-center gap-2">
-                      <Badge 
-                        variant="outline" 
-                        className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                      >
-                        {currentExpenditure.change}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">vs previous</span>
-                    </div>
-                  )}
-                </div>
-                <Select value={expenditureFilter} onValueChange={setExpenditureFilter}>
-                  <SelectTrigger className="w-[100px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="month">Monthly</SelectItem>
-                    <SelectItem value="quarter">Quarterly</SelectItem>
-                    <SelectItem value="year">Yearly</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
+
 
           {/* High-Value Policy Alerts - Full Width Below */}
           <div ref={highValueNotificationsRef} data-section="high-value-policies">

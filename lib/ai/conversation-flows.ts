@@ -111,11 +111,15 @@ FLOW GUIDELINES:
 - Show genuine interest in their work
 - Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
 
-IMPORTANT FOR POLICY ENTRY:
-- When asking for policy_amount: Ask for the TOTAL POLICY VALUE/SALE AMOUNT (not broker fee)
-- When asking for broker_fee: Ask for the BROKER FEE/COMMISSION (separate from policy amount)
-- Never confuse these two - they are completely different values
-- Never ask if a policy amount is actually a broker fee - ask for them separately
+CRITICAL POLICY ENTRY RULES:
+- policy_amount = TOTAL POLICY VALUE (e.g., $50,000 life insurance policy)
+- broker_fee = COMMISSION EARNED (e.g., $500 commission from that policy)
+- cross_sold_policy_amount = TOTAL VALUE of the cross-sold policy
+- cross_sold_broker_fee = COMMISSION EARNED from the cross-sold policy
+- NEVER say a policy amount is a broker fee - they are completely different
+- NEVER confuse or mix up these values in your response
+- When user provides a policy amount, acknowledge it as "policy amount" not "broker fee"
+- When asking for broker fee, clearly state you need the "broker fee" or "commission"
 
 ${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
     } else {
@@ -135,11 +139,15 @@ GUIDELINES:
 - Show genuine interest in their work
 - Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
 
-IMPORTANT FOR POLICY ENTRY:
-- When asking for policy_amount: Ask for the TOTAL POLICY VALUE/SALE AMOUNT (not broker fee)
-- When asking for broker_fee: Ask for the BROKER FEE/COMMISSION (separate from policy amount)
-- Never confuse these two - they are completely different values
-- Never ask if a policy amount is actually a broker fee - ask for them separately
+CRITICAL POLICY ENTRY RULES:
+- policy_amount = TOTAL POLICY VALUE (e.g., $50,000 life insurance policy)
+- broker_fee = COMMISSION EARNED (e.g., $500 commission from that policy)
+- cross_sold_policy_amount = TOTAL VALUE of the cross-sold policy
+- cross_sold_broker_fee = COMMISSION EARNED from the cross-sold policy
+- NEVER say a policy amount is a broker fee - they are completely different
+- NEVER confuse or mix up these values in your response
+- When user provides a policy amount, acknowledge it as "policy amount" not "broker fee"
+- When asking for broker fee, clearly state you need the "broker fee" or "commission"
 
 ${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
     }
@@ -173,10 +181,12 @@ export const extractDataFromResponse = (message: string, dataType: string): stri
   
   switch (dataType) {
     case 'policy_amount':
+    case 'cross_sold_policy_amount':
       const amountMatch = message.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       return amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
     
     case 'broker_fee':
+    case 'cross_sold_broker_fee':
       const feeMatch = message.match(/\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       return feeMatch ? parseFloat(feeMatch[1].replace(/,/g, '')) : null;
     
@@ -679,7 +689,7 @@ What's the **policy amount** for the cross-sold policy?`
     }
     
     if (nextQuestion === 'cross_sell_policy_amount') {
-      const crossSoldPolicyAmount = extractDataFromResponse(message, 'policy_amount');
+      const crossSoldPolicyAmount = extractDataFromResponse(message, 'cross_sold_policy_amount');
       if (!crossSoldPolicyAmount) {
         return NextResponse.json({
           response: "Please provide the cross-sold policy amount (e.g., $5000, 10000, etc.)"
@@ -704,7 +714,7 @@ What's the **broker fee** for the cross-sold policy?`
     }
     
     if (nextQuestion === 'cross_sell_broker_fee') {
-      const crossSoldBrokerFee = extractDataFromResponse(message, 'broker_fee');
+      const crossSoldBrokerFee = extractDataFromResponse(message, 'cross_sold_broker_fee');
       if (!crossSoldBrokerFee) {
         return NextResponse.json({
           response: "Please provide the cross-sold broker fee amount (e.g., $250, 500, etc.)"
@@ -732,32 +742,32 @@ Finally, please provide a brief description of the client or any special notes a
       const clientDescription = message.trim();
       const finalData = { ...collectedData, client_description: clientDescription };
       
-      // Save the main policy
+      // Save the main policy (NOT cross-sold)
       const result = await addPolicySale({
         policyNumber: finalData.policy_number,
         clientName: finalData.client_name,
         policyType: finalData.policy_type,
-        amount: finalData.policy_amount,
-        brokerFee: finalData.broker_fee,
+        amount: parseAmount(finalData.policy_amount),
+        brokerFee: parseAmount(finalData.broker_fee),
         employeeId,
         saleDate: new Date(),
-        crossSold: finalData.cross_sold === 'yes',
+        crossSold: false, // Main policy is NOT cross-sold
         crossSoldType: finalData.cross_sold_type,
         crossSoldTo: finalData.cross_sold === 'yes' ? finalData.client_name : undefined,
         clientDescription: finalData.client_description
       });
       
-      // If cross-sold, save the cross-sold policy as a separate entry
+      // If cross-sold, save the cross-sold policy as a separate entry (THIS gets the cross-sold bonus)
       if (finalData.cross_sold === 'yes' && finalData.cross_sold_policy_number && finalData.cross_sold_policy_amount && finalData.cross_sold_broker_fee) {
         await addPolicySale({
           policyNumber: finalData.cross_sold_policy_number,
           clientName: finalData.client_name,
           policyType: finalData.cross_sold_type,
-          amount: finalData.cross_sold_policy_amount,
-          brokerFee: finalData.cross_sold_broker_fee,
+          amount: parseAmount(finalData.cross_sold_policy_amount),
+          brokerFee: parseAmount(finalData.cross_sold_broker_fee),
           employeeId,
           saleDate: new Date(),
-          crossSold: false, // This IS the cross-sold policy
+          crossSold: true, // This IS the cross-sold policy that gets the bonus
           isCrossSoldPolicy: true, // Mark as cross-sold policy for 2x bonus
           clientDescription: `Cross-sold to ${finalData.client_name} - ${finalData.client_description}`
         });
@@ -1119,35 +1129,47 @@ The employee just shared: "${originalMessage}"`
   return 'Thanks for sharing! You\'re doing amazing work! 🌟';
 }
 
+// Helper function to safely parse amounts that might have dollar signs
+function parseAmount(value: any): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    // Remove dollar signs, commas, and parse
+    const cleaned = value.replace(/[\$,]/g, '');
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+}
+
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {
   switch (flowType) {
     case 'policy_entry':
-      // Save the main policy
+      // Save the main policy (NOT cross-sold)
       await addPolicySale({
         policyNumber: data.policy_number,
         clientName: data.client_name,
         policyType: data.policy_type,
-        amount: parseFloat(data.policy_amount) || 0,
-        brokerFee: parseFloat(data.broker_fee) || 0,
+        amount: parseAmount(data.policy_amount),
+        brokerFee: parseAmount(data.broker_fee),
         employeeId,
         saleDate: new Date(),
-        crossSold: data.cross_sold === 'yes',
+        crossSold: false, // Main policy is NOT cross-sold
         crossSoldType: data.cross_sold_type || undefined,
         crossSoldTo: data.cross_sold === 'yes' ? data.client_name : undefined,
         clientDescription: data.client_description
       });
       
-      // If cross-sold, save the cross-sold policy as a separate entry
+      // If cross-sold, save the cross-sold policy as a separate entry (THIS gets the cross-sold bonus)
       if (data.cross_sold === 'yes' && data.cross_sold_policy_number && data.cross_sold_policy_amount && data.cross_sold_broker_fee) {
         await addPolicySale({
           policyNumber: data.cross_sold_policy_number,
           clientName: data.client_name,
           policyType: data.cross_sold_type,
-          amount: parseFloat(data.cross_sold_policy_amount) || 0,
-          brokerFee: parseFloat(data.cross_sold_broker_fee) || 0,
+          amount: parseAmount(data.cross_sold_policy_amount),
+          brokerFee: parseAmount(data.cross_sold_broker_fee),
           employeeId,
           saleDate: new Date(),
-          crossSold: false, // This IS the cross-sold policy
+          crossSold: true, // This IS the cross-sold policy that gets the bonus
           isCrossSoldPolicy: true, // Mark as cross-sold policy for 2x bonus
           clientDescription: `Cross-sold to ${data.client_name} - ${data.client_description}`
         });
