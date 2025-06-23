@@ -6,7 +6,7 @@ import { DashboardHeader } from "@/components/dashboard/header";
 import { EmployeeDashboard } from "@/components/dashboard/employee-dashboard";
 import { AdminDashboard } from "@/components/dashboard/admin-dashboard";
 import { ChatInterface } from "@/components/dashboard/chat-interface";
-import { Loader2, MessageSquare, X } from "lucide-react";
+import { Loader2, MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getEmployee } from "@/lib/database";
 
@@ -15,6 +15,7 @@ export default function ClerkWrapper() {
   const { signOut } = useClerk();
   const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
   const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
   const [authError, setAuthError] = useState(false);
@@ -211,10 +212,14 @@ export default function ClerkWrapper() {
       {/* Welcome Message Banner removed per user request */}
       
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Main Dashboard Content - 65% when chat is open, 100% when collapsed */}
+        {/* Main Dashboard Content - Responsive based on chat state */}
         <main 
           className={`flex-1 flex flex-col transition-all duration-300 min-h-0 overflow-hidden ${
-            isChatCollapsed ? 'w-full' : 'lg:w-[65%]'
+            isChatCollapsed 
+              ? 'w-full' 
+              : isChatExpanded
+                ? 'w-full sm:w-[60%] md:w-[55%] lg:w-[55%] xl:w-[55%] 2xl:w-[45%]'
+                : 'w-full sm:w-[70%] md:w-[65%] lg:w-[65%] xl:w-[65%] 2xl:w-[55%]'
           }`}
         >
           <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
@@ -229,32 +234,52 @@ export default function ClerkWrapper() {
           </div>
         </main>
         
-        {/* Chat Interface - 35% width, collapsible */}
+        {/* Chat Interface - Responsive width: 35% collapsed, 45% expanded */}
         {userRole && (
           <div 
             className={`transition-all duration-300 border-l bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex flex-col ${
               isChatCollapsed 
                 ? 'w-0 overflow-hidden' 
-                : 'w-full lg:w-[35%] min-w-[400px]'
+                : isChatExpanded
+                  ? 'w-full sm:w-[40%] md:w-[45%] lg:w-[45%] xl:w-[45%] 2xl:w-[55%] min-w-[320px] max-w-[700px]'
+                  : 'w-full sm:w-[30%] md:w-[35%] lg:w-[35%] xl:w-[35%] 2xl:w-[45%] min-w-[300px] max-w-[580px]'
             }`}
             style={{ height: 'calc(100vh - 64px)' }}
           >
             {!isChatCollapsed && (
               <div className="h-full flex flex-col min-h-0">
-                {/* Chat Header with Collapse Button */}
+                {/* Chat Header with Expand/Collapse Buttons */}
                 <div className="flex items-center justify-between p-3 border-b bg-background/95 backdrop-blur">
                   <div className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4 text-[#005cb3]" />
-                    <span className="text-sm font-medium">Let's Insure Employee Assistant</span>
+                    <span className="text-sm font-medium">
+                      {userRole === 'admin' ? 'HR Admin Assistant' : 'HR Assistant'}
+                    </span>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsChatCollapsed(true)}
-                    className="h-7 w-7 p-0 hover:bg-muted"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsChatExpanded(!isChatExpanded)}
+                      className="h-7 w-7 p-0 hover:bg-muted"
+                      title={isChatExpanded ? "Collapse chat" : "Expand chat"}
+                    >
+                      {isChatExpanded ? (
+                        <Minimize2 className="h-4 w-4" />
+                      ) : (
+                        <Maximize2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsChatCollapsed(true)}
+                      className="h-7 w-7 p-0 hover:bg-muted"
+                      title="Close chat"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 
                 {/* Chat Content - Fixed props */}
@@ -262,6 +287,8 @@ export default function ClerkWrapper() {
                   <ChatInterface 
                     onClockOutPrompt={showClockOutPrompt}
                     clockOutPromptMessage={clockOutPromptMessage}
+                    isExpanded={isChatExpanded}
+                    onToggleExpand={() => setIsChatExpanded(!isChatExpanded)}
                   />
                 </div>
               </div>

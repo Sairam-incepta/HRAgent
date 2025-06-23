@@ -7,10 +7,13 @@ import {
 } from '@/lib/database';
 import { buildAdminSystemPrompt } from './system-prompts';
 
-// Clean up markdown formatting - selective bold formatting
+// Clean up markdown formatting - avoid double formatting
 function cleanMarkdownResponse(response: string): string {
   return response
-    // Convert markdown to HTML
+    // First, clean up any existing HTML tags to avoid conflicts
+    .replace(/<\/?strong>/g, '')
+    .replace(/<\/?em>/g, '')
+    // Convert markdown to HTML (only once)
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
     .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
     .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
@@ -19,14 +22,20 @@ function cleanMarkdownResponse(response: string): string {
     .replace(/^\s*-\s*/gm, '• ')
     // Clean up excessive line breaks
     .replace(/\n\n\n+/g, '\n\n')
-    // Add selective bold formatting for important data only
-    .replace(/(\$[\d,]+)/g, '<strong>$1</strong>')                    // Dollar amounts
-    .replace(/(\d+)\s+(policies?|sales?|employees?)/gi, '<strong>$1</strong> $2') // Counts
-    .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
+    // Fix any nested strong tags that might have been created
+    .replace(/<strong><strong>(.*?)<\/strong><\/strong>/g, '<strong>$1</strong>')
+    .replace(/<em><em>(.*?)<\/em><\/em>/g, '<em>$1</em>')
     .trim();
 }
 
 export async function handleAdminChat(message: string, userId: string) {
+  // Handle admin welcome message with simple placeholder (no AI generation needed)
+  if (message === "ADMIN_WELCOME_MESSAGE") {
+    return NextResponse.json({ 
+      response: "Welcome back! I'm your HR Admin Assistant, ready to help you manage your team and analyze performance metrics. What would you like to review today?" 
+    });
+  }
+
   try {
     // Get admin data for context - get ALL policy sales for company-wide view
     const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([

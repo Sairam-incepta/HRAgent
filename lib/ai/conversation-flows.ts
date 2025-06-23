@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import openai from '@/lib/openai';
+import { buildEmployeeSystemPrompt } from './system-prompts';
 
 // Clean up markdown formatting - selective bold formatting
 function cleanMarkdownResponse(response: string): string {
@@ -28,6 +30,125 @@ import {
   getTodayTimeTracking,
   getTodayPolicySales
 } from '@/lib/database';
+
+// AI-powered response generator for conversation flows
+async function generateFlowResponse(flowType: string, nextField: string, collectedData: any, userMessage: string, employeeData?: any): Promise<string> {
+  try {
+    const contextMap: Record<string, Record<string, string>> = {
+      policy_entry: {
+        policy_number: "Ask for the policy number in a friendly way (e.g., POL-2025-001)",
+        client_name: "Ask for the client's name naturally",
+        policy_type: "Ask what type of policy this is (Auto, Home, Life, etc.)",
+        policy_amount: "Ask for the policy sale amount in dollars",
+        broker_fee: "Ask for the broker fee amount",
+        cross_sold: "Ask if they cross-sold any additional policies (yes/no)",
+        cross_sold_type: "Ask what type of policy they cross-sold",
+        client_description: "Ask for a brief description of the client or policy details"
+      },
+      review_entry: {
+        client_name: "Ask for the client's name who gave the review",
+        policy_number: "Ask for the policy number associated with this review",
+        rating: "Ask for the client's rating (1-5 stars)",
+        review_text: "Ask what the client said in their review"
+      },
+      daily_summary: {
+        description: "Ask them to describe their day, accomplishments, and how they're feeling"
+      }
+    };
+
+    const fieldContext = contextMap[flowType]?.[nextField] || `Ask for ${nextField}`;
+    
+    // Check if this is a repeat of the trigger message
+    const isRepeatTrigger = (
+      (userMessage.toLowerCase().includes('sold a policy') || userMessage.toLowerCase().includes('new policy')) &&
+      nextField === 'policy_number' &&
+      Object.keys(collectedData).length <= 1
+    );
+
+    let contextPrompt = '';
+    if (isRepeatTrigger) {
+      contextPrompt = `The user just mentioned selling a policy. This is the start of data collection. Be enthusiastic and welcoming.`;
+    } else {
+      const collectedSummary = Object.keys(collectedData).length > 0 
+        ? `Already collected: ${Object.entries(collectedData).map(([k, v]) => `${k}: ${v}`).join(', ')}`
+        : "This is the first piece of information we're collecting";
+      contextPrompt = `CONTEXT: ${collectedSummary}`;
+    }
+
+    let systemContent = '';
+    
+    if (employeeData) {
+      // Use the full system prompt with employee context
+      systemContent = buildEmployeeSystemPrompt(
+        employeeData.employee,
+        employeeData.totalPolicies,
+        employeeData.totalSalesAmount,
+        employeeData.totalBrokerFees,
+        employeeData.employeeHours,
+        employeeData.crossSoldPolicies,
+        employeeData.policySales,
+        employeeData.clientReviews,
+        employeeData.dailySummaries
+      );
+      
+      // Add conversation flow specific instructions
+      systemContent += `\n\nCONVERSATION FLOW CONTEXT:
+You're currently helping the employee record their ${flowType.replace('_', ' ')}.
+
+${contextPrompt}
+NEXT TASK: ${fieldContext}
+
+FLOW GUIDELINES:
+- Be conversational and supportive
+- If this is the start, show excitement about their achievement
+- Acknowledge what they've already provided if any
+- Ask for the next piece of information naturally
+- Use bold formatting for important fields: **field name**
+- Keep responses brief but warm (1-2 sentences)
+- Show genuine interest in their work
+- Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
+
+${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
+    } else {
+      // Fallback to simple system prompt
+      systemContent = `You're a supportive HR assistant helping an employee record their ${flowType.replace('_', ' ')}. Be friendly, encouraging, and natural.
+
+${contextPrompt}
+NEXT TASK: ${fieldContext}
+
+GUIDELINES:
+- Be conversational and supportive
+- If this is the start, show excitement about their achievement
+- Acknowledge what they've already provided if any
+- Ask for the next piece of information naturally
+- Use bold formatting for important fields: **field name**
+- Keep responses brief but warm (1-2 sentences)
+- Show genuine interest in their work
+- Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
+
+${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1",
+      messages: [{
+        role: "system",
+        content: systemContent
+      }, {
+        role: "user",
+        content: userMessage
+      }],
+      max_tokens: 150,
+      temperature: 0.8,
+    });
+
+    return completion.choices[0]?.message?.content || `What's the ${nextField.replace('_', ' ')}?`;
+  } catch (error) {
+    console.error('Error generating flow response:', error);
+    // Fallback to original static responses
+    return `Please provide the ${nextField.replace('_', ' ')}:`;
+  }
+}
 
 // Helper function to extract structured data from user responses
 export const extractDataFromResponse = (message: string, dataType: string): string | number | null => {
@@ -247,7 +368,7 @@ export const parseReviewBatchData = (message: string): any => {
   return data;
 };
 
-export async function handleConversationFlow(conversationState: any, message: string, employeeId: string) {
+export async function handleConversationFlow(conversationState: any, message: string, employeeId: string, employeeData?: any) {
   const { current_flow: currentFlow, collected_data: collectedData = {}, next_question: nextQuestion } = conversationState;
   
   // For debugging
@@ -329,17 +450,17 @@ export async function handleConversationFlow(conversationState: any, message: st
   switch (currentFlow) {
     case 'policy_entry':
       [nextQuestionKey, isComplete] = getPolicyEntryNextQuestion(safeCollectedData);
-      response = await handlePolicyEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
+      response = await handlePolicyEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message, employeeData);
       break;
       
     case 'review_entry':
       [nextQuestionKey, isComplete] = getReviewEntryNextQuestion(safeCollectedData);
-      response = await handleReviewEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message);
+      response = await handleReviewEntryFlow(safeCollectedData, nextQuestionKey, extractedValue, message, employeeData);
       break;
       
     case 'daily_summary':
       [nextQuestionKey, isComplete] = getDailySummaryNextQuestion(safeCollectedData);
-      response = await handleDailySummaryFlow(safeCollectedData, nextQuestionKey, extractedValue, message, employeeId);
+      response = await handleDailySummaryFlow(safeCollectedData, nextQuestionKey, extractedValue, message, employeeId, employeeData);
       break;
   }
 
@@ -790,75 +911,38 @@ function getDailySummaryNextQuestion(data: any): [string, boolean] {
   return ['', true];
 }
 
-async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+async function handlePolicyEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeData?: any): Promise<string> {
   // Debug log
   console.log('handlePolicyEntryFlow - nextQuestion:', nextQuestion, 'data:', data);
   
-  // Determine response based on what we're asking for next
-  switch (nextQuestion) {
-    case 'client_name':
-      return `Perfect! Policy number: ${data.policy_number}. What's the client's name?`;
-    
-    case 'policy_type':
-      return `Client name: ${data.client_name}. What type of policy is this? (e.g., Auto, Home, Life, etc.)`;
-    
-    case 'policy_amount':
-      return `Policy type: ${data.policy_type}. What's the policy amount in dollars?`;
-    
-    case 'broker_fee':
-      const amount = parseFloat(data.policy_amount);
-      if (!isNaN(amount)) {
-        return `Policy amount: $${amount.toLocaleString()}. What's the broker fee?`;
-      }
-      return "Please provide a valid dollar amount for the policy:";
-    
-    case 'cross_sold':
-      const fee = parseFloat(data.broker_fee);
-      if (!isNaN(fee)) {
-        return `Broker fee: $${fee.toLocaleString()}. Did you cross-sell any additional policies? (yes/no)`;
-      }
-      return "Please provide a valid broker fee amount:";
-    
-    case 'cross_sold_type':
-      return "Great! What type of policy did you cross-sell?";
-    
-    case 'client_description':
-      if (data.cross_sold === 'yes' && data.cross_sold_type) {
-        return `Cross-sold policy type: ${data.cross_sold_type}. Finally, can you provide a brief description of the client or policy details?`;
-      }
-      return "No problem! Finally, can you provide a brief description of the client or policy details?";
-    
-    case '':
-      return "Perfect! I have all the information needed to record this policy sale.";
-    
-    default:
-      return "I'm processing your information...";
+  // Use AI to generate natural responses
+  if (nextQuestion && nextQuestion !== '') {
+    return await generateFlowResponse('policy_entry', nextQuestion, data, originalMessage, employeeData);
   }
+  
+  return "Perfect! I have all the information needed to record this policy sale.";
 }
 
-async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string): Promise<string> {
+async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeData?: any): Promise<string> {
   console.log('handleReviewEntryFlow - nextQuestion:', nextQuestion, 'data:', data);
   
-  const responses: { [key: string]: string } = {
-    'client_name': `Client name: ${data.client_name}. What's the policy number for this review?`,
-    'policy_number': `Policy number: ${data.policy_number}. What rating did the client give? (1-5 stars)`,
-    'rating': data.rating ? `Rating: ${data.rating}/5 stars. What did the client say in their review?` : "Please provide a rating from 1 to 5:",
-    'review_text': `Perfect! I have all the review information.`,
-    '': 'All information collected!'
-  };
-
-  const lastCollectedKey = Object.keys(data).pop() || '';
-  return responses[lastCollectedKey] || responses[nextQuestion] || "I'm processing your information...";
-}
-
-async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeId: string): Promise<string> {
-  console.log('handleDailySummaryFlow - nextQuestion:', nextQuestion, 'data:', data);
-  
-  if (nextQuestion === 'description') {
-    return `Perfect! I have your daily summary. I'll automatically calculate your hours worked and policies sold from the system data.`;
+  // Use AI to generate natural responses
+  if (nextQuestion && nextQuestion !== '') {
+    return await generateFlowResponse('review_entry', nextQuestion, data, originalMessage, employeeData);
   }
   
-  return 'All information collected!';
+  return "Perfect! I have all the review information.";
+}
+
+async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeId: string, employeeData?: any): Promise<string> {
+  console.log('handleDailySummaryFlow - nextQuestion:', nextQuestion, 'data:', data);
+  
+  // Use AI to generate natural responses
+  if (nextQuestion && nextQuestion !== '') {
+    return await generateFlowResponse('daily_summary', nextQuestion, data, originalMessage, employeeData);
+  }
+  
+  return 'Perfect! I have your daily summary. I\'ll automatically calculate your hours worked and policies sold from the system data.';
 }
 
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {

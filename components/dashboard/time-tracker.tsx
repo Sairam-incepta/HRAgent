@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react";
@@ -39,7 +39,6 @@ export function TimeTracker({
   maxHoursBeforeOvertime = 8,
   hourlyRate = 25
 }: TimeTrackerProps) {
-  console.log('🚩 TimeTracker mounted', new Date().toISOString());
   const { user } = useUser();
   const [status, setStatus] = useState<TimeStatus>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -85,7 +84,6 @@ export function TimeTracker({
         const totalElapsed = Math.floor(baseTimeRef.current + currentSessionTime);
         
         setElapsedTime(totalElapsed);
-        console.log('⏱️ Enhanced timer tick:', { totalElapsed, now: new Date().toISOString() });
         
         // Notify parent component immediately
         onTimeUpdate?.(totalElapsed, status);
@@ -718,10 +716,10 @@ export function TimeTracker({
             <AlertDialogTitle>Overtime Notification</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div>
-                You've worked {hoursWorked.toFixed(1)} hours today.
+                You&apos;ve worked {hoursWorked.toFixed(1)} hours today.
                 {isInOvertime && (
                   <div className="mt-2 p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-sm">
-                    You've worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
+                    You&apos;ve worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
                   </div>
                 )}
               </div>
@@ -749,3 +747,6 @@ export function TimeTracker({
     </>
   );
 }
+
+// Memoize the component to prevent unnecessary re-mounts
+export default memo(TimeTracker);

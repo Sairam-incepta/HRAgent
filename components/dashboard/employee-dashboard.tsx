@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useUser } from "@clerk/nextjs";
 import { 
   Card, 
@@ -30,7 +30,7 @@ import {
   User
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { TimeTracker } from "@/components/dashboard/time-tracker";
+import TimeTracker from "@/components/dashboard/time-tracker";
 import { RequestDialog } from "@/components/dashboard/request-dialog";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { Input } from "@/components/ui/input";
@@ -164,14 +164,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   }, [user?.id]);
 
-  // Refresh data periodically effect (improved frequency for better user experience)
+  // Refresh data periodically effect (fallback for edge cases)
   useEffect(() => {
     const interval = setInterval(() => {
       if (user?.id) {
         loadWeeklyData();
         loadPerformanceData();
       }
-    }, 30000); // Refresh every 30 seconds for better real-time updates
+    }, 900000); // Refresh every 15 minutes as fallback (chat updates are real-time via events)
 
     return () => clearInterval(interval);
   }, [user?.id]);
@@ -203,8 +203,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     // Check immediately
     checkDayChange();
     
-    // Then check every minute
-    const interval = setInterval(checkDayChange, 60000);
+    // Then check every 20 minutes
+    const interval = setInterval(checkDayChange, 1200000);
     
     return () => clearInterval(interval);
   }, [user?.id]);
@@ -272,6 +272,55 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       return matchesFilter && matchesSearch;
     });
   }, [requests, requestFilter, searchTerm]);
+
+  // Memoized callbacks (must be before early return)
+  const handleTimeUpdate = useCallback((elapsedSeconds: number, status: string) => {
+    setCurrentElapsedTime(elapsedSeconds);
+    setTimeStatus(status as any);
+  }, []);
+
+  const handleClockInChange = useCallback((clockedIn: boolean) => {
+    setIsClockedIn(clockedIn);
+  }, []);
+
+  const handleLunchChange = useCallback((lunch: boolean) => {
+    setIsOnLunch(lunch);
+  }, []);
+
+  const handleTimeTrackerClockOut = useCallback(async () => {
+    if (onClockOut) {
+      onClockOut();
+    }
+
+    // Generate and send clock-out question to parent (ask about their day)
+    if (onClockOutPrompt) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: 'CLOCK_OUT_PROMPT',
+            userRole: 'employee',
+            employeeId: user?.id || "emp-001"
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          onClockOutPrompt(data.response);
+        } else {
+          // Fallback question
+          onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
+        }
+      } catch (error) {
+        console.error('Error getting clock out prompt:', error);
+        // Fallback question
+        onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
+      }
+    }
+  }, [onClockOut, onClockOutPrompt, user?.id]);
 
   // Early return after all hooks
   if (!isLoaded || !isSignedIn) {
@@ -369,46 +418,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
-  const handleTimeUpdate = (elapsedSeconds: number, status: string) => {
-    setCurrentElapsedTime(elapsedSeconds);
-    setTimeStatus(status as any);
-  };
 
-  const handleClockOut = async () => {
-    // Call the parent onClockOut if provided
-    if (onClockOut) {
-      onClockOut();
-    }
-
-    // Generate and send clock-out question to parent (ask about their day)
-    if (onClockOutPrompt) {
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: 'CLOCK_OUT_PROMPT',
-            userRole: 'employee',
-            employeeId: user?.id || "emp-001"
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          onClockOutPrompt(data.response);
-        } else {
-          // Fallback question
-          onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
-        }
-      } catch (error) {
-        console.error('Error getting clock out prompt:', error);
-        // Fallback question
-        onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
-      }
-    }
-  };
 
   const formatTimeDisplay = (hours: number) => {
     const wholeHours = Math.floor(hours);
@@ -472,7 +482,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
     return `${date.getMonth() + 1}/${date.getDate()}`;
   };
 
@@ -529,68 +540,82 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         </div>
       </div>
 
-      {/* Performance Metrics - Compact Design */}
+      {/* Performance Metrics - Clean Admin Style */}
       <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
-        <Card className="hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Client Reviews</p>
-                <p className="text-2xl font-bold">
-                  {performanceData.totalReviews}
-                </p>
-                {performanceData.totalReviews > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    Avg: {performanceData.avgRating.toFixed(2)}★
-                  </p>
-                )}
+        {performanceData.loading ? (
+          // Loading state
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-card rounded-lg border p-4 h-20">
+              <div className="animate-pulse flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center space-y-2 flex-1">
+                  <div className="h-3 bg-muted rounded w-2/3"></div>
+                  <div className="h-6 bg-muted rounded w-1/3"></div>
+                </div>
+                <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
               </div>
-              <Star className="h-8 w-8 text-[#005cb3]" />
             </div>
-          </CardContent>
-        </Card>
+          ))
+        ) : (
+          <>
+            {/* Policies Sold */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Policies Sold</p>
+                  <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalPolicies}</p>
+                </div>
+                <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <FileText className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                </div>
+              </div>
+            </div>
 
-        <Card className="hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Sales Generated</p>
-                <p className="text-2xl font-bold">${performanceData.totalSales.toLocaleString()}</p>
+            {/* Sales Generated */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Sales Generated</p>
+                  <p className="text-2xl font-semibold text-foreground leading-tight">${performanceData.totalSales.toLocaleString()}</p>
+                </div>
+                <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <TrendingUp className="h-4 w-4 text-green-600 dark:text-green-400" />
+                </div>
               </div>
-              <TrendingUp className="h-8 w-8 text-[#005cb3]" />
             </div>
-          </CardContent>
-        </Card>
 
-        <Card className="hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Policies Sold</p>
-                <p className="text-2xl font-bold">{performanceData.totalPolicies}</p>
+            {/* Client Reviews */}
+            <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+              <div className="flex items-center justify-between h-full">
+                <div className="flex flex-col justify-center min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground leading-tight truncate">Client Reviews</p>
+                  <div className="flex items-baseline gap-1">
+                    <p className="text-2xl font-semibold text-foreground leading-tight">{performanceData.totalReviews}</p>
+                    {performanceData.totalReviews > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {performanceData.avgRating.toFixed(1)}★
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <Star className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                </div>
               </div>
-              <FileText className="h-8 w-8 text-[#005cb3]" />
             </div>
-          </CardContent>
-        </Card>
+          </>
+        )}
       </div>
 
       {/* Time Tracking Section */}
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
         <div className="flex flex-col sm:flex-row gap-2 w-full">
           <TimeTracker 
-            onClockInChange={(clockedIn) => {
-              setIsClockedIn(clockedIn);
-            }} 
-            onLunchChange={(lunch) => {
-              setIsOnLunch(lunch);
-            }}
+            onClockInChange={handleClockInChange}
+            onLunchChange={handleLunchChange}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
             hourlyRate={employeeSettings.hourlyRate}
-            onClockOut={(data) => {
-              handleClockOut();
-            }}
+            onClockOut={handleTimeTrackerClockOut}
           />
         </div>
       </div>
@@ -636,13 +661,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                   </div>
                 )}
               </div>
-              {/* Live Pay Display */}
-              <div className="flex justify-between items-center mt-2">
-                <span className="text-xs font-medium text-muted-foreground">Today's Pay</span>
-                <span className="text-xs font-bold">
-                  ${isClockedIn ? livePay.totalPay.toFixed(2) : (todayHours * employeeSettings.hourlyRate).toFixed(2)}
-                </span>
-              </div>
+
             </div>
           </div>
         </CardContent>

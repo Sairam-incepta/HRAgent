@@ -8,9 +8,10 @@ import {
   getDailySummaries,
   getEmployee,
   getConversationState,
-  updateConversationState
+  updateConversationState,
+  clearConversationState
 } from '@/lib/database';
-import { buildEmployeeSystemPrompt } from './system-prompts';
+import { buildEmployeeSystemPrompt, buildClockOutPrompt } from './system-prompts';
 import { handleConversationFlow } from './conversation-flows';
 
 // Clean up markdown formatting - selective bold formatting
@@ -86,6 +87,52 @@ async function generateClockOutMessage(employeeName: string): Promise<string> {
 }
 
 export async function handleEmployeeChat(message: string, userId: string, userName: string = 'there') {
+  // Handle reset conversation command
+  if (message.toLowerCase().includes('reset conversation') || message.toLowerCase().includes('start over') || message.toLowerCase().includes('clear conversation')) {
+    await clearConversationState(userId);
+    return NextResponse.json({ 
+      response: "✅ Conversation reset! You can now start fresh with a new policy entry, client review, or daily summary. What would you like to do?" 
+    });
+  }
+
+  // Handle employee welcome message with simple placeholder (no AI generation needed)
+  if (message === "WELCOME_MESSAGE") {
+    return NextResponse.json({ 
+      response: "Hey there! I'm your HR Assistant, ready to help you track your sales, reviews, and daily progress. What can I help you with today?" 
+    });
+  }
+
+  // Handle special clock out prompt generation
+  if (message === "CLOCK_OUT_PROMPT") {
+    try {
+            const completion = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "system",
+            content: buildClockOutPrompt()
+          },
+          {
+            role: "user",
+            content: "Generate a warm check-in question for the employee who just finished their workday."
+          }
+        ],
+        max_tokens: 80,
+        temperature: 0.9,
+      });
+
+      let response = completion.choices[0]?.message?.content || "How was your day? I'd love to hear about it!";
+      
+      // Remove any surrounding quotes that might be added by the AI
+      response = response.replace(/^["']|["']$/g, '');
+      
+      return NextResponse.json({ response });
+    } catch (error) {
+      console.error('Error generating clock out prompt:', error);
+      return NextResponse.json({ response: "How was your day? I'd love to hear about it!" });
+    }
+  }
+
   // Handle special system messages
   if (message === 'INITIAL_GREETING') {
     const employee = await getEmployee(userId);
@@ -98,13 +145,6 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
     return NextResponse.json({ response: greeting });
   }
 
-  if (message === 'CLOCK_OUT_PROMPT') {
-    const employee = await getEmployee(userId);
-    const employeeName = employee?.name || userName;
-    const clockOutMessage = await generateClockOutMessage(employeeName);
-    return NextResponse.json({ response: clockOutMessage });
-  }
-
   // Try to get employee record - if it doesn't exist, provide helpful message
   const employee = await getEmployee(userId);
   if (!employee) {
@@ -113,8 +153,58 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
     });
   }
 
+  // Check if user is starting a new conversation with trigger phrases
+  const lowerMessage = message.toLowerCase();
+  const isTriggerPhrase = (
+    lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || 
+    lowerMessage.includes('add policy') || lowerMessage.includes('policy sale') ||
+    lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || 
+    lowerMessage.includes('review') ||
+    lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || 
+    lowerMessage.includes('today\'s summary')
+  );
+
   // Get current conversation state
   const conversationState = await getConversationState(userId);
+
+  // If user is using a trigger phrase but there's an existing conversation state, 
+  // clear it to start fresh (they might be starting a new entry)
+  if (isTriggerPhrase && conversationState && conversationState.current_flow !== 'none') {
+    console.log('User used trigger phrase with existing conversation state - clearing to start fresh');
+    await clearConversationState(userId);
+    // Continue with normal AI response flow
+  } else if (conversationState && conversationState.current_flow !== 'none') {
+    console.log('Found active conversation state:', conversationState);
+    
+    // Get employee data for context - ENSURE we get fresh data every time
+    const [policySales, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
+      getPolicySales(userId),
+      getClientReviews(userId),
+      getEmployeeHours(userId),
+      getCrossSoldPolicies(userId),
+      getDailySummaries(userId)
+    ]);
+    
+    // Calculate totals for system prompt
+    const totalPolicies = policySales.length;
+    const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
+    const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
+    
+    // Prepare employee data for conversation flow
+    const employeeFlowData = {
+      employee,
+      totalPolicies,
+      totalSalesAmount,
+      totalBrokerFees,
+      employeeHours,
+      crossSoldPolicies,
+      policySales,
+      clientReviews,
+      dailySummaries
+    };
+    
+    return await handleConversationFlow(conversationState, message, userId, employeeFlowData);
+  }
 
   // Get employee data for context - ENSURE we get fresh data every time
   const [policySales, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
@@ -124,12 +214,6 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
     getCrossSoldPolicies(userId),
     getDailySummaries(userId)
   ]);
-
-  // Handle conversation flows for data collection
-  if (conversationState && conversationState.current_flow !== 'none') {
-    console.log('Found active conversation state:', conversationState);
-    return await handleConversationFlow(conversationState, message, userId);
-  }
 
   // Calculate totals (but don't include bonus information)
   const totalPolicies = policySales.length;
@@ -150,7 +234,7 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
   );
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4",
+    model: "gpt-4.1",
     messages: [
       {
         role: "system",
@@ -168,27 +252,33 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
   let rawResponse = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
   let response = cleanMarkdownResponse(rawResponse);
 
-  // Check if we should start a conversation flow - UPDATED to ask for multiple items together
-  const lowerMessage = message.toLowerCase();
-  if (lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy') || lowerMessage.includes('policy sale')) {
+  // Check if AI response indicates a conversation flow should be started
+  const lowerResponse = response.toLowerCase();
+  
+  // Start conversation flows based on AI's intelligent response - but only after the AI has responded
+  if ((lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy') || lowerMessage.includes('policy sale'))
+      && (lowerResponse.includes('policy number') || lowerResponse.includes('details') || lowerResponse.includes('record'))) {
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
-      currentFlow: 'policy_entry_batch',  // Changed to batch mode
+      currentFlow: 'policy_entry',
       collectedData: {},
-      nextQuestion: 'all_policy_details',
+      nextQuestion: 'policy_number',
       lastUpdated: new Date()
     });
-    response += "\n\n🎉 Fantastic! Let's record this policy sale. To speed things up, can you share:\n\n• **Policy number** (e.g., POL-2025-001)\n• **Client name**\n• **Policy type** (auto, home, life, etc.)\n• **Sale amount** ($)\n\nJust give me all the details in one message and I'll get it recorded for you!";
-  } else if (lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review')) {
+  } else if ((lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review'))
+             && (lowerResponse.includes('client') || lowerResponse.includes('review') || lowerResponse.includes('feedback'))) {
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
-      currentFlow: 'review_entry_batch',  // Changed to batch mode
+      currentFlow: 'review_entry',
       collectedData: {},
-      nextQuestion: 'all_review_details',
+      nextQuestion: 'client_name',
       lastUpdated: new Date()
     });
-    response += "\n\n⭐ Great! I'll help you record this client review. Please share:\n\n• **Client name**\n• **Rating** (1-5 stars)\n• **Review text** (what they said)\n\nJust include all the details in your next message!";
-  } else if (lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary')) {
+  } else if ((lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary'))
+             && (lowerResponse.includes('day') || lowerResponse.includes('summary') || lowerResponse.includes('accomplishments'))) {
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
       currentFlow: 'daily_summary',
@@ -196,7 +286,6 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
       nextQuestion: 'description',
       lastUpdated: new Date()
     });
-    response += "\n\n🌟 How was your day? I'd love to hear about your accomplishments, any challenges you faced, or just how things went overall. I'll automatically calculate your hours and policies from the system!";
   }
 
   return NextResponse.json({ response });

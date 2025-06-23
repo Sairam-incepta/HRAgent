@@ -5,9 +5,9 @@ import { useUser } from "@clerk/nextjs";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, BarChart } from "lucide-react";
+import { ChatInput } from "./chat-input";
+import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, AlertTriangle, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getChatMessages, addChatMessage } from "@/lib/database";
@@ -189,13 +189,7 @@ export function ChatInterface({
     setInput("");
     setIsTyping(true);
     
-    // Reset textarea height after sending
-    setTimeout(() => {
-      const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-      if (textarea) {
-        textarea.style.height = '44px';
-      }
-    }, 0);
+    // Input cleared - textarea remains fixed height
     
     try {
       // Call OpenAI API with user role
@@ -269,24 +263,8 @@ export function ChatInterface({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-    // Allow Shift+Enter for new lines - no need to prevent default
-    // The textarea will handle it naturally
-  };
-
-  // Auto-resize textarea based on content
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    
-    // Auto-resize the textarea
-    const textarea = e.target;
-    textarea.style.height = 'auto';
-    const scrollHeight = Math.min(textarea.scrollHeight, 120); // max-height: 120px
-    textarea.style.height = Math.max(44, scrollHeight) + 'px'; // min-height: 44px
+  const handleInputChange = (value: string) => {
+    setInput(value);
   };
 
   const handleQuickAction = (action: string) => {
@@ -298,26 +276,26 @@ export function ChatInterface({
     if (userRole === 'admin') {
       return [
         {
+          icon: AlertTriangle,
+          label: "Attention",
+          action: "What urgent items need my immediate attention?"
+        },
+        {
           icon: Users,
-          label: "Employee Performance",
-          action: "Show me employee performance metrics"
+          label: "Team performance",
+          action: "How is my team performing this month?"
         },
         {
-          icon: BarChart,
-          label: "Company Analytics",
-          action: "Give me company sales analytics"
-        },
-        {
-          icon: TrendingUp,
-          label: "Sales Overview",
-          action: "Show me recent policy sales"
+          icon: DollarSign,
+          label: "Sales summary",
+          action: "Show me our sales summary and top performers"
         }
       ];
     } else {
       return [
         {
           icon: TrendingUp,
-          label: "Add Policy Sale",
+          label: "New Sale",
           action: "I sold a new policy today"
         },
         {
@@ -327,8 +305,8 @@ export function ChatInterface({
         },
         {
           icon: Clock,
-          label: "Daily Summary",
-          action: "How was your day? I'd love to hear about it!"
+          label: "Share Day",
+          action: "Here's how my day went"
         }
       ];
     }
@@ -395,19 +373,19 @@ export function ChatInterface({
       {/* Removed duplicate header - title is now in parent component */}
       
       {/* Quick Action Buttons */}
-      <div className="p-3 border-b bg-background/95 backdrop-blur">
-        <div className="grid grid-cols-3 gap-2">
+      <div className="px-4 py-3 border-b bg-background/50 backdrop-blur">
+        <div className="flex gap-2 justify-between">
           {quickActions.map((action, index) => (
-            <Button
-              key={index}
-              variant="outline"
-              size="sm"
-              onClick={() => handleQuickAction(action.action)}
-              className="h-auto py-2 flex flex-col items-center gap-1 hover:bg-[#005cb3]/5 hover:border-[#005cb3]/20 transition-all"
-            >
-              <action.icon className="h-3 w-3 text-[#005cb3]" />
-              <span className="font-medium text-[10px] text-center leading-tight">{action.label}</span>
-            </Button>
+                          <Button
+                key={index}
+                variant="ghost"
+                size="sm"
+                onClick={() => handleQuickAction(action.action)}
+                className="flex-1 h-10 flex items-center justify-start gap-2 px-3 rounded-lg hover:bg-[#005cb3]/8 hover:text-[#005cb3] transition-all duration-200 border border-border/40 hover:border-[#005cb3]/30"
+              >
+                <action.icon className="h-4 w-4 text-[#005cb3] shrink-0" />
+                <span className="text-sm font-medium text-left leading-tight text-foreground/80 hover:text-[#005cb3] truncate">{action.label}</span>
+              </Button>
           ))}
         </div>
       </div>
@@ -442,7 +420,10 @@ export function ChatInterface({
                   : "bg-muted/50 border"
               )}
             >
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+              <div 
+                className="whitespace-pre-wrap text-sm leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: message.content }}
+              />
               <p className={cn(
                 "text-xs mt-2 opacity-70",
                 message.sender === "user" ? "text-blue-100" : "text-muted-foreground"
@@ -476,34 +457,19 @@ export function ChatInterface({
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-3 bg-background flex-shrink-0">
-        <div className="flex w-full items-end gap-2">
-          <Textarea
-            placeholder={userRole === 'admin' 
-              ? "Ask about employee performance, company metrics, or team analytics... (Shift+Enter for new line)" 
-              : "Tell me about your day, add sales data, or ask for help... (Shift+Enter for new line)"
-            }
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            className="flex-1 border-muted-foreground/20 focus:border-[#005cb3] transition-colors resize-none min-h-[44px] max-h-[120px]"
-            disabled={isTyping}
-            rows={1}
-          />
-          <Button 
-            onClick={handleSend} 
-            disabled={!input.trim() || isTyping} 
-            className="bg-[#005cb3] hover:bg-[#004a96] px-3"
-            size="sm"
-          >
-            {isTyping ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <PaperPlaneIcon className="h-4 w-4" />
-            )}
-            <span className="sr-only">Send</span>
-          </Button>
-        </div>
+      <div className="p-3 bg-background flex-shrink-0">
+        <ChatInput
+          value={input}
+          onChange={handleInputChange}
+          onSend={handleSend}
+          placeholder={userRole === 'admin' 
+            ? "Ask about team performance or analytics..." 
+            : "Share your wins, ask questions, or get support..."
+          }
+          disabled={isTyping}
+          isLoading={isTyping}
+          isExpanded={isExpanded}
+        />
       </div>
     </div>
   );
