@@ -136,9 +136,15 @@ export function EmployeeDetailsDialog({
   const crossSoldCount = employeePolicies.filter(policy => policy.cross_sold).length;
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    
+    // Get today's date in the same format for comparison
     const today = new Date();
-    const isToday = date.toDateString() === today.toDateString();
+    const todayFormatted = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    const isToday = date.getTime() === todayFormatted.getTime();
     
     if (isToday) {
       return "Today";
@@ -213,76 +219,85 @@ export function EmployeeDetailsDialog({
 
               <TabsContent value="overview" className="space-y-4">
                 {loading ? (
-                  <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-                    {[...Array(4)].map((_, i) => (
-                      <Card key={i}>
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                          <div className="h-4 bg-gray-200 rounded w-24 mb-2"></div>
-                          <div className="h-4 w-4 bg-gray-200 rounded"></div>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="h-8 bg-gray-200 rounded w-16 mb-2"></div>
-                          <div className="h-3 bg-gray-200 rounded w-20"></div>
-                        </CardContent>
-                      </Card>
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="bg-card rounded-lg border p-4 h-20">
+                        <div className="animate-pulse flex items-center justify-between h-full">
+                          <div className="flex flex-col justify-center space-y-2 flex-1">
+                            <div className="h-3 bg-muted rounded w-2/3"></div>
+                            <div className="h-6 bg-muted rounded w-1/3"></div>
+                          </div>
+                          <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Policies Sold</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{totalPolicies}</div>
-                        <p className="text-xs text-muted-foreground">
-                          {crossSoldCount} cross-sold
-                        </p>
-                      </CardContent>
-                    </Card>
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+                    {/* Policies Sold */}
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Policies Sold</p>
+                          <div className="flex items-baseline gap-1">
+                            <p className="text-2xl font-semibold text-foreground leading-tight">{totalPolicies}</p>
+                            <span className="text-xs text-muted-foreground">
+                              {crossSoldCount} cross-sold
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                        </div>
+                      </div>
+                    </div>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">${totalSales.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">
-                          All time
-                        </p>
-                      </CardContent>
-                    </Card>
+                                         {/* Total Sales */}
+                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                       <div className="flex items-center justify-between h-full">
+                         <div className="flex flex-col justify-center min-w-0 flex-1">
+                           <p className="text-xs text-muted-foreground leading-tight truncate">Total Sales</p>
+                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalSales.toLocaleString()}</p>
+                         </div>
+                         <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                           <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
+                         </div>
+                       </div>
+                     </div>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Bonus Earned</CardTitle>
-                        <BarChart className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">${totalBonus.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">
-                          10% after first $100
-                        </p>
-                      </CardContent>
-                    </Card>
+                     {/* Bonus Earned */}
+                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                       <div className="flex items-center justify-between h-full">
+                         <div className="flex flex-col justify-center min-w-0 flex-1">
+                           <p className="text-xs text-muted-foreground leading-tight truncate">Bonus Earned</p>
+                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalBonus.toLocaleString()}</p>
+                         </div>
+                         <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                           <BarChart className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                         </div>
+                       </div>
+                     </div>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Client Reviews</CardTitle>
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{clientReviews.length}</div>
-                        <p className="text-xs text-muted-foreground">
-                          {clientReviews.length > 0 
-                            ? `Avg: ${(clientReviews.reduce((sum, r) => sum + r.rating, 0) / clientReviews.length).toFixed(2)}/5`
-                            : 'No reviews yet'
-                          }
-                        </p>
-                      </CardContent>
-                    </Card>
+                    {/* Client Reviews */}
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Client Reviews</p>
+                          <div className="flex items-baseline gap-1">
+                            <p className="text-2xl font-semibold text-foreground leading-tight">{clientReviews.length}</p>
+                            <span className="text-xs text-muted-foreground">
+                              {clientReviews.length > 0 
+                                ? `Avg: ${(clientReviews.reduce((sum, r) => sum + r.rating, 0) / clientReviews.length).toFixed(2)}/5`
+                                : 'No reviews'
+                              }
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <FileText className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -401,11 +416,6 @@ export function EmployeeDetailsDialog({
                                 <span className="text-muted-foreground text-sm">
                                   {day.dayName}
                                 </span>
-                                {isToday && (
-                                  <Badge variant="outline" className="text-xs bg-[#005cb3]/10 text-[#005cb3]">
-                                    Today
-                                  </Badge>
-                                )}
                               </div>
                               
                               {/* Hours Worked Column */}
