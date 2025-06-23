@@ -21,6 +21,10 @@ type Message = {
 
 const MAX_MESSAGES = 35;
 
+interface CustomPublicMetadata {
+  role?: "admin" | "employee";
+}
+
 export function ChatInterface({ 
   onClockOutPrompt, 
   clockOutPromptMessage,
@@ -44,15 +48,14 @@ export function ChatInterface({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Determine user role
   useEffect(() => {
-    if (isLoaded && user) {
-      const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
-                     user.publicMetadata?.role === 'admin' ||
-                     user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
-      setUserRole(isAdmin ? 'admin' : 'employee');
+    if (user) {
+      // Get role from Clerk metadata on client side
+      const publicMetadata = user.publicMetadata as CustomPublicMetadata;
+      const role = publicMetadata?.role || "employee";
+      setUserRole(role);
     }
-  }, [isLoaded, user]);
+  }, [user]);
 
   // Load messages from database and send initial AI greeting
   useEffect(() => {
@@ -447,7 +450,7 @@ export function ChatInterface({
             <div className="rounded-lg px-4 py-3 bg-muted/50 border">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">Assistant is thinking...</span>
+                <span className="text-sm">typing...</span>
               </div>
             </div>
           </div>

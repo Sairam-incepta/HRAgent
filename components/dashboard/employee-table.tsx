@@ -30,6 +30,10 @@ import {
 import { getEmployees } from "@/lib/database";
 import type { Employee } from "@/lib/supabase";
 
+interface CustomPublicMetadata {
+  role?: "admin" | "employee";
+}
+
 interface EmployeeTableProps {
   showInOverview?: boolean;
 }
@@ -41,19 +45,25 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [addEmployeeOpen, setAddEmployeeOpen] = useState(false);
-  const [editEmployeeOpen, setEditEmployeeOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
-  const [payrollHistoryOpen, setPayrollHistoryOpen] = useState(false);
+  const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
+  const [payrollHistoryDialogOpen, setPayrollHistoryDialogOpen] = useState(false);
   const [payrollEmployee, setPayrollEmployee] = useState<string | null>(null);
   const [historyEmployeeId, setHistoryEmployeeId] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
 
-  // Check if user is admin
-  const isAdmin = user?.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
-                  user?.publicMetadata?.role === 'admin' ||
-                  user?.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+  useEffect(() => {
+    if (user) {
+      // Get role from Clerk metadata on client side
+      const publicMetadata = user.publicMetadata as CustomPublicMetadata;
+      const role = publicMetadata?.role || "employee";
+      setUserRole(role);
+    }
+  }, [user]);
 
   useEffect(() => {
     loadEmployees();
@@ -84,22 +94,22 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
 
   const handleViewDetails = (employee: Employee) => {
     setSelectedEmployee(employee);
-    setDetailsOpen(true);
+    setDetailsDialogOpen(true);
   };
 
   const handleEditEmployee = (employee: Employee) => {
     setEditingEmployee(employee);
-    setEditEmployeeOpen(true);
+    setEditDialogOpen(true);
   };
 
   const handleGeneratePayroll = (employee: Employee) => {
-    setPayrollEmployee(employee.name);
+    setPayrollEmployee(employee.clerk_user_id);
     setPayrollDialogOpen(true);
   };
 
   const handleViewPayrollHistory = (employee: Employee) => {
     setHistoryEmployeeId(employee.clerk_user_id);
-    setPayrollHistoryOpen(true);
+    setPayrollHistoryDialogOpen(true);
   };
 
   const handleAddEmployeeSuccess = () => {
@@ -132,6 +142,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
         return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400";
     }
   };
+
+  const isAdmin = userRole === "admin";
 
   if (loading) {
     return <div className="text-center py-4">Loading employees...</div>;
@@ -285,8 +297,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
 
       {selectedEmployee && (
         <EmployeeDetailsDialog
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
+          open={detailsDialogOpen}
+          onOpenChange={setDetailsDialogOpen}
           employee={selectedEmployee}
         />
       )}
@@ -303,8 +315,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
       {/* Show Edit Employee dialog for admins */}
       {isAdmin && (
         <EditEmployeeDialog
-          open={editEmployeeOpen}
-          onOpenChange={setEditEmployeeOpen}
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
           employee={editingEmployee}
           onEmployeeUpdated={handleEmployeeUpdated}
         />
@@ -317,8 +329,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
       />
 
       <EmployeePayrollHistoryDialog
-        open={payrollHistoryOpen}
-        onOpenChange={setPayrollHistoryOpen}
+        open={payrollHistoryDialogOpen}
+        onOpenChange={setPayrollHistoryDialogOpen}
         employeeId={historyEmployeeId}
       />
     </>

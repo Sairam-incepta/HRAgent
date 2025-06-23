@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -66,8 +67,8 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
               notificationItems.push({
                 id: notification.id,
                 type: 'high_value_policy',
-                title: `Policy ${notification.policy_number}`,
-                description: `$${notification.policy_amount.toLocaleString()} - ${notification.employee_name || 'Unknown Employee'}`,
+                title: `${notification.policy_number}`,
+                description: `$${notification.policy_amount.toLocaleString()} Policy`,
                 isUrgent,
                 policyId: notification.id
               });
@@ -308,7 +309,7 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
       {userRole === "admin" && showNotifications && (
         <div ref={notificationRef} className="absolute top-14 right-4 w-96 bg-background border rounded-lg shadow-lg z-50">
           <div className="p-4 border-b">
-            <h3 className="font-semibold">Notifications ({pendingCount})</h3>
+            <h3 className="font-semibold">High Value Policy Alerts ({pendingCount})</h3>
           </div>
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (

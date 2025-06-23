@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { History, Clock, DollarSign, TrendingUp, Calendar } from "lucide-react";
-import { getEmployeePayrollHistory, getEmployee } from "@/lib/database";
+import { getEmployeePayrollHistory, getEmployee, formatHoursMinutes } from "@/lib/database";
 
 interface EmployeePayrollHistoryDialogProps {
   open: boolean;
@@ -97,7 +97,7 @@ export function EmployeePayrollHistoryDialog({
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card>
                 <CardContent className="p-4 text-center">
                   <DollarSign className="h-6 w-6 mx-auto mb-2 text-[#005cb3]" />
@@ -108,7 +108,7 @@ export function EmployeePayrollHistoryDialog({
               <Card>
                 <CardContent className="p-4 text-center">
                   <Clock className="h-6 w-6 mx-auto mb-2 text-[#005cb3]" />
-                  <div className="text-2xl font-bold">{Math.round(totalHours)}</div>
+                  <div className="text-2xl font-bold">{formatHoursMinutes(totalHours)}</div>
                   <div className="text-xs text-muted-foreground">Total Hours</div>
                 </CardContent>
               </Card>
@@ -156,24 +156,24 @@ export function EmployeePayrollHistoryDialog({
                           </div>
                         </div>
                         
-                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Total Hours:</span>
-                        <div className="font-medium">{period.regularHours}h</div>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Hourly Rate:</span>
-                        <div className="font-medium">${employee?.hourly_rate || 25}/hr</div>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Sales Bonus:</span>
-                        <div className="font-medium">${period.bonuses.toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Policies Sold:</span>
-                        <div className="font-medium">{period.salesCount}</div>
-                      </div>
-                    </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">                        
+                          <div>
+                            <span className="text-muted-foreground">Total Hours:</span>
+                            <div className="font-medium">{formatHoursMinutes(period.regularHours)}</div>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Hourly Rate:</span>
+                            <div className="font-medium">${employee?.hourly_rate || 25}/hr</div>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Sales Bonus:</span>
+                            <div className="font-medium">${period.bonuses.toLocaleString()}</div>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Policies Sold:</span>
+                            <div className="font-medium">{period.salesCount}</div>
+                          </div>
+                        </div>
                         
                         <div className="mt-3 pt-3 border-t grid grid-cols-3 gap-4 text-sm">                        
                           <div>
@@ -194,22 +194,17 @@ export function EmployeePayrollHistoryDialog({
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No payroll history found for this employee.
+                    <History className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No payroll history available yet.</p>
+                    <p className="text-sm">Payroll records will appear here after you work some hours.</p>
                   </div>
                 )}
               </CardContent>
             </Card>
-
-            {/* Actions */}
-            <div className="flex justify-end">
-              <Button onClick={handleClose} variant="outline">
-                Close
-              </Button>
-            </div>
           </div>
         ) : (
           <div className="text-center py-8 text-muted-foreground">
-            Employee not found.
+            <p>Employee not found.</p>
           </div>
         )}
       </DialogContent>

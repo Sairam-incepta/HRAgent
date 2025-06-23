@@ -7,9 +7,19 @@ import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react"
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { createTimeLog, updateTimeLog, getTimeLogsForDay } from '@/lib/database';
+import { 
+  getTimeLogsForDay, 
+  createTimeLog, 
+  updateTimeLog,
+  getPolicySales,
+  getHighValuePolicyNotificationsList,
+  getClientReviews
+} from "@/lib/database";
 import { useUser } from '@clerk/nextjs';
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { dashboardEvents } from "@/lib/events";
+import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
+import { DailySummaryRequiredDialog } from "./daily-summary-required-dialog";
 
 type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 
@@ -52,15 +62,21 @@ export function TimeTracker({
   const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
   const [lunchStartConfirmOpen, setLunchStartConfirmOpen] = useState(false);
   const [lunchEndConfirmOpen, setLunchEndConfirmOpen] = useState(false);
-  
+  const [showOvertimeDialog, setShowOvertimeDialog] = useState(false);
+  const [showDailySummaryDialog, setShowDailySummaryDialog] = useState(false);
+  const [isUpdatingLogs, setIsUpdatingLogs] = useState(false);
+  const [logsToday, setLogsToday] = useState<any[]>([]);
+  const [currentBonuses, setCurrentBonuses] = useState(0);
+  const [unreviewedPolicies, setUnreviewedPolicies] = useState(0);
+
   const { toast } = useToast();
 
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
-  const [logsToday, setLogsToday] = useState<any[]>([]);
-  const [isUpdatingLogs, setIsUpdatingLogs] = useState(false);
 
   // NEW: Store base time in a ref
   const baseTimeRef = useRef(0);
+
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Update baseTimeRef whenever logsToday changes
   useEffect(() => {
@@ -172,6 +188,76 @@ export function TimeTracker({
       setActiveLogId(openLogId);
     } finally {
       setIsUpdatingLogs(false);
+    }
+  };
+
+  // Load current bonuses from different sources
+  const loadCurrentBonuses = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const [policySales, clientReviews] = await Promise.all([
+        getPolicySales(user.id),
+        getClientReviews(user.id)
+      ]);
+      
+      // Calculate different types of bonuses separately
+      let brokerFeeBonuses = 0;
+      let crossSellingBonuses = 0; 
+      let lifeInsuranceBonuses = 0;
+      let highValuePolicyBonuses = 0;
+      
+      // Process policy sales for bonuses
+      policySales.forEach(sale => {
+        // Broker fee bonus: 10% of (broker fee - 100)
+        if (sale.broker_fee > 100) {
+          const baseBrokerBonus = (sale.broker_fee - 100) * 0.1;
+          brokerFeeBonuses += baseBrokerBonus;
+          
+          // Cross-selling bonus: double the broker fee bonus
+          if (sale.cross_sold) {
+            crossSellingBonuses += baseBrokerBonus; // Additional amount for cross-selling
+          }
+        }
+        
+        // Life insurance bonus: $10 for life insurance policies
+        if (sale.policy_type.toLowerCase().includes('life') || 
+            (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
+          lifeInsuranceBonuses += 10.00;
+        }
+        
+        // High-value policy admin bonuses
+        const adminBonus = (sale as any).admin_bonus || 0;
+        if (adminBonus > 0) {
+          highValuePolicyBonuses += adminBonus;
+        }
+      });
+      
+      // Review bonuses: $10 for each 5-star review
+      const reviewBonuses = clientReviews.filter(review => review.rating === 5).length * 10;
+      
+      // Set total bonuses for pay calculation
+      const totalBonuses = brokerFeeBonuses + crossSellingBonuses + lifeInsuranceBonuses + reviewBonuses + highValuePolicyBonuses;
+      setCurrentBonuses(totalBonuses);
+      
+    } catch (error) {
+      console.error('Error loading bonuses:', error);
+    }
+  };
+
+  // Check for unreviewed high-value policies
+  const checkUnreviewedPolicies = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const notifications = await getHighValuePolicyNotificationsList();
+      const userUnreviewed = notifications.filter(n => 
+        n.employee_id === user.id && 
+        (n.status === 'pending' || n.status === 'reviewed')
+      );
+      setUnreviewedPolicies(userUnreviewed.length);
+    } catch (error) {
+      console.error('Error checking unreviewed policies:', error);
     }
   };
 
@@ -305,8 +391,27 @@ export function TimeTracker({
   useEffect(() => {
     if (user?.id) {
       fetchAndSumLogs();
+      loadCurrentBonuses(); // Load bonuses on mount
+      checkUnreviewedPolicies(); // Load unreviewed policies on mount
     }
   }, [user?.id]);
+
+  // Add event listener for policy sales updates
+  useEffect(() => {
+    const handlePolicySaleUpdate = () => {
+      loadCurrentBonuses(); // Reload bonuses when policy sales are updated
+      checkUnreviewedPolicies(); // Check for unreviewed policies
+    };
+
+    const cleanupFunctions = [
+      dashboardEvents.on('policy_sale', handlePolicySaleUpdate),
+      dashboardEvents.on('high_value_policy_updated', handlePolicySaleUpdate)
+    ];
+    
+    return () => {
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
+  }, []);
 
   // Load time session from localStorage on component mount
   useEffect(() => {
@@ -381,7 +486,7 @@ export function TimeTracker({
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // ENHANCED: More accurate pay calculation
+  // ENHANCED: More accurate pay calculation with bonus breakdown
   const calculatePay = (seconds: number) => {
     const hours = seconds / 3600;
     const regularHours = Math.min(hours, maxHoursBeforeOvertime);
@@ -389,12 +494,15 @@ export function TimeTracker({
     
     const regularPay = regularHours * hourlyRate;
     const overtimePay = overtimeHours * hourlyRate * 1.0; // 1x rate for overtime
+    const basePay = regularPay + overtimePay;
     
     return {
       regularPay: Math.round(regularPay * 100) / 100,
       overtimePay: Math.round(overtimePay * 100) / 100,
-      totalPay: Math.round((regularPay + overtimePay) * 100) / 100,
-      overtimeHours: Math.round(overtimeHours * 100) / 100
+      totalPay: Math.round((basePay + currentBonuses) * 100) / 100, // Include bonuses
+      overtimeHours: Math.round(overtimeHours * 100) / 100,
+      bonuses: Math.round(currentBonuses * 100) / 100,
+      basePay: Math.round(basePay * 100) / 100 // Hours × rate only
     };
   };
 
@@ -545,15 +653,12 @@ export function TimeTracker({
             </div>
             
             {(status !== "idle" || elapsedTime > 0) && (
-              <div className="text-xs text-muted-foreground">
-                <div>Pay: ${payInfo.totalPay.toFixed(2)}</div>
-                {isInOvertime && (
-                  <div className="text-amber-600 dark:text-amber-400">
-                    OT: ${payInfo.overtimePay.toFixed(2)}
-                  </div>
-                )}
+              <div className="text-sm font-medium text-muted-foreground">
+                Pay: ${payInfo.basePay.toFixed(2)}
               </div>
             )}
+            
+
           </div>
         </CardContent>
       </Card>
@@ -632,10 +737,16 @@ export function TimeTracker({
                 <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
                   <div className="text-sm space-y-1">
                     <div><strong>Total time worked:</strong> {formatTime(elapsedTime)}</div>
+                    <div><strong>Hours pay:</strong> ${payInfo.basePay.toFixed(2)} ({formatTime(elapsedTime)} @ ${hourlyRate}/hr)</div>
+                    {payInfo.bonuses > 0 && (
+                      <div className="text-green-600 dark:text-green-400">
+                        <strong>Bonuses:</strong> ${payInfo.bonuses.toFixed(2)}
+                      </div>
+                    )}
                     <div><strong>Total pay:</strong> ${payInfo.totalPay.toFixed(2)}</div>
                     {payInfo.overtimeHours > 0 && (
                       <div className="text-amber-600 dark:text-amber-400">
-                        <strong>Overtime pay:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)} hours)
+                        <strong>Overtime:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)}h)
                       </div>
                     )}
                   </div>

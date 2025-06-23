@@ -140,7 +140,7 @@ export const addPolicySale = async (sale: {
         cross_sold_to: sale.crossSoldTo,
         client_description: sale.clientDescription,
         is_cross_sold_policy: sale.isCrossSoldPolicy || false,
-        bonus: calculateBonus(sale.brokerFee, sale.crossSold)
+        bonus: calculateBonus(sale.brokerFee, sale.isCrossSoldPolicy || false)
       })
       .select()
       .single();
@@ -230,25 +230,42 @@ export const getTodayPolicySales = async (employeeId: string): Promise<PolicySal
   return data || [];
 };
 
-// New function to get today's time tracking data for an employee
+// Get today's time tracking data for an employee from actual time logs
 export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalHours: number; clockedIn: boolean }> => {
-  // For now, we'll simulate this data since we don't have a time_logs table yet
-  // In a real implementation, you would query actual time tracking data
-  
-  // This would typically come from a time_logs table or similar
-  // For now, we'll return a reasonable default based on current time
-  const currentHour = new Date().getHours();
-  let estimatedHours = 0;
-  
-  // Simple estimation: if it's after 9 AM, assume they've been working
-  if (currentHour >= 9) {
-    estimatedHours = Math.min(currentHour - 9, 8); // Max 8 hours
+  try {
+    // Get today's date in local timezone
+    const today = getLocalDateString();
+    
+    // Get all time logs for today
+    const timeLogs = await getTimeLogsForDay(employeeId, today);
+    
+    let totalHours = 0;
+    let clockedIn = false;
+    
+    // Calculate total hours worked and check if currently clocked in
+    timeLogs.forEach(log => {
+      if (log.clock_in && log.clock_out) {
+        // Completed session
+        const startTime = new Date(log.clock_in).getTime();
+        const endTime = new Date(log.clock_out).getTime();
+        totalHours += (endTime - startTime) / (1000 * 60 * 60); // Convert to hours
+      } else if (log.clock_in && !log.clock_out) {
+        // Currently clocked in - calculate up to now
+        const startTime = new Date(log.clock_in).getTime();
+        const now = Date.now();
+        totalHours += (now - startTime) / (1000 * 60 * 60);
+        clockedIn = true;
+      }
+    });
+    
+    return {
+      totalHours: Math.round(totalHours * 100) / 100, // Round to 2 decimal places
+      clockedIn
+    };
+  } catch (error) {
+    console.error('Error getting today time tracking:', error);
+    return { totalHours: 0, clockedIn: false };
   }
-  
-  return {
-    totalHours: estimatedHours,
-    clockedIn: currentHour >= 9 && currentHour <= 17 // Assume working hours 9-5
-  };
 };
 
 // Employee Bonus Functions
@@ -716,7 +733,7 @@ export interface PayrollPeriod {
   period: string;
   employees: number;
   total: number;
-  status: 'current' | 'completed';
+  status: 'current' | 'completed' | 'upcoming';
   startDate: string;
   endDate: string;
   details: {
@@ -733,130 +750,221 @@ export interface PayrollPeriod {
   };
 }
 
+// Helper function to format hours as "Xh Ym" format
+export const formatHoursMinutes = (totalHours: number): string => {
+  const hours = Math.floor(totalHours);
+  const minutes = Math.round((totalHours - hours) * 60);
+  
+  if (hours === 0 && minutes === 0) {
+    return '0h 0m';
+  } else if (hours === 0) {
+    return `${minutes}m`;
+  } else if (minutes === 0) {
+    return `${hours}h`;
+  } else {
+    return `${hours}h ${minutes}m`;
+  }
+};
+
+// Helper function to calculate actual hours worked from time_logs for a date range
+export const calculateActualHoursForPeriod = async (employeeId: string, startDate: Date, endDate: Date): Promise<number> => {
+  try {
+    console.log(`⏰ Calculating hours for employee ${employeeId} from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
+    
+    let totalHours = 0;
+    let daysChecked = 0;
+    let daysWithLogs = 0;
+    
+    // Iterate through each day in the period
+    const currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      const dateString = getLocalDateString(currentDate);
+      daysChecked++;
+      
+      const timeLogs = await getTimeLogsForDay(employeeId, dateString);
+      
+      if (timeLogs.length > 0) {
+        daysWithLogs++;
+        console.log(`📅 ${dateString}: Found ${timeLogs.length} time logs`);
+        
+        // Calculate hours for this day
+        timeLogs.forEach(log => {
+          if (log.clock_in && log.clock_out) {
+            const startTime = new Date(log.clock_in).getTime();
+            const endTime = new Date(log.clock_out).getTime();
+            const dayHours = (endTime - startTime) / (1000 * 60 * 60);
+            totalHours += dayHours;
+            console.log(`  ✅ Complete session: ${dayHours.toFixed(2)} hours (${log.clock_in} to ${log.clock_out})`);
+          } else if (log.clock_in && !log.clock_out) {
+            // If currently clocked in, calculate up to now (only if it's today)
+            const today = getLocalDateString();
+            if (dateString === today) {
+              const startTime = new Date(log.clock_in).getTime();
+              const now = Date.now();
+              const dayHours = (now - startTime) / (1000 * 60 * 60);
+              totalHours += dayHours;
+              console.log(`  ⏳ Active session: ${dayHours.toFixed(2)} hours (${log.clock_in} to now)`);
+            } else {
+              console.log(`  ⚠️ Incomplete session: clocked in at ${log.clock_in} but no clock out`);
+            }
+          }
+        });
+      }
+      
+      // Move to next day
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    console.log(`⏰ Period summary for employee ${employeeId}:`, {
+      daysChecked,
+      daysWithLogs,
+      totalHours: totalHours.toFixed(2)
+    });
+    
+    return Math.round(totalHours * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('❌ Error calculating actual hours for period:', error);
+    return 0;
+  }
+};
+
 export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
   try {
-    const [employees, policySales, dailySummaries, overtimeRequests] = await Promise.all([
+    console.log('📊 Getting payroll periods...');
+    
+    const [employees, policySales] = await Promise.all([
       getEmployees(),
-      getPolicySales(),
-      getAllDailySummaries(),
-      getOvertimeRequests()
+      getPolicySales()
     ]);
 
+    console.log(`👥 Found ${employees.length} employees, ${policySales.length} policy sales`);
+
     const activeEmployees = employees.filter(emp => emp.status === 'active');
-    
-    // Generate bi-weekly periods for the last 6 periods
     const periods: PayrollPeriod[] = [];
     const now = new Date();
     
-    for (let i = 0; i < 6; i++) {
-      const endDate = new Date(now);
-      endDate.setDate(now.getDate() - (i * 14));
+    // Reference date for biweekly periods (Monday, January 6, 2025)
+    const referenceDate = new Date('2025-01-06');
+    const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
+    const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
+    
+    console.log(`📅 Reference date: ${referenceDate.toISOString()}, periods since: ${biweeklyPeriodsSinceReference}`);
+    
+    // Get current period
+    const currentPeriodStart = biweeklyPeriodsSinceReference;
+    const currentStartDate = new Date(referenceDate);
+    currentStartDate.setDate(referenceDate.getDate() + (currentPeriodStart * 14));
+    const currentEndDate = new Date(currentStartDate);
+    currentEndDate.setDate(currentStartDate.getDate() + 13);
+    
+    console.log(`📅 Current period: ${currentStartDate.toISOString().split('T')[0]} to ${currentEndDate.toISOString().split('T')[0]}`);
+    
+    // Simple calculation for current period
+    const currentPeriodSales = policySales.filter(sale => {
+      const saleDate = new Date(sale.sale_date);
+      return saleDate >= currentStartDate && saleDate <= currentEndDate;
+    });
+    
+    console.log(`💰 Current period sales: ${currentPeriodSales.length}`);
+    
+    const currentTotalBonuses = currentPeriodSales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+    // Use standard 80 hours per employee per 2-week period (8 hours/day * 10 working days)
+    const currentEstimatedHours = activeEmployees.length * 80;
+    const currentEstimatedBasePay = currentEstimatedHours * 25; // $25/hour
+    const currentEstimatedPay = currentEstimatedBasePay + currentTotalBonuses;
+    
+    console.log(`💵 Current period calculation:`, {
+      employees: activeEmployees.length,
+      estimatedHours: currentEstimatedHours,
+      basePay: currentEstimatedBasePay,
+      bonuses: currentTotalBonuses,
+      totalPay: currentEstimatedPay
+    });
+    
+    // Add current period
+    periods.push({
+      period: `${currentStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${currentEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+      employees: activeEmployees.length,
+      total: Math.round(currentEstimatedPay),
+      status: 'current',
+      startDate: currentStartDate.toISOString().split('T')[0],
+      endDate: currentEndDate.toISOString().split('T')[0],
+      details: {
+        regularHours: currentEstimatedHours, // Use estimated hours instead of 0
+        overtimeHours: 0,
+        totalSales: currentPeriodSales.length,
+        totalBonuses: Math.round(currentTotalBonuses),
+        departmentBreakdown: []
+      }
+    });
+    
+    // Add previous periods that have sales data (max 2 for speed)
+    for (let i = 1; i <= 2; i++) {
+      const periodStart = currentPeriodStart - i;
+      const startDate = new Date(referenceDate);
+      startDate.setDate(referenceDate.getDate() + (periodStart * 14));
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 13);
       
-      const startDate = new Date(endDate);
-      startDate.setDate(endDate.getDate() - 13);
-      
-      // Filter data for this period
       const periodSales = policySales.filter(sale => {
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
       
-      const periodSummaries = dailySummaries.filter(summary => {
-        const summaryDate = new Date(summary.date);
-        return summaryDate >= startDate && summaryDate <= endDate;
-      });
+      // Show period even if no sales, with estimated hours
+      const totalBonuses = periodSales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+      const estimatedHours = activeEmployees.length * 80;
+      const estimatedBasePay = estimatedHours * 25;
+      const estimatedPay = estimatedBasePay + totalBonuses;
       
-      const periodOvertime = overtimeRequests.filter(req => {
-        const reqDate = new Date(req.request_date);
-        return reqDate >= startDate && reqDate <= endDate && req.status === 'approved';
-      });
-      
-      // Calculate total hours and pay (no overtime distinction since rates are same)
-      const totalHours = periodSummaries.reduce((sum, summary) => {
-        return sum + summary.hours_worked;
-      }, 0);
-      
-      // Calculate total pay
-      const totalPay = activeEmployees.reduce((sum, emp) => {
-        const empHours = periodSummaries
-          .filter(s => s.employee_id === emp.clerk_user_id)
-          .reduce((total, s) => total + s.hours_worked, 0);
-        return sum + (empHours * emp.hourly_rate);
-      }, 0);
-      
-              const totalSales = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
-        const totalBonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
-        const finalTotalPay = totalPay + totalBonuses;
-      
-      // Department breakdown
-      const departmentMap = new Map();
-      activeEmployees.forEach(emp => {
-        if (!departmentMap.has(emp.department)) {
-          departmentMap.set(emp.department, {
-            employees: 0,
-            totalPay: 0,
-            totalHourlyRate: 0
-          });
-        }
-        const dept = departmentMap.get(emp.department);
-        dept.employees += 1;
-        dept.totalHourlyRate += emp.hourly_rate;
-        
-        // Calculate this employee's pay for the period
-        const empHours = periodSummaries
-          .filter(s => s.employee_id === emp.clerk_user_id)
-          .reduce((total, s) => total + s.hours_worked, 0);
-        const empBonuses = periodSales
-          .filter(s => s.employee_id === emp.clerk_user_id)
-          .reduce((total, s) => total + s.bonus, 0);
-        
-        dept.totalPay += (empHours * emp.hourly_rate) + empBonuses;
-      });
-      
-      const departmentBreakdown = Array.from(departmentMap.entries()).map(([dept, data]) => ({
-        department: dept,
-        employees: data.employees,
-        totalPay: Math.round(data.totalPay),
-        avgHourlyRate: Math.round((data.totalHourlyRate / data.employees) * 100) / 100
-      }));
-      
-      periods.push({
+      periods.unshift({
         period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
         employees: activeEmployees.length,
-        total: Math.round(finalTotalPay),
-        status: i === 0 ? 'current' : 'completed',
+        total: Math.round(estimatedPay),
+        status: 'completed',
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
         details: {
-          regularHours: Math.round(totalHours * 10) / 10,
-          overtimeHours: 0, // No overtime distinction since rates are same
-          totalSales: Math.round(totalSales),
+          regularHours: estimatedHours, // Use estimated hours
+          overtimeHours: 0,
+          totalSales: periodSales.length,
           totalBonuses: Math.round(totalBonuses),
-          departmentBreakdown
+          departmentBreakdown: []
         }
       });
     }
     
+    // Add next 2 upcoming periods
+    for (let i = 1; i <= 2; i++) {
+      const periodStart = currentPeriodStart + i;
+      const startDate = new Date(referenceDate);
+      startDate.setDate(referenceDate.getDate() + (periodStart * 14));
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 13);
+      
+      periods.push({
+        period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        employees: activeEmployees.length,
+        total: 0,
+        status: 'upcoming',
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        details: {
+          regularHours: 0,
+          overtimeHours: 0,
+          totalSales: 0,
+          totalBonuses: 0,
+          departmentBreakdown: []
+        }
+      });
+    }
+    
+    console.log(`📊 Generated ${periods.length} payroll periods`);
     return periods;
   } catch (error) {
-    console.error('Error generating payroll periods:', error);
+    console.error('❌ Error getting payroll periods:', error);
     return [];
   }
-};
-
-// Helper function to get all daily summaries (for admin)
-const getAllDailySummaries = async (): Promise<DailySummary[]> => {
-  const { data, error } = await supabase
-    .from('daily_summaries')
-    .select('*')
-    .order('date', { ascending: false });
-
-  if (error) {
-    console.error('Error fetching all daily summaries:', error);
-    return [];
-  }
-
-  return data || [];
 };
 
 // Get detailed payroll data for a specific period
@@ -889,36 +997,65 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
   };
 }> => {
   try {
-    const [employees, policySales, dailySummaries] = await Promise.all([
+    console.log(`🔍 Getting payroll details for period: ${startDate} to ${endDate}`);
+    
+    const [employees, policySales] = await Promise.all([
       getEmployees(),
-      getPolicySales(),
-      getAllDailySummaries()
+      getPolicySales()
     ]);
+
+    console.log(`📊 Found ${employees.length} employees and ${policySales.length} total policy sales`);
 
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    const periodSales = policySales.filter(sale => {
+    const periodSales = policySales.filter((sale: any) => {
       const saleDate = new Date(sale.sale_date);
       return saleDate >= start && saleDate <= end;
     });
 
-    const periodSummaries = dailySummaries.filter(summary => {
-      const summaryDate = new Date(summary.date);
-      return summaryDate >= start && summaryDate <= end;
-    });
+    console.log(`📈 Found ${periodSales.length} sales in period ${startDate} to ${endDate}`);
+    
+    if (periodSales.length > 0) {
+      console.log('📋 Period sales:', periodSales.map(s => ({
+        employee_id: s.employee_id,
+        amount: s.amount,
+        bonus: s.bonus,
+        sale_date: s.sale_date
+      })));
+    }
 
-    const employeeDetails = employees.map(emp => {
-      const empSummaries = periodSummaries.filter(s => s.employee_id === emp.clerk_user_id);
-      const empSales = periodSales.filter(s => s.employee_id === emp.clerk_user_id);
+    const employeeDetails = [];
+    for (const emp of employees) {
+      console.log(`👤 Processing employee: ${emp.name} (${emp.clerk_user_id})`);
       
-      const totalHours = empSummaries.reduce((sum, s) => sum + s.hours_worked, 0);
-      const bonuses = empSales.reduce((sum, s) => sum + s.bonus, 0);
+      const empSales = periodSales.filter((s: any) => s.employee_id === emp.clerk_user_id);
+      console.log(`💰 Employee ${emp.name} has ${empSales.length} sales in this period`);
+      
+      // Calculate actual hours worked from time logs
+      const actualHours = await calculateActualHoursForPeriod(emp.clerk_user_id, start, end);
+      console.log(`⏰ Employee ${emp.name} worked ${actualHours} actual hours in this period`);
+      
+      // If no actual hours, use estimated hours (80 hours per 2-week period)
+      const totalHours = actualHours > 0 ? actualHours : 80;
+      console.log(`📊 Employee ${emp.name} using ${totalHours} hours (${actualHours > 0 ? 'actual' : 'estimated'})`);
+      
+      const bonuses = empSales.reduce((sum: number, s: any) => sum + (s.bonus || 0), 0);
       const totalPay = (totalHours * emp.hourly_rate) + bonuses;
       
-      const salesAmount = empSales.reduce((sum, s) => sum + s.amount, 0);
+      const salesAmount = empSales.reduce((sum: number, s: any) => sum + s.amount, 0);
 
-      return {
+      console.log(`💵 Employee ${emp.name} summary:`, {
+        actualHours,
+        totalHours,
+        hourlyRate: emp.hourly_rate,
+        bonuses,
+        totalPay,
+        salesCount: empSales.length,
+        salesAmount
+      });
+
+      employeeDetails.push({
         id: emp.id,
         name: emp.name,
         department: emp.department,
@@ -932,8 +1069,8 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         totalPay: Math.round(totalPay * 100) / 100,
         salesCount: empSales.length,
         salesAmount: Math.round(salesAmount)
-      };
-    });
+      });
+    }
 
     const summary = {
       totalEmployees: employees.length,
@@ -944,12 +1081,14 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       totalBonuses: employeeDetails.reduce((sum, emp) => sum + emp.bonuses, 0),
       totalPay: employeeDetails.reduce((sum, emp) => sum + emp.totalPay, 0),
       totalSales: periodSales.length,
-      totalSalesAmount: periodSales.reduce((sum, sale) => sum + sale.amount, 0)
+      totalSalesAmount: periodSales.reduce((sum: number, sale: any) => sum + sale.amount, 0)
     };
+
+    console.log('📊 Final payroll summary:', summary);
 
     return { employees: employeeDetails, summary };
   } catch (error) {
-    console.error('Error getting payroll period details:', error);
+    console.error('❌ Error getting payroll period details:', error);
     return {
       employees: [],
       summary: {
@@ -982,50 +1121,53 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
   salesAmount: number;
 }>> => {
   try {
-    const [employee, policySales, dailySummaries] = await Promise.all([
+    const [employee, policySales] = await Promise.all([
       getEmployee(employeeId),
-      getPolicySales(employeeId),
-      getDailySummaries(employeeId)
+      getPolicySales(employeeId)
     ]);
 
     if (!employee) return [];
 
-    const payrollHistory = [];
+    const history = [];
     const now = new Date();
     
-    // Generate last 6 biweekly periods
-    for (let i = 0; i < 6; i++) {
-      const endDate = new Date(now);
-      endDate.setDate(now.getDate() - (i * 14));
+    // Use the same biweekly calculation as the main payroll system
+    const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
+    const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
+    const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
+
+    // Generate last 12 biweekly periods for history
+    for (let i = 0; i < 12; i++) {
+      const periodsBack = i;
+      const currentPeriodStart = biweeklyPeriodsSinceReference - periodsBack;
       
-      const startDate = new Date(endDate);
-      startDate.setDate(endDate.getDate() - 13);
+      const startDate = new Date(referenceDate);
+      startDate.setDate(referenceDate.getDate() + (currentPeriodStart * 14));
       
-      // Filter data for this period
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 13); // 14 days total (0-13)
+
+      // Filter sales for this period
       const periodSales = policySales.filter(sale => {
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
-      
-      const periodSummaries = dailySummaries.filter(summary => {
-        const summaryDate = new Date(summary.date);
-        return summaryDate >= startDate && summaryDate <= endDate;
-      });
-      
-      // Calculate hours and pay
-      const totalHours = periodSummaries.reduce((sum, s) => sum + s.hours_worked, 0);
-      const bonuses = periodSales.reduce((sum, s) => sum + s.bonus, 0);
-      const totalPay = (totalHours * employee.hourly_rate) + bonuses;
-      
-      const salesAmount = periodSales.reduce((sum, s) => sum + s.amount, 0);
 
-      payrollHistory.push({
+      // Calculate actual hours worked from time logs
+      const totalHours = await calculateActualHoursForPeriod(employeeId, startDate, endDate);
+      const bonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
+      const regularPay = totalHours * employee.hourly_rate;
+      const totalPay = regularPay + bonuses;
+      
+      const salesAmount = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
+
+      history.push({
         period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
         regularHours: Math.round(totalHours * 10) / 10,
         overtimeHours: 0, // No overtime distinction since rates are same
-        regularPay: Math.round((totalHours * employee.hourly_rate) * 100) / 100,
+        regularPay: Math.round(regularPay * 100) / 100,
         overtimePay: 0, // No overtime distinction since rates are same
         bonuses: Math.round(bonuses * 100) / 100,
         totalPay: Math.round(totalPay * 100) / 100,
@@ -1033,8 +1175,8 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         salesAmount: Math.round(salesAmount)
       });
     }
-    
-    return payrollHistory;
+
+    return history;
   } catch (error) {
     console.error('Error getting employee payroll history:', error);
     return [];
@@ -1504,5 +1646,41 @@ export const closeExpiredBiweeklyPeriods = async (): Promise<void> => {
 
   if (error) {
     console.error('Error closing expired biweekly periods:', error);
+  }
+};
+
+// Debug function to check database contents
+export const debugDatabaseContents = async () => {
+  try {
+    console.log('🔍 === DATABASE DEBUG REPORT ===');
+    
+    // Check employees
+    const employees = await getEmployees();
+    console.log(`👥 Total employees: ${employees.length}`);
+    employees.forEach(emp => {
+      console.log(`  - ${emp.name} (${emp.clerk_user_id}) - ${emp.department} - $${emp.hourly_rate}/hr - Status: ${emp.status}`);
+    });
+    
+    // Check policy sales
+    const sales = await getPolicySales();
+    console.log(`📈 Total policy sales: ${sales.length}`);
+    sales.slice(0, 5).forEach(sale => {
+      console.log(`  - ${sale.policy_number}: $${sale.amount} (bonus: $${sale.bonus}) - ${sale.employee_id} - ${sale.sale_date}`);
+    });
+    
+    // Check time logs for each employee
+    const today = getLocalDateString();
+    console.log(`⏰ Time logs for today (${today}):`);
+    for (const emp of employees) {
+      const timeLogs = await getTimeLogsForDay(emp.clerk_user_id, today);
+      console.log(`  - ${emp.name}: ${timeLogs.length} time logs`);
+      timeLogs.forEach(log => {
+        console.log(`    * ${log.clock_in} ${log.clock_out ? 'to ' + log.clock_out : '(still clocked in)'}`);
+      });
+    }
+    
+    console.log('🔍 === END DEBUG REPORT ===');
+  } catch (error) {
+    console.error('❌ Error in debug function:', error);
   }
 };

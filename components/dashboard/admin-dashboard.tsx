@@ -48,9 +48,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees, getPolicySales, getPayrollPeriods, getHighValuePolicyNotificationsList, getAllRequests, type PayrollPeriod } from "@/lib/database";
+import { 
+  getEmployees, 
+  getPolicySales, 
+  getPayrollPeriods, 
+  getHighValuePolicyNotificationsList,
+  getAllRequests,
+  debugDatabaseContents,
+  type PayrollPeriod
+} from "@/lib/database";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
+import { toast } from "@/hooks/use-toast";
 
 export function AdminDashboard() {
   const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
@@ -60,9 +69,9 @@ export function AdminDashboard() {
   const [selectedPayrollPeriod, setSelectedPayrollPeriod] = useState("");
   const [expenditureFilter, setExpenditureFilter] = useState("month");
   const [expenditureData, setExpenditureData] = useState({
-    month: { amount: 0, period: "May 2025", change: "+0%" },
-    quarter: { amount: 0, period: "Q2 2025", change: "+0%" },
-    year: { amount: 0, period: "2025", change: "+0%" }
+    month: { amount: 0, period: "Current Month", change: "+0%" },
+    quarter: { amount: 0, period: "Current Quarter", change: "+0%" },
+    year: { amount: 0, period: "Current Year", change: "+0%" }
   });
   const [employees, setEmployees] = useState<any[]>([]);
   const [policySales, setPolicySales] = useState<any[]>([]);
@@ -136,6 +145,9 @@ export function AdminDashboard() {
     }
     
     try {
+      // Debug database contents
+      await debugDatabaseContents();
+      
       const [employeesData, salesData, periodsData, notificationsData, requestsData] = await Promise.all([
         getEmployees(),
         getPolicySales(),
@@ -146,7 +158,18 @@ export function AdminDashboard() {
       
       setEmployees(employeesData);
       setPolicySales(salesData);
-      setPayrollPeriods(periodsData);
+      
+      // Filter periods to only show ones with actual data or current/upcoming periods
+      const filteredPeriods = periodsData.filter(period => {
+        // Always show current and upcoming periods
+        if (period.status === 'current' || period.status === 'upcoming') {
+          return true;
+        }
+        // For completed periods, only show if there's actual data (hours worked or sales)
+        return period.details.regularHours > 0 || period.details.totalSales > 0;
+      });
+      
+      setPayrollPeriods(filteredPeriods);
       setHighValueNotifications(notificationsData);
       
       // Count pending requests
@@ -156,6 +179,9 @@ export function AdminDashboard() {
       // Update stable count for high-value policies (exclude resolved)
       const unresolvedCount = notificationsData.filter(n => n.status !== 'resolved').length;
       setStablePendingCount(unresolvedCount);
+      
+      // Calculate company expenditure using the fresh data
+      calculateCompanyExpenditureWithData(employeesData, salesData);
       
       if (!hasInitiallyLoaded) {
         setHasInitiallyLoaded(true);
@@ -167,6 +193,95 @@ export function AdminDashboard() {
       if (!silentUpdate) {
         setLoading(false);
       }
+    }
+  };
+
+  // Calculate company expenditure using provided data (simplified and fast)
+  const calculateCompanyExpenditureWithData = (employeesData: any[], salesData: any[]) => {
+    try {
+      console.log('💰 Company expenditure calculation starting...');
+      console.log('👥 Employees data:', employeesData.map(emp => ({
+        name: emp.name,
+        department: emp.department,
+        hourlyRate: emp.hourly_rate,
+        status: emp.status
+      })));
+      console.log('📈 Sales data sample:', salesData.slice(0, 5).map(sale => ({
+        employee_id: sale.employee_id,
+        amount: sale.amount,
+        bonus: sale.bonus,
+        sale_date: sale.sale_date
+      })));
+      
+      // Simple calculation based on sales data only (much faster)
+      const now = new Date();
+      
+      // Get total sales bonuses for different periods
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
+      
+      console.log('📅 Date ranges:', {
+        startOfMonth: startOfMonth.toISOString(),
+        startOfQuarter: startOfQuarter.toISOString(),
+        startOfYear: startOfYear.toISOString(),
+        now: now.toISOString()
+      });
+      
+      // Filter sales by periods (much faster than complex payroll calculations)
+      const monthlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfMonth);
+      const quarterlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfQuarter);
+      const yearlySales = salesData.filter(sale => new Date(sale.sale_date) >= startOfYear);
+      
+      // Simple expenditure calculation: bonuses + estimated base pay
+      const employeeCount = employeesData.length;
+      const estimatedMonthlyBasePay = employeeCount * 25 * 160; // 25/hr * 160 hours/month
+      const estimatedQuarterlyBasePay = estimatedMonthlyBasePay * 3;
+      const estimatedYearlyBasePay = estimatedMonthlyBasePay * 12;
+      
+      const monthlyBonuses = monthlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+      const quarterlyBonuses = quarterlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+      const yearlyBonuses = yearlySales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+      
+      console.log('💰 Company expenditure calculation details:', {
+        employeeCount,
+        estimatedMonthlyBasePay,
+        monthlyBonuses,
+        quarterlyBonuses,
+        yearlyBonuses,
+        totalMonthlySales: monthlySales.length,
+        totalQuarterlySales: quarterlySales.length,
+        totalYearlySales: yearlySales.length,
+        monthlyTotal: estimatedMonthlyBasePay + monthlyBonuses,
+        quarterlyTotal: estimatedQuarterlyBasePay + quarterlyBonuses,
+        yearlyTotal: estimatedYearlyBasePay + yearlyBonuses
+      });
+      
+      setExpenditureData({
+        month: { 
+          amount: Math.round(estimatedMonthlyBasePay + monthlyBonuses), 
+          period: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }), 
+          change: "+0%" 
+        },
+        quarter: { 
+          amount: Math.round(estimatedQuarterlyBasePay + quarterlyBonuses), 
+          period: `Q${Math.floor(now.getMonth() / 3) + 1} ${now.getFullYear()}`, 
+          change: "+0%" 
+        },
+        year: { 
+          amount: Math.round(estimatedYearlyBasePay + yearlyBonuses), 
+          period: now.getFullYear().toString(), 
+          change: "+0%" 
+        }
+      });
+    } catch (error) {
+      console.error('Error calculating company expenditure:', error);
+      // Set fallback values if calculation fails
+      setExpenditureData({
+        month: { amount: 0, period: "Current Month", change: "+0%" },
+        quarter: { amount: 0, period: "Current Quarter", change: "+0%" },
+        year: { amount: 0, period: "Current Year", change: "+0%" }
+      });
     }
   };
 
@@ -185,6 +300,18 @@ export function AdminDashboard() {
   const currentExpenditure = expenditureData[expenditureFilter as keyof typeof expenditureData];
 
   const handleCompanyPayrollView = (period: string) => {
+    // Find the payroll period to check if it's upcoming
+    const payrollPeriod = payrollPeriods.find(p => p.period === period);
+    
+    if (payrollPeriod?.status === 'upcoming') {
+      // Show toast message for upcoming periods
+      toast({
+        title: "Payroll Not Yet Generated",
+        description: "Pay period has not begun. Payroll data will be available once the period starts.",
+      });
+      return;
+    }
+    
     setSelectedPayrollPeriod(period);
     setCompanyPayrollDialogOpen(true);
   };
@@ -219,38 +346,6 @@ export function AdminDashboard() {
           </div>
         </div>
       </div>
-
-      {/* High-Value Policy Alert */}
-      {pendingHighValueCount > 0 && (
-        <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20 hover:shadow-md transition-shadow">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-              <AlertTriangle className="h-5 w-5" />
-              High-Value Policy Alert
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-amber-700 dark:text-amber-300">
-                  <strong>{pendingHighValueCount}</strong> policies over $5,000 require manual bonus review
-                </p>
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-                  These employees need their bonuses manually set for high-value policies
-                </p>
-              </div>
-              <Button 
-                variant="outline" 
-                className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/30"
-                onClick={handleReviewNowClick}
-              >
-                <AlertTriangle className="mr-2 h-4 w-4" />
-                Review Now
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
@@ -356,6 +451,8 @@ export function AdminDashboard() {
                       <div className="flex items-center gap-3">
                         {payroll.status === "current" ? (
                           <Building className="h-8 w-8 text-[#005cb3]" />
+                        ) : payroll.status === "upcoming" ? (
+                          <Calendar className="h-8 w-8 text-gray-400" />
                         ) : (
                           <FileText className="h-8 w-8 text-[#005cb3]" />
                         )}
@@ -365,11 +462,18 @@ export function AdminDashboard() {
                             {payroll.status === "current" && (
                               <Badge className="bg-[#005cb3] hover:bg-[#005cb3]/90 text-xs">Current Period</Badge>
                             )}
+                            {payroll.status === "upcoming" && (
+                              <Badge variant="outline" className="text-xs text-gray-500">Upcoming</Badge>
+                            )}
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            {payroll.employees} employees, ${payroll.total.toLocaleString()} total expenditure
+                            {payroll.status === "upcoming" ? (
+                              `${payroll.employees} employees - Pay period has not begun`
+                            ) : (
+                              `${payroll.employees} employees, $${payroll.total.toLocaleString()} total expenditure`
+                            )}
                           </p>
-                          {payroll.details && (
+                          {payroll.details && payroll.status !== "upcoming" && (
                             <p className="text-xs text-muted-foreground">
                               {Math.round(payroll.details.regularHours + payroll.details.overtimeHours)}h total, 
                               {payroll.details.totalSales} policies sold, 
@@ -382,9 +486,10 @@ export function AdminDashboard() {
                         size="sm" 
                         className={payroll.status === "current" ? "bg-[#005cb3] hover:bg-[#005cb3]/90" : ""}
                         variant={payroll.status === "current" ? "default" : "outline"}
+                        disabled={payroll.status === "upcoming"}
                       >
                         <Eye className="mr-1 h-3 w-3" />
-                        View
+                        {payroll.status === "upcoming" ? "Not Available" : "View"}
                       </Button>
                     </div>
                   ))}

@@ -9,6 +9,12 @@ import { ChatInterface } from "@/components/dashboard/chat-interface";
 import { Loader2, MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getEmployee } from "@/lib/database";
+import { getUserRole } from "@/lib/get-user-role";
+import { Skeleton } from "@/components/ui/skeleton";
+
+interface CustomPublicMetadata {
+  role?: "admin" | "employee";
+}
 
 export default function ClerkWrapper() {
   const { user, isLoaded, isSignedIn } = useUser();
@@ -19,6 +25,7 @@ export default function ClerkWrapper() {
   const [showClockOutPrompt, setShowClockOutPrompt] = useState(false);
   const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
   const [authError, setAuthError] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
   // Welcome message state removed per user request
   const [employeeData, setEmployeeData] = useState<{
     name: string;
@@ -28,37 +35,31 @@ export default function ClerkWrapper() {
     email: ""
   });
 
-  // Single effect to handle authentication and role determination
   useEffect(() => {
-    console.log('ClerkWrapper: Auth state changed', { isLoaded, isSignedIn, userId: user?.id });
-    
-    if (isLoaded) {
-      if (isSignedIn && user) {
-        // Only set role if it hasn't been set yet to prevent loops
-        if (!userRole) {
-          // Determine user role
-          const isAdmin = user.emailAddresses[0]?.emailAddress === 'admin@letsinsure.hr' ||
-                         user.publicMetadata?.role === 'admin' ||
-                         user.id === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
-          
-          const role = isAdmin ? "admin" : "employee";
-          console.log('ClerkWrapper: User role determined', { role, email: user.emailAddresses[0]?.emailAddress });
-          
-          setUserRole(role);
-          setAuthError(false);
-          
-          // Load employee data for header
-          loadEmployeeData();
-        }
-      } else if (isSignedIn === false) {
-        // User is definitely not signed in, redirect to sign-in
-        console.log('ClerkWrapper: User not signed in, redirecting to sign-in');
-        // Use replace to prevent back button issues
-        window.location.replace('/sign-in');
-      }
-      // If isSignedIn is undefined, we're still loading
+    if (isLoaded && user) {
+      // Get role from Clerk metadata on client side
+      const publicMetadata = user.publicMetadata as CustomPublicMetadata;
+      const role = publicMetadata?.role || "employee";
+      
+      // Debug logging
+      console.log('🔍 ClerkWrapper Debug:', {
+        userId: user.id,
+        email: user.emailAddresses[0]?.emailAddress,
+        publicMetadata,
+        publicMetadataRole: publicMetadata?.role,
+        detectedRole: role,
+        fullUserObject: user
+      });
+      
+      setUserRole(role);
+      setRoleLoading(false);
+      
+      // Load employee data for header
+      loadEmployeeData();
+    } else if (isLoaded && !user) {
+      setRoleLoading(false);
     }
-  }, [isLoaded, isSignedIn, user, userRole]);
+  }, [isLoaded, user]);
 
   // Welcome message functions removed per user request
 
@@ -140,15 +141,25 @@ export default function ClerkWrapper() {
   };
 
   // Show loading while authentication is being determined
-  if (!isLoaded || (!userRole && !authError)) {
+  if (!isLoaded || roleLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800">
-        <div className="text-center space-y-4">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto text-[#005cb3]" />
-          <p className="text-muted-foreground">Loading your dashboard...</p>
-          <p className="text-xs text-muted-foreground">
-            {!isLoaded ? 'Initializing authentication...' : 'Determining user role...'}
-          </p>
+      <div className="flex h-screen">
+        <div className="w-64 bg-gray-100 p-4">
+          <Skeleton className="h-8 w-32 mb-4" />
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-6 w-full" />
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 p-6">
+          <Skeleton className="h-8 w-48 mb-6" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-32" />
+            ))}
+          </div>
+          <Skeleton className="h-64 w-full" />
         </div>
       </div>
     );

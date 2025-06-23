@@ -39,10 +39,13 @@ async function generateFlowResponse(flowType: string, nextField: string, collect
         policy_number: "Ask for the policy number in a friendly way (e.g., POL-2025-001)",
         client_name: "Ask for the client's name naturally",
         policy_type: "Ask what type of policy this is (Auto, Home, Life, etc.)",
-        policy_amount: "Ask for the policy sale amount in dollars",
-        broker_fee: "Ask for the broker fee amount",
+        policy_amount: "Ask for the total policy sale amount (the full value of the policy sold to the client)",
+        broker_fee: "Ask for the broker fee amount (the commission/fee earned from this policy sale)",
         cross_sold: "Ask if they cross-sold any additional policies (yes/no)",
         cross_sold_type: "Ask what type of policy they cross-sold",
+        cross_sold_policy_number: "Ask for the policy number of the cross-sold policy",
+        cross_sold_policy_amount: "Ask for the total policy amount of the cross-sold policy",
+        cross_sold_broker_fee: "Ask for the broker fee of the cross-sold policy",
         client_description: "Ask for a brief description of the client or policy details"
       },
       review_entry: {
@@ -52,7 +55,7 @@ async function generateFlowResponse(flowType: string, nextField: string, collect
         review_text: "Ask what the client said in their review"
       },
       daily_summary: {
-        description: "Ask them to describe their day, accomplishments, and how they're feeling"
+        description: "Have a casual, motivating chat about their day - no formal data collection needed"
       }
     };
 
@@ -102,11 +105,17 @@ FLOW GUIDELINES:
 - Be conversational and supportive
 - If this is the start, show excitement about their achievement
 - Acknowledge what they've already provided if any
-- Ask for the next piece of information naturally
+- Ask for the next piece of information naturally and clearly
 - Use bold formatting for important fields: **field name**
 - Keep responses brief but warm (1-2 sentences)
 - Show genuine interest in their work
 - Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
+
+IMPORTANT FOR POLICY ENTRY:
+- When asking for policy_amount: Ask for the TOTAL POLICY VALUE/SALE AMOUNT (not broker fee)
+- When asking for broker_fee: Ask for the BROKER FEE/COMMISSION (separate from policy amount)
+- Never confuse these two - they are completely different values
+- Never ask if a policy amount is actually a broker fee - ask for them separately
 
 ${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
     } else {
@@ -120,11 +129,17 @@ GUIDELINES:
 - Be conversational and supportive
 - If this is the start, show excitement about their achievement
 - Acknowledge what they've already provided if any
-- Ask for the next piece of information naturally
+- Ask for the next piece of information naturally and clearly
 - Use bold formatting for important fields: **field name**
 - Keep responses brief but warm (1-2 sentences)
 - Show genuine interest in their work
 - Use encouraging phrases like "Great!", "Perfect!", "Excellent!"
+
+IMPORTANT FOR POLICY ENTRY:
+- When asking for policy_amount: Ask for the TOTAL POLICY VALUE/SALE AMOUNT (not broker fee)
+- When asking for broker_fee: Ask for the BROKER FEE/COMMISSION (separate from policy amount)
+- Never confuse these two - they are completely different values
+- Never ask if a policy amount is actually a broker fee - ask for them separately
 
 ${isRepeatTrigger ? 'SPECIAL NOTE: They just told you about a policy sale - be enthusiastic!' : ''}`;
     }
@@ -285,28 +300,53 @@ export const parsePolicyBatchData = (message: string): any => {
     }
   }
   
-  // Extract amounts
-  const amountPatterns = [
-    /(?:amount\s*:?\s*)?\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g,
-    /\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g
+  // Extract amounts - look for both policy amount and broker fee
+  const policyAmountPatterns = [
+    /(?:policy\s*(?:sale|amount|value)\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /(?:sale\s*(?:amount|value)\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /(?:total\s*(?:amount|value)\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi
   ];
   
-  const amounts = [];
-  let match;
-  const amountRegex = /\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
-  while ((match = amountRegex.exec(message)) !== null) {
-    amounts.push(parseFloat(match[1].replace(/,/g, '')));
+  const brokerFeePatterns = [
+    /(?:broker\s*fee\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /(?:commission\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /(?:fee\s*:?\s*)\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi
+  ];
+  
+  // Try to extract specific policy amount
+  for (const pattern of policyAmountPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.policy_amount = parseFloat(match[1].replace(/,/g, ''));
+      break;
+    }
   }
   
-  if (amounts.length > 0) {
-    // Assume the larger amount is the policy amount, smaller is broker fee
-    amounts.sort((a, b) => b - a);
-    data.policy_amount = amounts[0];
-    if (amounts.length > 1) {
-      data.broker_fee = amounts[1];
-    } else {
-      // Default broker fee to 10% if not provided
-      data.broker_fee = Math.round(amounts[0] * 0.1 * 100) / 100;
+  // Try to extract specific broker fee
+  for (const pattern of brokerFeePatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      data.broker_fee = parseFloat(match[1].replace(/,/g, ''));
+      break;
+    }
+  }
+  
+  // If we didn't find specific amounts, try to extract all dollar amounts
+  if (!data.policy_amount && !data.broker_fee) {
+    const amounts = [];
+    let match;
+    const amountRegex = /\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
+    while ((match = amountRegex.exec(message)) !== null) {
+      amounts.push(parseFloat(match[1].replace(/,/g, '')));
+    }
+    
+    if (amounts.length > 0) {
+      // Assume the larger amount is the policy amount, smaller is broker fee
+      amounts.sort((a, b) => b - a);
+      data.policy_amount = amounts[0];
+      if (amounts.length > 1) {
+        data.broker_fee = amounts[1];
+      }
     }
   }
   
@@ -470,7 +510,9 @@ export async function handleConversationFlow(conversationState: any, message: st
     await clearConversationState(employeeId);
     
     if (currentFlow === 'daily_summary') {
-      response += "\n\n🎉 Thanks for sharing! Your daily summary has been recorded. You're doing great work, and I appreciate you taking the time to reflect on your day. Keep up the amazing effort! 💪";
+      // For daily summary, just save the casual conversation - no formal completion message needed
+      // The data is automatically calculated from time logs and policy sales
+      return NextResponse.json({ response: cleanMarkdownResponse(response) });
     } else {
       response += "\n\n✅ Data saved successfully! Your performance metrics have been updated. Is there anything else I can help you with?";
     }
@@ -606,12 +648,81 @@ Did you **cross-sell** any additional policies to this client? (yes/no)`
         employeeId,
         currentFlow: 'policy_entry_natural',
         collectedData: updatedData,
-        nextQuestion: 'final_details',
+        nextQuestion: 'cross_sell_policy_number',
         lastUpdated: new Date()
       });
       
       return NextResponse.json({
         response: `Perfect! Cross-sold: **${crossSoldType}**
+
+What's the **policy number** for the cross-sold policy?`
+      });
+    }
+    
+    if (nextQuestion === 'cross_sell_policy_number') {
+      const crossSoldPolicyNumber = extractDataFromResponse(message, 'policy_number') || message.trim();
+      const updatedData = { ...collectedData, cross_sold_policy_number: crossSoldPolicyNumber };
+      
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'cross_sell_policy_amount',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Got it! Cross-sold policy: **${crossSoldPolicyNumber}**
+
+What's the **policy amount** for the cross-sold policy?`
+      });
+    }
+    
+    if (nextQuestion === 'cross_sell_policy_amount') {
+      const crossSoldPolicyAmount = extractDataFromResponse(message, 'policy_amount');
+      if (!crossSoldPolicyAmount) {
+        return NextResponse.json({
+          response: "Please provide the cross-sold policy amount (e.g., $5000, 10000, etc.)"
+        });
+      }
+      
+      const updatedData = { ...collectedData, cross_sold_policy_amount: crossSoldPolicyAmount };
+      
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'cross_sell_broker_fee',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Excellent! Cross-sold policy amount: **$${crossSoldPolicyAmount.toLocaleString()}**
+
+What's the **broker fee** for the cross-sold policy?`
+      });
+    }
+    
+    if (nextQuestion === 'cross_sell_broker_fee') {
+      const crossSoldBrokerFee = extractDataFromResponse(message, 'broker_fee');
+      if (!crossSoldBrokerFee) {
+        return NextResponse.json({
+          response: "Please provide the cross-sold broker fee amount (e.g., $250, 500, etc.)"
+        });
+      }
+      
+      const updatedData = { ...collectedData, cross_sold_broker_fee: crossSoldBrokerFee };
+      
+      await updateConversationState({
+        employeeId,
+        currentFlow: 'policy_entry_natural',
+        collectedData: updatedData,
+        nextQuestion: 'final_details',
+        lastUpdated: new Date()
+      });
+      
+      return NextResponse.json({
+        response: `Perfect! Cross-sold broker fee: **$${crossSoldBrokerFee.toLocaleString()}**
 
 Finally, please provide a brief description of the client or any special notes about this policy:`
       });
@@ -621,7 +732,7 @@ Finally, please provide a brief description of the client or any special notes a
       const clientDescription = message.trim();
       const finalData = { ...collectedData, client_description: clientDescription };
       
-      // Save the policy
+      // Save the main policy
       const result = await addPolicySale({
         policyNumber: finalData.policy_number,
         clientName: finalData.client_name,
@@ -636,21 +747,51 @@ Finally, please provide a brief description of the client or any special notes a
         clientDescription: finalData.client_description
       });
       
+      // If cross-sold, save the cross-sold policy as a separate entry
+      if (finalData.cross_sold === 'yes' && finalData.cross_sold_policy_number && finalData.cross_sold_policy_amount && finalData.cross_sold_broker_fee) {
+        await addPolicySale({
+          policyNumber: finalData.cross_sold_policy_number,
+          clientName: finalData.client_name,
+          policyType: finalData.cross_sold_type,
+          amount: finalData.cross_sold_policy_amount,
+          brokerFee: finalData.cross_sold_broker_fee,
+          employeeId,
+          saleDate: new Date(),
+          crossSold: false, // This IS the cross-sold policy
+          isCrossSoldPolicy: true, // Mark as cross-sold policy for 2x bonus
+          clientDescription: `Cross-sold to ${finalData.client_name} - ${finalData.client_description}`
+        });
+      }
+      
       if (result) {
         await clearConversationState(employeeId);
-        return NextResponse.json({
-          response: `🎉 **Outstanding work!** I've successfully recorded your policy sale:
+        let responseMessage = `🎉 **Outstanding work!** I've successfully recorded your policy sale${finalData.cross_sold === 'yes' ? 's' : ''}:
 
-**📋 Complete Policy Details:**
+**📋 Main Policy Details:**
 • **Policy:** ${finalData.policy_number}
 • **Client:** ${finalData.client_name}
 • **Type:** ${finalData.policy_type}
 • **Amount:** **$${finalData.policy_amount.toLocaleString()}**
-• **Broker Fee:** **$${finalData.broker_fee.toLocaleString()}**
-${finalData.cross_sold === 'yes' ? `• **Cross-sold:** ${finalData.cross_sold_type}` : '• **Cross-sold:** No'}
+• **Broker Fee:** **$${finalData.broker_fee.toLocaleString()}**`;
+
+        if (finalData.cross_sold === 'yes' && finalData.cross_sold_policy_number) {
+          responseMessage += `
+
+**📋 Cross-Sold Policy Details:**
+• **Policy:** ${finalData.cross_sold_policy_number}
+• **Client:** ${finalData.client_name}
+• **Type:** ${finalData.cross_sold_type}
+• **Amount:** **$${finalData.cross_sold_policy_amount.toLocaleString()}**
+• **Broker Fee:** **$${finalData.cross_sold_broker_fee.toLocaleString()}** *(2x bonus applied!)*`;
+        }
+
+        responseMessage += `
 • **Notes:** ${finalData.client_description}
 
-Your performance metrics have been updated! Keep up the fantastic work! 💪✨`
+Your performance metrics have been updated! Keep up the fantastic work! 💪✨`;
+
+        return NextResponse.json({
+          response: responseMessage
         });
       } else {
         return NextResponse.json({
@@ -893,6 +1034,9 @@ function getPolicyEntryNextQuestion(data: any): [string, boolean] {
   if (!data.broker_fee) return ['broker_fee', false];
   if (!data.cross_sold) return ['cross_sold', false];
   if (data.cross_sold === 'yes' && !data.cross_sold_type) return ['cross_sold_type', false];
+  if (data.cross_sold === 'yes' && !data.cross_sold_policy_number) return ['cross_sold_policy_number', false];
+  if (data.cross_sold === 'yes' && !data.cross_sold_policy_amount) return ['cross_sold_policy_amount', false];
+  if (data.cross_sold === 'yes' && !data.cross_sold_broker_fee) return ['cross_sold_broker_fee', false];
   if (!data.client_description) return ['client_description', false];
   return ['', true];
 }
@@ -937,17 +1081,48 @@ async function handleReviewEntryFlow(data: any, nextQuestion: string, extractedV
 async function handleDailySummaryFlow(data: any, nextQuestion: string, extractedValue: any, originalMessage: string, employeeId: string, employeeData?: any): Promise<string> {
   console.log('handleDailySummaryFlow - nextQuestion:', nextQuestion, 'data:', data);
   
-  // Use AI to generate natural responses
+  // For daily summary, we want a casual motivating chat, not formal data collection
   if (nextQuestion && nextQuestion !== '') {
-    return await generateFlowResponse('daily_summary', nextQuestion, data, originalMessage, employeeData);
+    // Generate a motivating response using AI
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [{
+          role: "system",
+          content: `You're a supportive HR assistant having a casual, motivating chat with an employee about their day. 
+
+GUIDELINES:
+- Be warm, encouraging, and conversational (2-3 sentences max)
+- Show genuine interest in their experience
+- Acknowledge their feelings and efforts
+- Use motivating language and emojis
+- Don't ask for formal data - just be supportive
+- End with encouragement about tomorrow or their progress
+- Examples: "That sounds challenging but you handled it well!", "Those back-to-back calls can be exhausting - great job pushing through!", "You're doing amazing work!"
+
+The employee just shared: "${originalMessage}"`
+        }, {
+          role: "user",
+          content: originalMessage
+        }],
+        max_tokens: 100,
+        temperature: 0.8,
+      });
+
+      return completion.choices[0]?.message?.content || "Thanks for sharing! You're doing great work! 💪";
+    } catch (error) {
+      console.error('Error generating daily summary response:', error);
+      return "Thanks for sharing! You're doing great work! 💪";
+    }
   }
   
-  return 'Perfect! I have your daily summary. I\'ll automatically calculate your hours worked and policies sold from the system data.';
+  return 'Thanks for sharing! You\'re doing amazing work! 🌟';
 }
 
 async function saveCollectedData(flowType: string, data: any, employeeId: string) {
   switch (flowType) {
     case 'policy_entry':
+      // Save the main policy
       await addPolicySale({
         policyNumber: data.policy_number,
         clientName: data.client_name,
@@ -961,6 +1136,22 @@ async function saveCollectedData(flowType: string, data: any, employeeId: string
         crossSoldTo: data.cross_sold === 'yes' ? data.client_name : undefined,
         clientDescription: data.client_description
       });
+      
+      // If cross-sold, save the cross-sold policy as a separate entry
+      if (data.cross_sold === 'yes' && data.cross_sold_policy_number && data.cross_sold_policy_amount && data.cross_sold_broker_fee) {
+        await addPolicySale({
+          policyNumber: data.cross_sold_policy_number,
+          clientName: data.client_name,
+          policyType: data.cross_sold_type,
+          amount: parseFloat(data.cross_sold_policy_amount) || 0,
+          brokerFee: parseFloat(data.cross_sold_broker_fee) || 0,
+          employeeId,
+          saleDate: new Date(),
+          crossSold: false, // This IS the cross-sold policy
+          isCrossSoldPolicy: true, // Mark as cross-sold policy for 2x bonus
+          clientDescription: `Cross-sold to ${data.client_name} - ${data.client_description}`
+        });
+      }
       break;
       
     case 'review_entry':

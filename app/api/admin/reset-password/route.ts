@@ -1,26 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { clerkClient } from '@clerk/nextjs/server';
+import { getUserRole } from '@/lib/get-user-role';
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
     const { userId } = await auth();
     
     if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is admin
-    const isAdmin = userId === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+    // Get user from Clerk directly to access metadata
+    const { clerkClient } = await import('@clerk/nextjs/server');
+    const clerkClientInstance = await clerkClient();
+    const user = await clerkClientInstance.users.getUser(userId);
     
+    // Check if user is admin from their public metadata
+    const publicMetadata = user.publicMetadata as { role?: string };
+    const isAdmin = publicMetadata?.role === 'admin';
+
     if (!isAdmin) {
-      return NextResponse.json(
-        { error: 'Admin access required' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
     const { targetUserId, newPassword } = await request.json();
@@ -52,9 +54,6 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Password reset error:', error);
-    return NextResponse.json(
-      { error: 'Failed to reset password' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 } 

@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { bulkCreateClerkUsers } from '@/lib/clerk-automation';
+import { getUserRole } from '@/lib/get-user-role';
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
     const { userId } = await auth();
     
     if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is admin (you might want to implement proper admin check)
-    // For now, we'll use the same admin check as elsewhere
-    const isAdmin = userId === 'user_2y2ylH58JkmHljhJT0BXIfjHQui';
+    // Get user from Clerk directly to access metadata
+    const { clerkClient } = await import('@clerk/nextjs/server');
+    const client = await clerkClient();
+    const user = await client.users.getUser(userId);
     
+    // Check if user is admin from their public metadata
+    const publicMetadata = user.publicMetadata as { role?: string };
+    const isAdmin = publicMetadata?.role === 'admin';
+
     if (!isAdmin) {
-      return NextResponse.json(
-        { error: 'Admin access required' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
     const { users } = await request.json();

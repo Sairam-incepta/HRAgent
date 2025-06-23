@@ -4,7 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, DollarSign, Eye, CheckCircle, Clock, Calendar, RotateCcw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertTriangle, DollarSign, Eye, CheckCircle, Clock, Calendar, RotateCcw, Settings } from "lucide-react";
 import { 
   getHighValuePolicyNotificationsList, 
   updateHighValuePolicyNotification, 
@@ -17,10 +19,10 @@ import { PayrollDialog } from "./payroll-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
+import { supabase } from "@/lib/supabase";
+import { Label } from "@/components/ui/label";
 
-interface HighValuePolicyWithEmployee extends HighValuePolicyNotification {
-  employee_name?: string;
-}
+// Simplified - no need for employee names anymore
 
 interface UrgentReviewInfo {
   policy_count: number;
@@ -29,16 +31,23 @@ interface UrgentReviewInfo {
 }
 
 export function HighValuePolicyNotifications() {
-  const [highValuePolicies, setHighValuePolicies] = useState<HighValuePolicyWithEmployee[]>([]);
+  const [highValuePolicies, setHighValuePolicies] = useState<HighValuePolicyNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
+  const [bonusDialogOpen, setBonusDialogOpen] = useState(false);
+  const [selectedPolicy, setSelectedPolicy] = useState<any>(null);
+  const [bonusAmount, setBonusAmount] = useState<string>("");
+  const [bonusNotes, setBonusNotes] = useState<string>("");
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
   const [urgentReview, setUrgentReview] = useState<UrgentReviewInfo | null>(null);
   const [showPeriodNotification, setShowPeriodNotification] = useState(false);
   const [showAllPolicies, setShowAllPolicies] = useState(false);
-  const lastSuccessfulData = useRef<HighValuePolicyWithEmployee[]>([]);
+  const lastSuccessfulData = useRef<HighValuePolicyNotification[]>([]);
   const { toast } = useToast();
+  const [highValuePolicyThreshold, setHighValuePolicyThreshold] = useState(5000);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [tempThreshold, setTempThreshold] = useState(5000);
 
   useEffect(() => {
     loadHighValuePolicies();
@@ -88,41 +97,16 @@ export function HighValuePolicyNotifications() {
         setLoading(true);
       }
       
-      console.log('🔍 Starting to fetch data...');
-      const [notifications, employees] = await Promise.all([
-        getHighValuePolicyNotificationsList(),
-        getEmployees()
-      ]);
-      console.log('🔍 Data fetched successfully');
+      console.log('🔍 Starting to fetch notifications...');
+      const notifications = await getHighValuePolicyNotificationsList();
+      console.log('🔍 Notifications fetched successfully');
       
-      // Create a map of employee IDs to names
-      const employeeMap = new Map(employees.map(emp => [emp.clerk_user_id, emp.name]));
-      
-      // Debug: Check if John Smith is in the map
-      const johnSmithInMap = employeeMap.get('user_2yQeD2Af9ndPLFcOiLMoQ2QyFmO');
-      console.log('🔍 John Smith lookup result:', johnSmithInMap);
-      
-      // Add employee names to notifications
-      const policiesWithNames = notifications.map(notification => {
-        const foundName = employeeMap.get(notification.employee_id);
-        const willShow = foundName || "Unknown Employee";
-        
-        // Only log for the specific policies we're interested in
-        if (notification.policy_number === 'POL-2025-232' || notification.policy_number === 'POL-2025-233') {
-          console.log(`🔍 Policy ${notification.policy_number}: employee_id="${notification.employee_id}", found_name="${foundName}", will_show="${willShow}"`);
-        }
-        
-        return {
-          ...notification,
-          employee_name: willShow
-        };
-      });
-      
+      // No need to fetch employees or map employee names anymore
       // Store successful data for future reference
-      lastSuccessfulData.current = policiesWithNames;
+      lastSuccessfulData.current = notifications;
       
       // Always update the state with fresh data
-      setHighValuePolicies(policiesWithNames);
+      setHighValuePolicies(notifications);
       
       // Emit event to update admin dashboard alert count automatically (only for non-silent updates)
       if (!silentUpdate) {
@@ -146,9 +130,11 @@ export function HighValuePolicyNotifications() {
     }
   };
 
-  const handleReviewPayroll = (employeeName: string, employeeId?: string) => {
-    setSelectedEmployee(employeeId || employeeName);
-    setPayrollDialogOpen(true);
+  const handleReviewPayroll = (policy: any) => {
+    setSelectedPolicy(policy);
+    setBonusAmount(policy.admin_bonus?.toString() || "");
+    setBonusNotes(policy.admin_notes || "");
+    setBonusDialogOpen(true);
   };
 
   const handleMarkAsReviewed = async (notificationId: string) => {
@@ -273,6 +259,66 @@ export function HighValuePolicyNotifications() {
   // Filter out resolved policies from display count for alerts
   const unresolvedPolicies = highValuePolicies.filter(policy => policy.status !== 'resolved');
 
+  const handleUpdateThreshold = () => {
+    setHighValuePolicyThreshold(tempThreshold);
+    setSettingsDialogOpen(false);
+    toast({
+      title: "Threshold Updated",
+      description: `High-value policy threshold updated to $${tempThreshold.toLocaleString()}`,
+    });
+  };
+
+  const handleSaveBonus = async () => {
+    if (!selectedPolicy) return;
+    
+    try {
+      const bonusValue = parseFloat(bonusAmount) || 0;
+      
+      // Update the policy with admin bonus
+      const { error } = await supabase
+        .from('policy_sales')
+        .update({ 
+          admin_bonus: bonusValue,
+          admin_notes: bonusNotes,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedPolicy.id);
+      
+      if (error) throw error;
+      
+      // Update the notification status to reviewed
+      await updateHighValuePolicyNotification(selectedPolicy.id, {
+        status: 'reviewed',
+        adminBonus: bonusValue,
+        adminNotes: bonusNotes
+      });
+      
+      toast({
+        title: "Bonus Set Successfully",
+        description: `Admin bonus of $${bonusValue} has been set for policy ${selectedPolicy.policy_number}.`,
+      });
+      
+      // Emit events for real-time updates
+      dashboardEvents.emit('high_value_policy_updated');
+      dashboardEvents.emit('policy_sale');
+      
+      // Close dialog and refresh
+      setBonusDialogOpen(false);
+      setSelectedPolicy(null);
+      setBonusAmount("");
+      setBonusNotes("");
+      loadHighValuePolicies(false, false);
+      
+    } catch (error) {
+      console.error('Error setting bonus:', error);
+      toast({
+        title: "Error",
+        description: "Failed to set bonus. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Only show loading spinner on initial load, not during refreshes
   if (loading && !hasInitiallyLoaded) {
     return (
@@ -280,7 +326,7 @@ export function HighValuePolicyNotifications() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
-            High-Value Policy Alerts
+            High Value Policy Alerts
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -329,9 +375,53 @@ export function HighValuePolicyNotifications() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
-            High-Value Policy Alerts ({unresolvedPolicies.length})
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              High Value Policy Alerts ({unresolvedPolicies.length})
+            </div>
+            <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setTempThreshold(highValuePolicyThreshold)}>
+                  <Settings className="h-4 w-4 mr-1" />
+                  Settings
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>High Value Policy Settings</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <label htmlFor="threshold" className="text-sm font-medium">
+                      High Value Policy Threshold
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-lg">$</span>
+                      <Input
+                        id="threshold"
+                        type="number"
+                        value={tempThreshold}
+                        onChange={(e) => setTempThreshold(Number(e.target.value))}
+                        placeholder="5000"
+                        className="flex-1"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Policies above this amount will require manual bonus review
+                    </p>
+                  </div>
+                  <div className="flex justify-end space-x-2">
+                    <Button variant="outline" onClick={() => setSettingsDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleUpdateThreshold}>
+                      Update
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -340,7 +430,7 @@ export function HighValuePolicyNotifications() {
               <DollarSign className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
               <p className="text-muted-foreground">No high-value policies requiring review</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Policies over $5,000 will appear here during their biweekly review period
+                Policies over ${highValuePolicyThreshold.toLocaleString()} will appear here during their biweekly review period
               </p>
             </div>
           ) : (
@@ -422,7 +512,7 @@ export function HighValuePolicyNotifications() {
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          Sold by {policy.employee_name} • ${policy.policy_amount.toLocaleString()}
+                          Policy: ${policy.policy_amount.toLocaleString()}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Broker Fee: ${policy.broker_fee} • Base Bonus: ${policy.current_bonus}
@@ -495,7 +585,7 @@ export function HighValuePolicyNotifications() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleReviewPayroll(policy.employee_name || "Unknown", policy.employee_id)}
+                              onClick={() => handleReviewPayroll(policy)}
                               title="Review and set additional bonus for this high-value policy"
                             >
                               <Eye className="mr-1 h-3 w-3" />
@@ -565,6 +655,75 @@ export function HighValuePolicyNotifications() {
         onOpenChange={setPayrollDialogOpen}
         employeeName={selectedEmployee}
       />
+      
+      {/* Admin Bonus Management Dialog */}
+      <Dialog open={bonusDialogOpen} onOpenChange={setBonusDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set Admin Bonus</DialogTitle>
+          </DialogHeader>
+          
+          {selectedPolicy && (
+            <div className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg space-y-2">
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Policy:</span>
+                  <span className="ml-2 font-medium">{selectedPolicy.policy_number}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Amount:</span>
+                  <span className="ml-2 font-medium">${selectedPolicy.policy_amount?.toLocaleString()}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Current Bonus:</span>
+                  <span className="ml-2 font-medium">${selectedPolicy.bonus || 0}</span>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="bonus-amount">Admin Bonus Amount ($)</Label>
+                <Input
+                  id="bonus-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Enter bonus amount"
+                  value={bonusAmount}
+                  onChange={(e) => setBonusAmount(e.target.value)}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="bonus-notes">Notes (Optional)</Label>
+                <textarea
+                  id="bonus-notes"
+                  className="w-full p-2 border rounded-md text-sm"
+                  rows={3}
+                  placeholder="Add notes about this bonus decision..."
+                  value={bonusNotes}
+                  onChange={(e) => setBonusNotes(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex gap-2 pt-2">
+                <Button 
+                  onClick={handleSaveBonus}
+                  className="flex-1 bg-[#005cb3] hover:bg-[#005cb3]/90"
+                >
+                  Set Bonus
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setBonusDialogOpen(false)}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
