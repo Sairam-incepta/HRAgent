@@ -82,19 +82,8 @@ Responsive design works on all devices.
 
 ## 🚀 Deploy
 
-### Vercel Deployment
-1. Connect your GitHub repository (Sairam-incepta/HRAgent)
-2. Add environment variables in Vercel dashboard
-3. Deploy from main branch
-
-### Environment Variables Required
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-- `CLERK_SECRET_KEY`
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `OPENAI_API_KEY`
+Works on Vercel. Add environment variables to dashboard.
 
 ---
 
-**Repository:** [Sairam-incepta/HRAgent](https://github.com/Sairam-incepta/HRAgent)  
-**Detailed docs:** See `PROJECT_ARCHITECTURE.md`
+**Detailed docs:** See `PROJECT_ARCHITECTURE.md` # Updated Mon Jun 23 17:38:06 EDT 2025
