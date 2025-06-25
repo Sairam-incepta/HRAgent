@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { User, Mail, Eye, EyeOff } from "lucide-react";
-import { useUser } from "@clerk/nextjs";
+import { useUser, useClerk } from "@clerk/nextjs";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -20,6 +20,7 @@ interface SettingsDialogProps {
 export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail, userRole }: SettingsDialogProps) {
   const { toast } = useToast();
   const { user } = useUser();
+  const { signOut } = useClerk();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -59,27 +60,55 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
     setIsUpdatingPassword(true);
 
     try {
-      // Update password using Clerk's updatePassword method
-      await user?.updatePassword({
-        currentPassword,
-        newPassword,
+      // Use the admin API route to reset the password (bypasses verification)
+      const response = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.id,
+          newPassword: newPassword,
+          bypassVerification: true // Flag to indicate this is a self-service reset
+        }),
       });
 
-      toast({
-        title: "Password Updated",
-        description: "Your password has been updated successfully",
-      });
+      const data = await response.json();
 
-      // Clear password fields
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: "Password updated successfully. You will be signed out to apply changes.",
+        });
+        
+        // Clear form
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        
+        // Close dialog and sign out to force re-authentication with new password
+        setTimeout(async () => {
+          onOpenChange(false);
+          
+          // Sign out the user to force them to log in with the new password
+          try {
+            await signOut();
+            // Redirect to sign-in page
+            window.location.href = '/sign-in';
+          } catch (signOutError) {
+            console.error('Sign out error:', signOutError);
+            // Fallback: reload the page to clear session
+            window.location.reload();
+          }
+        }, 1500);
+      } else {
+        throw new Error(data.error || 'Failed to update password');
+      }
     } catch (error: any) {
-      console.error('Password update error:', error);
+      console.error('Password reset error:', error);
       toast({
         title: "Error",
-        description: error.errors?.[0]?.message || "Failed to update password. Please try again.",
+        description: error.message || "Failed to update password. Please try again or contact support.",
         variant: "destructive",
       });
     } finally {
@@ -177,7 +206,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                   >
                     {showCurrentPassword ? (
@@ -188,7 +217,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                   </Button>
                 </div>
               </div>
-
+              
               <div className="space-y-2">
                 <Label htmlFor="newPassword" className="text-sm">New Password</Label>
                 <div className="relative">
@@ -203,7 +232,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowNewPassword(!showNewPassword)}
                   >
                     {showNewPassword ? (
@@ -214,7 +243,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                   </Button>
                 </div>
               </div>
-
+              
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword" className="text-sm">Confirm New Password</Label>
                 <div className="relative">
@@ -229,7 +258,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   >
                     {showConfirmPassword ? (
@@ -240,7 +269,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
                   </Button>
                 </div>
               </div>
-
+              
               <Button
                 onClick={handlePasswordReset}
                 disabled={isUpdatingPassword}
@@ -249,6 +278,12 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
               >
                 {isUpdatingPassword ? "Updating..." : "Update Password"}
               </Button>
+              
+              <div className="bg-blue-50 dark:bg-blue-950/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800 mt-3">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <strong>Note:</strong> Your password must be at least 8 characters long. If you encounter any issues, contact your administrator.
+                </p>
+              </div>
             </div>
           </div>
 

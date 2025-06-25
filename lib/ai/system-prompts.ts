@@ -69,7 +69,10 @@ export const buildAdminSystemPrompt = (
   activeEmployees: any[],
   pendingRequests: any[],
   allPolicySales: any[],
-  totalSales: number
+  totalSales: number,
+  pendingAllRequests: any[] = [],
+  allReviews: any[] = [],
+  pendingHighValuePolicies: any[] = []
 ): string => {
   return `You are "Let's Insure Admin Assistant", an AI assistant for LetsInsure HR system. You help administrators analyze company performance, manage employees, and review organizational data.
 
@@ -77,8 +80,11 @@ COMPANY DATA CONTEXT (CURRENT/LIVE DATA):
 - Total Employees: ${employees.length}
 - Active Employees: ${activeEmployees.length}
 - Pending Overtime Requests: ${pendingRequests.length}
+- Pending All Requests: ${pendingAllRequests.length}
 - Total Company Policy Sales: ${allPolicySales.length}
 - Total Company Sales Amount: $${totalSales.toLocaleString()}
+- Client Reviews: ${allReviews.length}
+- Pending High-Value Policy Reviews: ${pendingHighValuePolicies.length}
 
 EMPLOYEE BREAKDOWN:
 ${activeEmployees.slice(0, 10).map(emp => `- ${emp.name} (${emp.department} - ${emp.position}): $${emp.hourly_rate}/hr`).join('\n')}
@@ -86,8 +92,17 @@ ${activeEmployees.slice(0, 10).map(emp => `- ${emp.name} (${emp.department} - ${
 RECENT COMPANY SALES (LIVE DATA):
 ${allPolicySales.slice(-10).map(sale => `- Policy ${sale.policy_number}: $${sale.amount.toLocaleString()} (Employee ID: ${sale.employee_id})`).join('\n')}
 
-PENDING REQUESTS (LIVE DATA):
+PENDING OVERTIME REQUESTS (LIVE DATA):
 ${pendingRequests.map(req => `- ${req.reason} (${req.hours_requested}h requested)`).join('\n')}
+
+PENDING ALL REQUESTS (LIVE DATA):
+${pendingAllRequests.map(req => `- ${req.type}: ${req.title} - ${req.description} (Status: ${req.status})`).join('\n')}
+
+CLIENT REVIEWS (LIVE DATA):
+${allReviews.slice(-10).map(review => `- ${review.client_name} (${review.policy_number}): ${review.rating}/5 stars - "${review.review}"`).join('\n')}
+
+PENDING HIGH-VALUE POLICY REVIEWS (LIVE DATA):
+${pendingHighValuePolicies.map(hvp => `- Policy ${hvp.policy_number}: $${hvp.policy_amount?.toLocaleString()} (Status: ${hvp.status})`).join('\n')}
 
 CAPABILITIES:
 - Analyze company-wide performance metrics

@@ -1,18 +1,36 @@
 'use client';
 
 import { useState, useEffect } from "react";
-import { Users, Clock, AlertCircle, TrendingUp } from "lucide-react";
-import { getEmployees, getPolicySales, getOvertimeRequests } from "@/lib/database";
+import { Users, Clock, AlertCircle, TrendingUp, DollarSign } from "lucide-react";
+import { 
+  getEmployees, 
+  getPolicySales, 
+  debugTimeLogs, 
+  calculateActualHoursForPeriod,
+  getClockedInEmployeesCount,
+  getTotalPolicySalesAmount,
+  getOvertimeHoursThisWeek,
+  getClientReviews,
+  calculateLifeInsuranceReferralBonus,
+  calculateReviewBonus,
+  getTodayTimeTracking,
+  getPayrollPeriodDetails
+} from "@/lib/database";
 import { dashboardEvents } from "@/lib/events";
 
 export function AdminStats() {
   const [stats, setStats] = useState({
-    totalEmployees: 0,
-    activeEmployees: 0,
-    pendingRequests: 0,
-    totalPolicies: 0
+    clockedInEmployees: { clockedIn: 0, total: 0 },
+    totalHours: 0,
+    totalPolicies: 0,
+    totalPolicySalesAmount: 0,
+    overtimeHoursThisWeek: 0,
+    regularHoursThisWeek: 0,
+    expenditure: 0
   });
   const [loading, setLoading] = useState(true);
+
+
 
   useEffect(() => {
     loadStats();
@@ -28,52 +46,145 @@ export function AdminStats() {
       loadStats(); // Refresh stats when new request is added
     };
 
-    // Subscribe to events and store cleanup functions
-    const cleanupFunctions = [
-      dashboardEvents.on('policy_sale', handlePolicySale),
-      dashboardEvents.on('request_submitted', handleRequest)
-    ];
+    const unsubscribe1 = dashboardEvents.on('policy_sale', handlePolicySale);
+    const unsubscribe2 = dashboardEvents.on('request_submitted', handleRequest);
 
     return () => {
-      // Call all cleanup functions
-      cleanupFunctions.forEach(cleanup => cleanup());
+      unsubscribe1();
+      unsubscribe2();
     };
   }, []);
 
   const loadStats = async () => {
     try {
-      const [employees, overtimeRequests] = await Promise.all([
-        getEmployees(),
-        getOvertimeRequests()
-      ]);
-
-      // Get all policy sales for counting
-      const allPolicySales = await Promise.all(
-        employees.map(emp => getPolicySales(emp.clerk_user_id))
+      console.log("🔄 AdminStats: Loading statistics...");
+      
+      // Debug: Check what time logs exist in the database
+      await debugTimeLogs();
+      
+      // Get employees (all employees - role is handled by Clerk, not database)
+      const employees = await getEmployees();
+      console.log("👥 AdminStats: Found employees:", employees.length);
+      
+      let totalPolicies = 0;
+      let totalHours = 0;
+      let totalOvertimeThisWeek = 0;
+      let totalRegularHoursThisWeek = 0;
+      let clockedInCount = 0;
+      
+      // Calculate current biweekly period dates
+      const currentDate = new Date();
+      const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025
+      const daysSinceReference = Math.floor((currentDate.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
+      const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
+      
+      const currentPeriodStart = new Date(referenceDate);
+      currentPeriodStart.setDate(referenceDate.getDate() + (biweeklyPeriodsSinceReference * 14));
+      const currentPeriodEnd = new Date(currentPeriodStart);
+      currentPeriodEnd.setDate(currentPeriodStart.getDate() + 13);
+      
+      // Get current week dates for overtime calculation
+      const startOfWeek = new Date(currentDate);
+      startOfWeek.setDate(currentDate.getDate() - currentDate.getDay()); // Sunday
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
+      endOfWeek.setHours(23, 59, 59, 999);
+      
+      console.log(`📅 Current period: ${currentPeriodStart.toISOString().split('T')[0]} to ${currentPeriodEnd.toISOString().split('T')[0]}`);
+      console.log(`📅 Current week: ${startOfWeek.toISOString().split('T')[0]} to ${endOfWeek.toISOString().split('T')[0]}`);
+      
+      // Get policy sales and hours for each employee using correct employee ID
+      for (const employee of employees) {
+        console.log(`📊 AdminStats: Getting data for employee ${employee.name} (clerk_user_id: ${employee.clerk_user_id})`);
+        
+        // Skip admin users for hour calculations (they don't clock in/out)
+        const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+        
+        if (!isAdmin) {
+          // Check if employee is currently clocked in
+          const { clockedIn } = await getTodayTimeTracking(employee.clerk_user_id);
+          if (clockedIn) {
+            clockedInCount++;
+          }
+          
+          // Calculate hours for current biweekly period using clerk_user_id
+          const empHours = await calculateActualHoursForPeriod(employee.clerk_user_id, currentPeriodStart, currentPeriodEnd);
+          totalHours += empHours;
+          console.log(`⏰ AdminStats: Employee ${employee.name} worked ${empHours} hours in current period`);
+          
+          // Calculate this week's hours and overtime (using 40-hour weekly limit)
+          const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
+          const weeklyOvertimeLimit = 40; // Standard 40-hour work week
+          
+          if (weekHours > weeklyOvertimeLimit) {
+            const overtime = weekHours - weeklyOvertimeLimit;
+            totalOvertimeThisWeek += overtime;
+            totalRegularHoursThisWeek += weeklyOvertimeLimit;
+          } else {
+            totalRegularHoursThisWeek += weekHours;
+          }
+        } else {
+          console.log(`🔧 AdminStats: Skipping hour calculation for admin user ${employee.name}`);
+        }
+        
+        // Get policy sales using clerk_user_id (this is what's stored in policy_sales.employee_id)
+        const policySales = await getPolicySales(employee.clerk_user_id);
+        console.log(`📈 AdminStats: Employee ${employee.name} has ${policySales.length} sales`);
+        
+        totalPolicies += policySales.length;
+      }
+      
+      // Get new stats using the new functions
+      const totalPolicySalesAmount = await getTotalPolicySalesAmount();
+      
+      // Calculate expenditure based on actual payroll costs (use the same period as calculated above)
+      const payrollDetails = await getPayrollPeriodDetails(
+        currentPeriodStart.toISOString().split('T')[0],
+        currentPeriodEnd.toISOString().split('T')[0]
       );
-      const totalPolicies = allPolicySales.flat().length;
-
-      const activeEmployees = employees.filter(emp => emp.status === 'active').length;
-      const pendingRequests = overtimeRequests.filter(req => req.status === 'pending').length;
+      
+      const expenditure = payrollDetails.summary.totalPay;
+      
+      console.log("📊 AdminStats: Final stats:", {
+        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length },
+        totalHours: totalHours.toFixed(2),
+        totalPolicies,
+        totalPolicySalesAmount: totalPolicySalesAmount.toFixed(2),
+        overtimeHoursThisWeek: totalOvertimeThisWeek.toFixed(2),
+        regularHoursThisWeek: totalRegularHoursThisWeek.toFixed(2),
+        expenditure: expenditure.toFixed(2),
+        payrollDetailsRaw: payrollDetails.summary
+      });
 
       setStats({
-        totalEmployees: employees.length,
-        activeEmployees,
-        pendingRequests,
-        totalPolicies
+        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length },
+        totalHours,
+        totalPolicies,
+        totalPolicySalesAmount,
+        overtimeHoursThisWeek: totalOvertimeThisWeek,
+        regularHoursThisWeek: totalRegularHoursThisWeek,
+        expenditure
       });
+      
     } catch (error) {
-      console.error('Error loading admin stats:', error);
+      console.error("❌ AdminStats: Error loading statistics:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-      {loading ? (
-        // Loading state
-        Array.from({ length: 4 }).map((_, i) => (
+  // Format hours with minutes
+  const formatHours = (totalHours: number) => {
+    const hours = Math.floor(totalHours);
+    const minutes = Math.round((totalHours - hours) * 60);
+    return `${hours}h ${minutes}m`;
+  };
+
+  if (loading) {
+    return (
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="bg-card rounded-lg border p-4 h-20">
             <div className="animate-pulse flex items-center justify-between h-full">
               <div className="flex flex-col justify-center space-y-2 flex-1">
@@ -83,67 +194,89 @@ export function AdminStats() {
               <div className="h-8 w-8 bg-muted rounded-lg flex-shrink-0 ml-3"></div>
             </div>
           </div>
-        ))
-      ) : (
-        <>
-          {/* Total Employees */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-            <div className="flex items-center justify-between h-full">
-              <div className="flex flex-col justify-center min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground leading-tight truncate">Total Employees</p>
-                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.totalEmployees}</p>
-              </div>
-              <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                <Users className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
-              </div>
-            </div>
-          </div>
+        ))}
+      </div>
+    );
+  }
 
-          {/* Active Employees */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-            <div className="flex items-center justify-between h-full">
-              <div className="flex flex-col justify-center min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground leading-tight truncate">Currently Active</p>
-                <div className="flex items-baseline gap-1">
-                  <p className="text-2xl font-semibold text-foreground leading-tight">{stats.activeEmployees}</p>
-                  <span className="text-xs text-muted-foreground">
-                    ({stats.totalEmployees > 0 ? Math.round((stats.activeEmployees / stats.totalEmployees) * 100) : 0}%)
-                  </span>
-                </div>
-              </div>
-              <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                <Clock className="h-4 w-4 text-green-600 dark:text-green-400" />
-              </div>
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-5">
+        {/* Total Employees */}
+        <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+          <div className="flex items-center justify-between h-full">
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground leading-tight truncate">Clocked In</p>
+              <p className="text-2xl font-semibold text-foreground leading-tight">
+                {stats.clockedInEmployees.clockedIn}/{stats.clockedInEmployees.total}
+              </p>
+            </div>
+            <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+              <Users className="h-4 w-4 text-[#005cb3] dark:text-blue-400" />
             </div>
           </div>
+        </div>
 
-          {/* Pending Requests */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-            <div className="flex items-center justify-between h-full">
-              <div className="flex flex-col justify-center min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground leading-tight truncate">Pending Requests</p>
-                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.pendingRequests}</p>
-              </div>
-              <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-              </div>
+        {/* Weekly Hours Overview */}
+        <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+          <div className="flex items-center justify-between h-full">
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground leading-tight truncate">Weekly Hours</p>
+              <p className="text-2xl font-semibold text-foreground leading-tight">
+                {formatHours(stats.regularHoursThisWeek + stats.overtimeHoursThisWeek)}
+              </p>
+            </div>
+            <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+              <Clock className="h-4 w-4 text-green-600 dark:text-green-400" />
             </div>
           </div>
+        </div>
 
-          {/* Total Policy Sales */}
-          <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-            <div className="flex items-center justify-between h-full">
-              <div className="flex flex-col justify-center min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground leading-tight truncate">Total Policy Sales</p>
-                <p className="text-2xl font-semibold text-foreground leading-tight">{stats.totalPolicies}</p>
-              </div>
-              <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-              </div>
+        {/* Overtime Hours */}
+        <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+          <div className="flex items-center justify-between h-full">
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground leading-tight truncate">Overtime Hours</p>
+              <p className="text-2xl font-semibold text-amber-600 leading-tight">
+                {formatHours(stats.overtimeHoursThisWeek)}
+              </p>
+            </div>
+            <div className="h-8 w-8 bg-amber-100 dark:bg-amber-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+              <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             </div>
           </div>
-        </>
-      )}
+        </div>
+
+        {/* Policy Sales */}
+        <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+          <div className="flex items-center justify-between h-full">
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground leading-tight truncate">Policy Sales</p>
+              <p className="text-2xl font-semibold text-foreground leading-tight">
+                ${Math.round(stats.totalPolicySalesAmount).toLocaleString()}
+              </p>
+            </div>
+            <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+              <TrendingUp className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+            </div>
+          </div>
+        </div>
+
+        {/* Expenditure */}
+        <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+          <div className="flex items-center justify-between h-full">
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground leading-tight truncate">Expenditure</p>
+              <p className="text-2xl font-semibold text-foreground leading-tight">
+                ${Math.round(stats.expenditure).toLocaleString()}
+              </p>
+            </div>
+            <div className="h-8 w-8 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+              <DollarSign className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

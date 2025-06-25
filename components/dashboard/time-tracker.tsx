@@ -15,6 +15,7 @@ import {
   getHighValuePolicyNotificationsList,
   getClientReviews
 } from "@/lib/database";
+import { supabase } from "@/lib/supabase";
 import { useUser } from '@clerk/nextjs';
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { dashboardEvents } from "@/lib/events";
@@ -225,13 +226,17 @@ export function TimeTracker({
             (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
           lifeInsuranceBonuses += 10.00;
         }
-        
-        // High-value policy admin bonuses
-        const adminBonus = (sale as any).admin_bonus || 0;
-        if (adminBonus > 0) {
-          highValuePolicyBonuses += adminBonus;
-        }
       });
+      
+      // Get high-value policy admin bonuses from notifications table
+      const { data: highValueNotifications } = await supabase
+        .from('high_value_policy_notifications')
+        .select('admin_bonus')
+        .eq('employee_id', user.id);
+      
+      if (highValueNotifications) {
+        highValuePolicyBonuses = highValueNotifications.reduce((sum: number, hvn: any) => sum + (hvn.admin_bonus || 0), 0);
+      }
       
       // Review bonuses: $10 for each 5-star review
       const reviewBonuses = clientReviews.filter(review => review.rating === 5).length * 10;
@@ -731,27 +736,8 @@ export function TimeTracker({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Clock Out</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                Are you sure you want to clock out? Your work session will end.
-                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded">
-                  <div className="text-sm space-y-1">
-                    <div><strong>Total time worked:</strong> {formatTime(elapsedTime)}</div>
-                    <div><strong>Hours pay:</strong> ${payInfo.basePay.toFixed(2)} ({formatTime(elapsedTime)} @ ${hourlyRate}/hr)</div>
-                    {payInfo.bonuses > 0 && (
-                      <div className="text-green-600 dark:text-green-400">
-                        <strong>Bonuses:</strong> ${payInfo.bonuses.toFixed(2)}
-                      </div>
-                    )}
-                    <div><strong>Total pay:</strong> ${payInfo.totalPay.toFixed(2)}</div>
-                    {payInfo.overtimeHours > 0 && (
-                      <div className="text-amber-600 dark:text-amber-400">
-                        <strong>Overtime:</strong> ${payInfo.overtimePay.toFixed(2)} ({payInfo.overtimeHours.toFixed(1)}h)
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+            <AlertDialogDescription>
+              Are you sure you want to clock out? Your work session will end.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

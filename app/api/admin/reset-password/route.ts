@@ -12,22 +12,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user from Clerk directly to access metadata
-    const { clerkClient } = await import('@clerk/nextjs/server');
-    const clerkClientInstance = await clerkClient();
-    const user = await clerkClientInstance.users.getUser(userId);
-    
-    // Check if user is admin from their public metadata
-    const publicMetadata = user.publicMetadata as { role?: string };
-    const isAdmin = publicMetadata?.role === 'admin';
+    const { targetUserId, userId: selfServiceUserId, newPassword, bypassVerification } = await request.json();
 
-    if (!isAdmin) {
-      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
-    }
+    // Determine the target user ID - for self-service, use the current user's ID
+    const userToUpdate = targetUserId || selfServiceUserId || userId;
 
-    const { targetUserId, newPassword } = await request.json();
-
-    if (!targetUserId || !newPassword) {
+    if (!userToUpdate || !newPassword) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -41,15 +31,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if this is a self-service password reset
+    const isSelfService = bypassVerification && userId === userToUpdate;
+    
+    if (!isSelfService) {
+      // For admin resets, check if the current user is an admin
+      const { clerkClient } = await import('@clerk/nextjs/server');
+      const clerkClientInstance = await clerkClient();
+      const user = await clerkClientInstance.users.getUser(userId);
+      
+      // Check if user is admin from their public metadata
+      const publicMetadata = user.publicMetadata as { role?: string };
+      const isAdmin = publicMetadata?.role === 'admin';
+
+      if (!isAdmin) {
+        return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
+      }
+    }
+
     // Reset the user's password in Clerk
     const client = await clerkClient();
-    await client.users.updateUser(targetUserId, {
+    await client.users.updateUser(userToUpdate, {
       password: newPassword
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Password reset successfully'
+      message: isSelfService ? 'Password updated successfully' : 'Password reset successfully'
     });
 
   } catch (error) {

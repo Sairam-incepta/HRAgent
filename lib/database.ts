@@ -29,7 +29,7 @@ const getLocalTimezoneDate = (date: Date = new Date()): Date => {
   return new Date(date.toLocaleString("en-US", { timeZone: timezone }));
 };
 
-const getLocalDateString = (date: Date = new Date()): string => {
+export const getLocalDateString = (date: Date = new Date()): string => {
   // Get date string in user's timezone
   const localDate = getLocalTimezoneDate(date);
   const year = localDate.getFullYear();
@@ -38,19 +38,19 @@ const getLocalDateString = (date: Date = new Date()): string => {
   return `${year}-${month}-${day}`;
 };
 
-const getLocalStartOfDay = (date: Date = new Date()): Date => {
+export const getLocalStartOfDay = (date: Date = new Date()): Date => {
   const localDate = getLocalTimezoneDate(date);
   localDate.setHours(0, 0, 0, 0);
   return localDate;
 };
 
-const getLocalEndOfDay = (date: Date = new Date()): Date => {
+export const getLocalEndOfDay = (date: Date = new Date()): Date => {
   const localDate = getLocalTimezoneDate(date);
   localDate.setHours(23, 59, 59, 999);
   return localDate;
 };
 
-const getLocalStartOfWeek = (date: Date = new Date()): Date => {
+export const getLocalStartOfWeek = (date: Date = new Date()): Date => {
   const localDate = getLocalTimezoneDate(date);
   const day = localDate.getDay();
   const diff = localDate.getDate() - day; // Sunday is 0
@@ -59,7 +59,7 @@ const getLocalStartOfWeek = (date: Date = new Date()): Date => {
   return localDate;
 };
 
-const getLocalEndOfWeek = (date: Date = new Date()): Date => {
+export const getLocalEndOfWeek = (date: Date = new Date()): Date => {
   const localDate = getLocalTimezoneDate(date);
   const day = localDate.getDay();
   const diff = localDate.getDate() - day + 6; // Saturday is 6
@@ -257,11 +257,11 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
         clockedIn = true;
       }
     });
-    
-    return {
+  
+  return {
       totalHours: Math.round(totalHours * 100) / 100, // Round to 2 decimal places
       clockedIn
-    };
+  };
   } catch (error) {
     console.error('Error getting today time tracking:', error);
     return { totalHours: 0, clockedIn: false };
@@ -838,7 +838,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     ]);
 
     console.log(`👥 Found ${employees.length} employees, ${policySales.length} policy sales`);
-
+    
     const activeEmployees = employees.filter(emp => emp.status === 'active');
     const periods: PayrollPeriod[] = [];
     const now = new Date();
@@ -861,44 +861,50 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     
     // Simple calculation for current period
     const currentPeriodSales = policySales.filter(sale => {
-      const saleDate = new Date(sale.sale_date);
+        const saleDate = new Date(sale.sale_date);
       return saleDate >= currentStartDate && saleDate <= currentEndDate;
     });
     
     console.log(`💰 Current period sales: ${currentPeriodSales.length}`);
     
     const currentTotalBonuses = currentPeriodSales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
-    // Use standard 80 hours per employee per 2-week period (8 hours/day * 10 working days)
-    const currentEstimatedHours = activeEmployees.length * 80;
-    const currentEstimatedBasePay = currentEstimatedHours * 25; // $25/hour
-    const currentEstimatedPay = currentEstimatedBasePay + currentTotalBonuses;
+    
+    // Calculate actual hours worked for current period across all employees
+    let currentTotalActualHours = 0;
+    for (const emp of activeEmployees) {
+      const empHours = await calculateActualHoursForPeriod(emp.id, currentStartDate, currentEndDate);
+      currentTotalActualHours += empHours;
+    }
+    
+    const currentActualBasePay = currentTotalActualHours * 25; // $25/hour
+    const currentActualPay = currentActualBasePay + currentTotalBonuses;
     
     console.log(`💵 Current period calculation:`, {
       employees: activeEmployees.length,
-      estimatedHours: currentEstimatedHours,
-      basePay: currentEstimatedBasePay,
+      actualHours: currentTotalActualHours,
+      basePay: currentActualBasePay,
       bonuses: currentTotalBonuses,
-      totalPay: currentEstimatedPay
+      totalPay: currentActualPay
     });
     
     // Add current period
     periods.push({
       period: `${currentStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${currentEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
       employees: activeEmployees.length,
-      total: Math.round(currentEstimatedPay),
+      total: Math.round(currentActualPay),
       status: 'current',
       startDate: currentStartDate.toISOString().split('T')[0],
       endDate: currentEndDate.toISOString().split('T')[0],
       details: {
-        regularHours: currentEstimatedHours, // Use estimated hours instead of 0
-        overtimeHours: 0,
+        regularHours: Math.round(Math.min(currentTotalActualHours, activeEmployees.length * 80) * 10) / 10, // 80 hours per employee for biweekly
+        overtimeHours: Math.round(Math.max(0, currentTotalActualHours - (activeEmployees.length * 80)) * 10) / 10,
         totalSales: currentPeriodSales.length,
         totalBonuses: Math.round(currentTotalBonuses),
         departmentBreakdown: []
       }
     });
     
-    // Add previous periods that have sales data (max 2 for speed)
+    // Add previous periods that have actual data (max 2 for speed)
     for (let i = 1; i <= 2; i++) {
       const periodStart = currentPeriodStart - i;
       const startDate = new Date(referenceDate);
@@ -911,27 +917,35 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         return saleDate >= startDate && saleDate <= endDate;
       });
       
-      // Show period even if no sales, with estimated hours
-      const totalBonuses = periodSales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
-      const estimatedHours = activeEmployees.length * 80;
-      const estimatedBasePay = estimatedHours * 25;
-      const estimatedPay = estimatedBasePay + totalBonuses;
+      // Calculate actual hours worked for this period across all employees
+      let totalActualHours = 0;
+      for (const emp of activeEmployees) {
+        const empHours = await calculateActualHoursForPeriod(emp.id, startDate, endDate);
+        totalActualHours += empHours;
+      }
       
-      periods.unshift({
-        period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        employees: activeEmployees.length,
-        total: Math.round(estimatedPay),
-        status: 'completed',
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        details: {
-          regularHours: estimatedHours, // Use estimated hours
-          overtimeHours: 0,
-          totalSales: periodSales.length,
-          totalBonuses: Math.round(totalBonuses),
-          departmentBreakdown: []
-        }
-      });
+      // Only add period if there's actual data (hours worked OR sales)
+      if (totalActualHours > 0 || periodSales.length > 0) {
+        const totalBonuses = periodSales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+        const totalBasePay = totalActualHours * 25; // Use actual hours, not estimated
+        const totalPay = totalBasePay + totalBonuses;
+        
+        periods.unshift({
+          period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+          employees: activeEmployees.length,
+          total: Math.round(totalPay),
+          status: 'completed',
+          startDate: startDate.toISOString().split('T')[0],
+          endDate: endDate.toISOString().split('T')[0],
+          details: {
+            regularHours: Math.round(Math.min(totalActualHours, activeEmployees.length * 80) * 10) / 10, // 80 hours per employee for biweekly
+            overtimeHours: Math.round(Math.max(0, totalActualHours - (activeEmployees.length * 80)) * 10) / 10,
+            totalSales: periodSales.length,
+            totalBonuses: Math.round(totalBonuses),
+            departmentBreakdown: []
+          }
+        });
+      }
     }
     
     // Add next 2 upcoming periods
@@ -983,6 +997,13 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     totalPay: number;
     salesCount: number;
     salesAmount: number;
+    bonusBreakdown: {
+      brokerFeeBonuses: { count: number; amount: number };
+      crossSellingBonuses: { count: number; amount: number };
+      lifeInsuranceBonuses: { count: number; amount: number };
+      reviewBonuses: { count: number; amount: number };
+      highValuePolicyBonuses: { count: number; amount: number };
+    };
   }>;
   summary: {
     totalEmployees: number;
@@ -994,6 +1015,14 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     totalPay: number;
     totalSales: number;
     totalSalesAmount: number;
+    totalBrokerFees: number;
+    bonusBreakdown: {
+      brokerFeeBonuses: { count: number; amount: number };
+      crossSellingBonuses: { count: number; amount: number };
+      lifeInsuranceBonuses: { count: number; amount: number };
+      reviewBonuses: { count: number; amount: number };
+      highValuePolicyBonuses: { count: number; amount: number };
+    };
   };
 }> => {
   try {
@@ -1025,35 +1054,158 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       })));
     }
 
+    // Get high value policy notifications for this period
+    // Use overlapping date ranges to catch notifications that span across period boundaries
+    const { data: highValueNotifications } = await supabase
+      .from('high_value_policy_notifications')
+      .select('*')
+      .lte('biweekly_period_start', endDate)
+      .gte('biweekly_period_end', startDate);
+
+    // Get client reviews for this period
+    const { data: clientReviews } = await supabase
+      .from('client_reviews')
+      .select('*')
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
     const employeeDetails = [];
+    let summaryBonusBreakdown = {
+      brokerFeeBonuses: { count: 0, amount: 0 },
+      crossSellingBonuses: { count: 0, amount: 0 },
+      lifeInsuranceBonuses: { count: 0, amount: 0 },
+      reviewBonuses: { count: 0, amount: 0 },
+      highValuePolicyBonuses: { count: 0, amount: 0 }
+    };
+
     for (const emp of employees) {
       console.log(`👤 Processing employee: ${emp.name} (${emp.clerk_user_id})`);
+      
+      // Skip admin users for hour calculations (they don't clock in/out)
+      const isAdmin = emp.position === 'HR Manager' || emp.email === 'admin@letsinsure.hr';
       
       const empSales = periodSales.filter((s: any) => s.employee_id === emp.clerk_user_id);
       console.log(`💰 Employee ${emp.name} has ${empSales.length} sales in this period`);
       
-      // Calculate actual hours worked from time logs
-      const actualHours = await calculateActualHoursForPeriod(emp.clerk_user_id, start, end);
-      console.log(`⏰ Employee ${emp.name} worked ${actualHours} actual hours in this period`);
+      // Calculate actual hours worked from time logs (skip for admin users)
+      let actualHours = 0;
+      if (!isAdmin) {
+        actualHours = await calculateActualHoursForPeriod(emp.clerk_user_id, start, end);
+        console.log(`⏰ Employee ${emp.name} worked ${actualHours} actual hours in this period`);
+      } else {
+        console.log(`🔧 Skipping hour calculation for admin user ${emp.name}`);
+      }
       
-      // If no actual hours, use estimated hours (80 hours per 2-week period)
-      const totalHours = actualHours > 0 ? actualHours : 80;
-      console.log(`📊 Employee ${emp.name} using ${totalHours} hours (${actualHours > 0 ? 'actual' : 'estimated'})`);
+      // Use actual hours only - no estimates for completed periods
+      const totalHours = actualHours;
+      console.log(`📊 Employee ${emp.name} using ${totalHours} actual hours`);
       
-      const bonuses = empSales.reduce((sum: number, s: any) => sum + (s.bonus || 0), 0);
-      const totalPay = (totalHours * emp.hourly_rate) + bonuses;
+      // Calculate detailed bonus breakdown
+      let empBonusBreakdown = {
+        brokerFeeBonuses: { count: 0, amount: 0 },
+        crossSellingBonuses: { count: 0, amount: 0 },
+        lifeInsuranceBonuses: { count: 0, amount: 0 },
+        reviewBonuses: { count: 0, amount: 0 },
+        highValuePolicyBonuses: { count: 0, amount: 0 }
+      };
+
+      // Process policy sales for detailed bonuses
+      empSales.forEach((sale: any) => {
+        // Broker fee bonus: 10% of (broker fee - 100)
+        if (sale.broker_fee > 100) {
+          const baseBrokerBonus = (sale.broker_fee - 100) * 0.1;
+          empBonusBreakdown.brokerFeeBonuses.count++;
+          empBonusBreakdown.brokerFeeBonuses.amount += baseBrokerBonus;
+          
+          // Cross-selling bonus: double the broker fee bonus (additional amount)
+          if (sale.cross_sold) {
+            empBonusBreakdown.crossSellingBonuses.count++;
+            empBonusBreakdown.crossSellingBonuses.amount += baseBrokerBonus; // Additional amount for cross-selling
+          }
+        }
+        
+        // Life insurance bonus: $10 for life insurance policies
+        if (sale.policy_type?.toLowerCase().includes('life') || 
+            (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
+          empBonusBreakdown.lifeInsuranceBonuses.count++;
+          empBonusBreakdown.lifeInsuranceBonuses.amount += 10.00;
+        }
+      });
+
+      // Review bonuses: $10 for each 5-star review by this employee
+      const empReviews = (clientReviews || []).filter((review: any) => review.employee_id === emp.clerk_user_id);
+      const fiveStarReviews = empReviews.filter((review: any) => review.rating === 5);
+      empBonusBreakdown.reviewBonuses.count = fiveStarReviews.length;
+      empBonusBreakdown.reviewBonuses.amount = fiveStarReviews.length * 10;
+
+      // Calculate high value policy bonuses for this employee in this period (only reviewed/resolved)
+      const empHighValueNotifications = (highValueNotifications || [])
+        .filter((hvn: any) => hvn.employee_id === emp.clerk_user_id && (hvn.status === 'reviewed' || hvn.status === 'resolved'));
       
+      let empHighValueBonusAmount = 0;
+      let empHighValueBonusCount = 0;
+      
+      empHighValueNotifications.forEach((hvn: any) => {
+        let bonusAmount = 0;
+        // Include admin bonus if set
+        if (hvn.admin_bonus && hvn.admin_bonus > 0) {
+          bonusAmount += hvn.admin_bonus;
+        }
+        // Include current bonus (auto-calculated) if no admin bonus is set
+        if ((!hvn.admin_bonus || hvn.admin_bonus <= 0) && hvn.current_bonus && hvn.current_bonus > 0) {
+          bonusAmount += hvn.current_bonus;
+        }
+        
+        if (bonusAmount > 0) {
+          empHighValueBonusAmount += bonusAmount;
+          empHighValueBonusCount++;
+        }
+      });
+      
+      empBonusBreakdown.highValuePolicyBonuses.count = empHighValueBonusCount;
+      empBonusBreakdown.highValuePolicyBonuses.amount = empHighValueBonusAmount;
+
+      // Calculate total bonuses
+      const totalBonuses = 
+        empBonusBreakdown.brokerFeeBonuses.amount +
+        empBonusBreakdown.crossSellingBonuses.amount +
+        empBonusBreakdown.lifeInsuranceBonuses.amount +
+        empBonusBreakdown.reviewBonuses.amount +
+        empBonusBreakdown.highValuePolicyBonuses.amount;
+
+      const totalPay = (totalHours * emp.hourly_rate) + totalBonuses;
       const salesAmount = empSales.reduce((sum: number, s: any) => sum + s.amount, 0);
+
+      // Add to summary breakdown
+      summaryBonusBreakdown.brokerFeeBonuses.count += empBonusBreakdown.brokerFeeBonuses.count;
+      summaryBonusBreakdown.brokerFeeBonuses.amount += empBonusBreakdown.brokerFeeBonuses.amount;
+      summaryBonusBreakdown.crossSellingBonuses.count += empBonusBreakdown.crossSellingBonuses.count;
+      summaryBonusBreakdown.crossSellingBonuses.amount += empBonusBreakdown.crossSellingBonuses.amount;
+      summaryBonusBreakdown.lifeInsuranceBonuses.count += empBonusBreakdown.lifeInsuranceBonuses.count;
+      summaryBonusBreakdown.lifeInsuranceBonuses.amount += empBonusBreakdown.lifeInsuranceBonuses.amount;
+      summaryBonusBreakdown.reviewBonuses.count += empBonusBreakdown.reviewBonuses.count;
+      summaryBonusBreakdown.reviewBonuses.amount += empBonusBreakdown.reviewBonuses.amount;
+      summaryBonusBreakdown.highValuePolicyBonuses.count += empBonusBreakdown.highValuePolicyBonuses.count;
+      summaryBonusBreakdown.highValuePolicyBonuses.amount += empBonusBreakdown.highValuePolicyBonuses.amount;
 
       console.log(`💵 Employee ${emp.name} summary:`, {
         actualHours,
         totalHours,
         hourlyRate: emp.hourly_rate,
-        bonuses,
+        bonusBreakdown: empBonusBreakdown,
+        totalBonuses,
         totalPay,
         salesCount: empSales.length,
         salesAmount
       });
+
+      // Calculate overtime for biweekly period (80 regular hours)
+      const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
+      const regularHours = Math.min(totalHours, biweeklyRegularLimit);
+      const overtimeHours = Math.max(0, totalHours - biweeklyRegularLimit);
+      const regularPay = regularHours * emp.hourly_rate;
+      const overtimePay = overtimeHours * emp.hourly_rate * 1.0; // 1x rate for overtime
+      const basePay = regularPay + overtimePay;
 
       employeeDetails.push({
         id: emp.id,
@@ -1061,30 +1213,78 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         department: emp.department,
         position: emp.position,
         hourlyRate: emp.hourly_rate,
-        regularHours: Math.round(totalHours * 10) / 10,
-        overtimeHours: 0, // No overtime distinction since rates are same
-        regularPay: Math.round((totalHours * emp.hourly_rate) * 100) / 100,
-        overtimePay: 0, // No overtime distinction since rates are same
-        bonuses: Math.round(bonuses * 100) / 100,
+        regularHours: Math.round(regularHours * 10) / 10,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+        regularPay: Math.round(regularPay * 100) / 100,
+        overtimePay: Math.round(overtimePay * 100) / 100,
+        bonuses: Math.round(totalBonuses * 100) / 100,
         totalPay: Math.round(totalPay * 100) / 100,
         salesCount: empSales.length,
-        salesAmount: Math.round(salesAmount)
+        salesAmount: Math.round(salesAmount),
+        bonusBreakdown: {
+          brokerFeeBonuses: { 
+            count: empBonusBreakdown.brokerFeeBonuses.count, 
+            amount: Math.round(empBonusBreakdown.brokerFeeBonuses.amount * 100) / 100 
+          },
+          crossSellingBonuses: { 
+            count: empBonusBreakdown.crossSellingBonuses.count, 
+            amount: Math.round(empBonusBreakdown.crossSellingBonuses.amount * 100) / 100 
+          },
+          lifeInsuranceBonuses: { 
+            count: empBonusBreakdown.lifeInsuranceBonuses.count, 
+            amount: Math.round(empBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100 
+          },
+          reviewBonuses: { 
+            count: empBonusBreakdown.reviewBonuses.count, 
+            amount: Math.round(empBonusBreakdown.reviewBonuses.amount * 100) / 100 
+          },
+          highValuePolicyBonuses: { 
+            count: empBonusBreakdown.highValuePolicyBonuses.count, 
+            amount: Math.round(empBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100 
+          }
+        }
       });
     }
+
+    const totalBrokerFees = periodSales.reduce((sum: number, sale: any) => sum + (sale.broker_fee || 0), 0);
 
     const summary = {
       totalEmployees: employees.length,
       totalRegularHours: employeeDetails.reduce((sum, emp) => sum + emp.regularHours, 0),
-      totalOvertimeHours: 0, // No overtime distinction since rates are same
+      totalOvertimeHours: employeeDetails.reduce((sum, emp) => sum + emp.overtimeHours, 0),
       totalRegularPay: employeeDetails.reduce((sum, emp) => sum + emp.regularPay, 0),
-      totalOvertimePay: 0, // No overtime distinction since rates are same
+      totalOvertimePay: employeeDetails.reduce((sum, emp) => sum + emp.overtimePay, 0),
       totalBonuses: employeeDetails.reduce((sum, emp) => sum + emp.bonuses, 0),
       totalPay: employeeDetails.reduce((sum, emp) => sum + emp.totalPay, 0),
       totalSales: periodSales.length,
-      totalSalesAmount: periodSales.reduce((sum: number, sale: any) => sum + sale.amount, 0)
+      totalSalesAmount: periodSales.reduce((sum: number, sale: any) => sum + sale.amount, 0),
+      totalBrokerFees: Math.round(totalBrokerFees * 100) / 100,
+      bonusBreakdown: {
+        brokerFeeBonuses: { 
+          count: summaryBonusBreakdown.brokerFeeBonuses.count, 
+          amount: Math.round(summaryBonusBreakdown.brokerFeeBonuses.amount * 100) / 100 
+        },
+        crossSellingBonuses: { 
+          count: summaryBonusBreakdown.crossSellingBonuses.count, 
+          amount: Math.round(summaryBonusBreakdown.crossSellingBonuses.amount * 100) / 100 
+        },
+        lifeInsuranceBonuses: { 
+          count: summaryBonusBreakdown.lifeInsuranceBonuses.count, 
+          amount: Math.round(summaryBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100 
+        },
+        reviewBonuses: { 
+          count: summaryBonusBreakdown.reviewBonuses.count, 
+          amount: Math.round(summaryBonusBreakdown.reviewBonuses.amount * 100) / 100 
+        },
+        highValuePolicyBonuses: { 
+          count: summaryBonusBreakdown.highValuePolicyBonuses.count, 
+          amount: Math.round(summaryBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100 
+        }
+      }
     };
 
     console.log('📊 Final payroll summary:', summary);
+    console.log('📊 High Value Policy Bonuses Detail:', summary.bonusBreakdown.highValuePolicyBonuses);
 
     return { employees: employeeDetails, summary };
   } catch (error) {
@@ -1100,7 +1300,15 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         totalBonuses: 0,
         totalPay: 0,
         totalSales: 0,
-        totalSalesAmount: 0
+        totalSalesAmount: 0,
+        totalBrokerFees: 0,
+        bonusBreakdown: {
+          brokerFeeBonuses: { count: 0, amount: 0 },
+          crossSellingBonuses: { count: 0, amount: 0 },
+          lifeInsuranceBonuses: { count: 0, amount: 0 },
+          reviewBonuses: { count: 0, amount: 0 },
+          highValuePolicyBonuses: { count: 0, amount: 0 }
+        }
       }
     };
   }
@@ -1152,12 +1360,44 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
-
+      
       // Calculate actual hours worked from time logs
       const totalHours = await calculateActualHoursForPeriod(employeeId, startDate, endDate);
-      const bonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
-      const regularPay = totalHours * employee.hourly_rate;
-      const totalPay = regularPay + bonuses;
+      const baseBonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
+      
+      // Get high value policy admin bonuses for this period (only reviewed/resolved)
+      // Use overlapping date ranges to catch notifications that span across period boundaries
+      const { data: highValueNotifications } = await supabase
+        .from('high_value_policy_notifications')
+        .select('admin_bonus, current_bonus, status')
+        .eq('employee_id', employeeId)
+        .lte('biweekly_period_start', endDate.toISOString().split('T')[0])
+        .gte('biweekly_period_end', startDate.toISOString().split('T')[0])
+        .in('status', ['reviewed', 'resolved']);
+      
+      const highValueBonuses = (highValueNotifications || [])
+        .reduce((sum, hvn) => {
+          let bonusAmount = 0;
+          // Include admin bonus if set
+          if (hvn.admin_bonus && hvn.admin_bonus > 0) {
+            bonusAmount += hvn.admin_bonus;
+          }
+          // Include current bonus (auto-calculated) if no admin bonus is set
+          if ((!hvn.admin_bonus || hvn.admin_bonus <= 0) && hvn.current_bonus && hvn.current_bonus > 0) {
+            bonusAmount += hvn.current_bonus;
+          }
+          return sum + bonusAmount;
+        }, 0);
+      
+      const totalBonuses = baseBonuses + highValueBonuses;
+      
+      // Calculate overtime for biweekly period (80 regular hours)
+      const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
+      const regularHours = Math.min(totalHours, biweeklyRegularLimit);
+      const overtimeHours = Math.max(0, totalHours - biweeklyRegularLimit);
+      const regularPay = regularHours * employee.hourly_rate;
+      const overtimePay = overtimeHours * employee.hourly_rate * 1.0; // 1x rate for overtime
+      const totalPay = regularPay + overtimePay + totalBonuses;
       
       const salesAmount = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
 
@@ -1165,17 +1405,17 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         period: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
-        regularHours: Math.round(totalHours * 10) / 10,
-        overtimeHours: 0, // No overtime distinction since rates are same
+        regularHours: Math.round(regularHours * 10) / 10,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
         regularPay: Math.round(regularPay * 100) / 100,
-        overtimePay: 0, // No overtime distinction since rates are same
-        bonuses: Math.round(bonuses * 100) / 100,
+        overtimePay: Math.round(overtimePay * 100) / 100,
+        bonuses: Math.round(totalBonuses * 100) / 100,
         totalPay: Math.round(totalPay * 100) / 100,
         salesCount: periodSales.length,
         salesAmount: Math.round(salesAmount)
       });
     }
-
+    
     return history;
   } catch (error) {
     console.error('Error getting employee payroll history:', error);
@@ -1241,21 +1481,48 @@ export const getHighValuePolicyNotificationsList = async (): Promise<HighValuePo
     return [];
   }
 
-  // Deduplicate by policy_number, keeping the most recent entry for each policy
+  if (!data) {
+    return [];
+  }
+
+  // Enhanced deduplication by policy_number, keeping the most recent entry for each policy
   const policyMap = new Map<string, HighValuePolicyNotification>();
+  const duplicatesFound = new Map<string, HighValuePolicyNotification[]>();
   
-  if (data) {
     data.forEach(notification => {
+    if (!duplicatesFound.has(notification.policy_number)) {
+      duplicatesFound.set(notification.policy_number, []);
+    }
+    duplicatesFound.get(notification.policy_number)!.push(notification);
+    
       const existingEntry = policyMap.get(notification.policy_number);
       if (!existingEntry || new Date(notification.created_at) > new Date(existingEntry.created_at)) {
         policyMap.set(notification.policy_number, notification);
       }
     });
+
+  // Log any duplicates found
+  const duplicateGroups = Array.from(duplicatesFound.entries()).filter(([_, notifications]) => notifications.length > 1);
+  if (duplicateGroups.length > 0) {
+    console.log('🚨 DUPLICATES DETECTED in getHighValuePolicyNotificationsList:', duplicateGroups.map(([policyNumber, notifications]) => ({
+      policy_number: policyNumber,
+      duplicate_count: notifications.length,
+      notifications: notifications.map(n => ({ id: n.id, status: n.status, created_at: n.created_at }))
+    })));
   }
 
-  return Array.from(policyMap.values()).sort((a, b) => 
+  const result = Array.from(policyMap.values()).sort((a, b) => 
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
+  
+  console.log('🔍 getHighValuePolicyNotificationsList returning:', {
+    totalRecordsFromDB: data.length,
+    afterDeduplication: result.length,
+    duplicateGroupsFound: duplicateGroups.length,
+    pendingCount: result.filter(n => n.status === 'pending').length
+  });
+
+  return result;
 };
 
 export const updateHighValuePolicyNotification = async (
@@ -1268,7 +1535,52 @@ export const updateHighValuePolicyNotification = async (
 ): Promise<HighValuePolicyNotification | null> => {
   console.log('🔄 updateHighValuePolicyNotification called with:', { notificationId, updates });
   
-  const updateData: any = { ...updates };
+  try {
+    // First, let's check what the current status is
+    const { data: currentRecord, error: fetchError } = await supabase
+      .from('high_value_policy_notifications')
+      .select('*')
+      .eq('id', notificationId)
+      .single();
+    
+    if (fetchError) {
+      console.error('❌ Error fetching current record:', fetchError);
+      return null;
+    }
+    
+    console.log('📋 Current record before update:', currentRecord);
+    
+    // Check for any duplicates with the same policy_number
+    const { data: duplicates, error: dupError } = await supabase
+      .from('high_value_policy_notifications')
+      .select('id, policy_number, status, created_at')
+      .eq('policy_number', currentRecord.policy_number)
+      .order('created_at', { ascending: false });
+    
+    if (dupError) {
+      console.error('❌ Error checking for duplicates:', dupError);
+    } else {
+      console.log('🔍 Found records with same policy_number:', duplicates);
+      if (duplicates && duplicates.length > 1) {
+        console.log('⚠️ DUPLICATE DETECTED! Multiple records for policy:', currentRecord.policy_number);
+        console.log('🔍 All duplicates:', duplicates);
+      }
+    }
+    
+    // Convert camelCase to snake_case for database columns
+    const updateData: any = {};
+    
+    if (updates.adminBonus !== undefined) {
+      updateData.admin_bonus = updates.adminBonus;
+    }
+    
+    if (updates.adminNotes !== undefined) {
+      updateData.admin_notes = updates.adminNotes;
+    }
+    
+    if (updates.status !== undefined) {
+      updateData.status = updates.status;
+    }
   
   if (updates.status === 'reviewed') {
     updateData.reviewed_at = new Date().toISOString();
@@ -1284,12 +1596,70 @@ export const updateHighValuePolicyNotification = async (
     .single();
 
   if (error) {
-    console.error('❌ Error updating high-value policy notification:', error);
+      console.error('❌ Error updating high-value policy notification:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        notificationId,
+        updateData
+      });
     return null;
   }
 
   console.log('✅ Update successful, returning data:', data);
+    
+    // Let's verify the update by fetching the record again
+    const { data: verifyRecord, error: verifyError } = await supabase
+      .from('high_value_policy_notifications')
+      .select('*')
+      .eq('id', notificationId)
+      .single();
+    
+    if (verifyError) {
+      console.error('❌ Error verifying update:', verifyError);
+    } else {
+      console.log('🔍 Verified record after update:', verifyRecord);
+    }
+    
+    // Also check all notifications to see the current state and identify duplicates
+    const { data: allNotifications, error: allError } = await supabase
+      .from('high_value_policy_notifications')
+      .select('id, policy_number, status, created_at')
+      .order('created_at', { ascending: false });
+    
+    if (allError) {
+      console.error('❌ Error fetching all notifications for debug:', allError);
+    } else {
+      console.log('🔍 All notifications after update:', allNotifications);
+      const pendingCount = allNotifications.filter(n => n.status === 'pending').length;
+      console.log('🔍 Current pending count:', pendingCount);
+      
+      // Check for duplicates by policy_number
+      const policyGroups = new Map();
+      allNotifications.forEach(notification => {
+        if (!policyGroups.has(notification.policy_number)) {
+          policyGroups.set(notification.policy_number, []);
+        }
+        policyGroups.get(notification.policy_number).push(notification);
+      });
+      
+      const duplicateGroups = Array.from(policyGroups.entries()).filter(([_, notifications]) => notifications.length > 1);
+      if (duplicateGroups.length > 0) {
+        console.log('🚨 DUPLICATES FOUND:', duplicateGroups);
+      }
+    }
+    
   return data;
+  } catch (error) {
+    console.error('❌ Unexpected error in updateHighValuePolicyNotification:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      notificationId,
+      updates
+    });
+    return null;
+  }
 };
 
 // Get weekly summary data for an employee using actual time_logs
@@ -1463,6 +1833,7 @@ export const addRequest = async (request: {
 
 // Get all requests (for admin)
 export const getAllRequests = async (): Promise<Request[]> => {
+  try {
   const { data, error } = await supabase
     .from('requests')
     .select('*')
@@ -1473,6 +1844,10 @@ export const getAllRequests = async (): Promise<Request[]> => {
     return [];
   }
   return data || [];
+  } catch (error) {
+    console.error('Error in getAllRequests:', error);
+    return [];
+  }
 };
 
 // Time Logs (Clock In/Out) - Simplified for RLS disabled
@@ -1542,12 +1917,14 @@ export const getTimeLogsForDay = async (employeeId: string, date: string) => {
     
     if (error) {
       console.error('Error fetching time logs:', error);
+      console.error('Query params:', { employeeId, date });
       return [];
     }
     
     return data || [];
   } catch (error) {
     console.error('Error in getTimeLogsForDay:', error);
+    console.error('Query params:', { employeeId, date });
     return [];
   }
 };
@@ -1672,7 +2049,7 @@ export const debugDatabaseContents = async () => {
     const today = getLocalDateString();
     console.log(`⏰ Time logs for today (${today}):`);
     for (const emp of employees) {
-      const timeLogs = await getTimeLogsForDay(emp.clerk_user_id, today);
+      const timeLogs = await getTimeLogsForDay(emp.id, today);
       console.log(`  - ${emp.name}: ${timeLogs.length} time logs`);
       timeLogs.forEach(log => {
         console.log(`    * ${log.clock_in} ${log.clock_out ? 'to ' + log.clock_out : '(still clocked in)'}`);
@@ -1682,5 +2059,225 @@ export const debugDatabaseContents = async () => {
     console.log('🔍 === END DEBUG REPORT ===');
   } catch (error) {
     console.error('❌ Error in debug function:', error);
+  }
+};
+
+// Add this debug function at the end of the file, before the existing debugDatabaseContents function
+export const debugTimeLogs = async () => {
+  try {
+    console.log('🔍 === TIME LOGS DEBUG START ===');
+    
+    // Get all time logs from the database
+    const { data: timeLogs, error } = await supabase
+      .from('time_logs')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('clock_in', { ascending: false });
+    
+    if (error) {
+      console.error('❌ Error fetching time logs:', error);
+      return;
+    }
+    
+    console.log(`📊 Total time logs in database: ${timeLogs?.length || 0}`);
+    
+    if (timeLogs && timeLogs.length > 0) {
+      console.log('📋 Recent time logs:');
+      timeLogs.slice(0, 10).forEach((log, index) => {
+        const clockIn = new Date(log.clock_in);
+        const clockOut = log.clock_out ? new Date(log.clock_out) : null;
+        const hours = clockOut ? ((clockOut.getTime() - clockIn.getTime()) / (1000 * 60 * 60)).toFixed(2) : 'Still clocked in';
+        
+        console.log(`  ${index + 1}. Employee: ${log.employee_id}`);
+        console.log(`     Date: ${log.date}`);
+        console.log(`     Clock In: ${clockIn.toLocaleString()}`);
+        console.log(`     Clock Out: ${clockOut ? clockOut.toLocaleString() : 'Not clocked out'}`);
+        console.log(`     Hours: ${hours}`);
+        console.log('     ---');
+      });
+    } else {
+      console.log('❌ No time logs found in database');
+      
+      // Check if the table exists and has the right structure
+      let tableInfo = null;
+      let tableError = null;
+      try {
+        const result = await supabase.rpc('get_table_info', { table_name: 'time_logs' });
+        tableInfo = result.data;
+        tableError = result.error;
+      } catch (err) {
+        tableError = err;
+      }
+        
+      if (tableError) {
+        console.log('🔍 Checking table structure manually...');
+        // Try a simple count query to see if table is accessible
+        const { count, error: countError } = await supabase
+          .from('time_logs')
+          .select('*', { count: 'exact', head: true });
+          
+        if (countError) {
+          console.error('❌ Cannot access time_logs table:', countError);
+        } else {
+          console.log(`✅ time_logs table exists and is accessible (count: ${count})`);
+        }
+      }
+    }
+    
+    // Also check what employees exist
+    const { data: employees, error: empError } = await supabase
+      .from('employees')
+      .select('id, clerk_user_id, name, email');
+      
+    if (empError) {
+      console.error('❌ Error fetching employees:', empError);
+    } else {
+      console.log('👥 Employees in database:');
+      employees?.forEach(emp => {
+        console.log(`  - ${emp.name} (${emp.email})`);
+        console.log(`    Database ID: ${emp.id}`);
+        console.log(`    Clerk ID: ${emp.clerk_user_id}`);
+      });
+    }
+    
+    console.log('🔍 === TIME LOGS DEBUG END ===');
+  } catch (error) {
+    console.error('❌ Error in debugTimeLogs:', error);
+  }
+};
+
+// Test function to create sample time logs for testing
+export const createTestTimeLogs = async () => {
+  try {
+    console.log('🧪 Creating test time logs...');
+    
+    // Get employees
+    const employees = await getEmployees();
+    if (employees.length === 0) {
+      console.log('❌ No employees found to create test logs for');
+      return;
+    }
+    
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    
+    // Create test logs for each employee
+    for (const employee of employees) {
+      console.log(`Creating test logs for ${employee.name}...`);
+      
+      // Yesterday's work session: 9 AM to 5 PM (8 hours)
+      const yesterdayStart = new Date(yesterday);
+      yesterdayStart.setHours(9, 0, 0, 0);
+      const yesterdayEnd = new Date(yesterday);
+      yesterdayEnd.setHours(17, 0, 0, 0);
+      
+      await supabase.from('time_logs').insert({
+        employee_id: employee.clerk_user_id,
+        date: getLocalDateString(yesterday),
+        clock_in: yesterdayStart.toISOString(),
+        clock_out: yesterdayEnd.toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+      
+      // Today's work session: 9 AM to 1 PM (4 hours so far)
+      const todayStart = new Date(today);
+      todayStart.setHours(9, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(13, 0, 0, 0);
+      
+      await supabase.from('time_logs').insert({
+        employee_id: employee.clerk_user_id,
+        date: getLocalDateString(today),
+        clock_in: todayStart.toISOString(),
+        clock_out: todayEnd.toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+      
+      console.log(`✅ Created test logs for ${employee.name}`);
+    }
+    
+    console.log('🎉 Test time logs created successfully!');
+    
+    // Run debug to show the created logs
+    await debugTimeLogs();
+    
+  } catch (error) {
+    console.error('❌ Error creating test time logs:', error);
+  }
+};
+
+// Get number of employees currently clocked in
+export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number; total: number }> => {
+  try {
+    const employees = await getEmployees();
+    let clockedInCount = 0;
+    let nonAdminTotal = 0;
+    
+    for (const employee of employees) {
+      // Skip admin users for clock-in tracking (they don't clock in/out)
+      const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+      
+      if (!isAdmin) {
+        nonAdminTotal++;
+        const { clockedIn } = await getTodayTimeTracking(employee.clerk_user_id);
+        if (clockedIn) {
+          clockedInCount++;
+        }
+      }
+    }
+    
+    return {
+      clockedIn: clockedInCount,
+      total: nonAdminTotal
+    };
+  } catch (error) {
+    console.error('Error getting clocked in employees count:', error);
+    return { clockedIn: 0, total: 0 };
+  }
+};
+
+// Get total policy sales amount (not bonuses)
+export const getTotalPolicySalesAmount = async (): Promise<number> => {
+  try {
+    const policySales = await getPolicySales();
+    return policySales.reduce((total, sale) => total + (sale.amount || 0), 0);
+  } catch (error) {
+    console.error('Error getting total policy sales amount:', error);
+    return 0;
+  }
+};
+
+// Get overtime hours for current week for all employees
+export const getOvertimeHoursThisWeek = async (): Promise<number> => {
+  try {
+    const employees = await getEmployees();
+    let totalOvertimeHours = 0;
+    
+    // Get current week dates
+    const now = new Date();
+    const startOfWeek = getLocalStartOfWeek(now);
+    const endOfWeek = getLocalEndOfWeek(now);
+    
+    for (const employee of employees) {
+      // Skip admin users for hour calculations (they don't clock in/out)
+      const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+      
+      if (!isAdmin) {
+        const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
+        const weeklyOvertimeLimit = 40; // Standard 40-hour work week
+        
+        if (weekHours > weeklyOvertimeLimit) {
+          totalOvertimeHours += (weekHours - weeklyOvertimeLimit);
+        }
+      }
+    }
+    
+    return Math.round(totalOvertimeHours * 100) / 100;
+  } catch (error) {
+    console.error('Error getting overtime hours this week:', error);
+    return 0;
   }
 };

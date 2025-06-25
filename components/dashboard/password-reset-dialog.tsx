@@ -89,7 +89,7 @@ export function PasswordResetDialog({
       if (response.ok && data.success) {
         toast({
           title: "Password Reset Successfully",
-          description: `Password for ${employeeName} has been reset. They can now sign in with their new password.`,
+          description: `Password for ${employeeName} has been reset. They will need to sign in with their new password.`,
         });
 
         // Reset form
@@ -206,7 +206,7 @@ export function PasswordResetDialog({
             <h4 className="font-medium text-amber-900 dark:text-amber-100 mb-2">Important Notes</h4>
             <ul className="text-sm text-amber-700 dark:text-amber-300 space-y-1">
               <li>• This will immediately change the employee's password</li>
-              <li>• Employee will be notified of the password change</li>
+              <li>• Employee will be signed out and must use the new password</li>
               <li>• Employee should change their password on next login</li>
               <li>• Use the "Generate" button for secure random passwords</li>
             </ul>
