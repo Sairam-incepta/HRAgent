@@ -98,7 +98,8 @@ export interface ConversationState {
   employee_id: string;
   current_flow: 'policy_entry' | 'review_entry' | 'cross_sell_entry' | 'daily_summary' | 'hours_entry' | 'policy_entry_batch' | 'review_entry_batch' | 'policy_entry_natural' | 'review_entry_natural' | 'none';
   collected_data: Record<string, any>;
-  next_question: string;
+  next_question?: string;
+  step?: number;
   last_updated: string;
   created_at: string;
 }
