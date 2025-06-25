@@ -425,59 +425,7 @@ export function EmployeeDetailsDialog({
                             })()}
                           </div>
                           
-                          {/* Daily Hours Mini Chart */}
-                          <div className="bg-muted/50 rounded-lg p-6">
-                            <h4 className="font-medium text-base mb-4">Daily Hours This Week</h4>
-                            <div className="space-y-3">
-                              {(() => {
-                                // Calculate max hours once for consistent scaling across all days
-                                const allDailyHours = weeklyData.map(d => d.hoursWorked);
-                                const maxDailyHours = Math.max(...allDailyHours, 12); // At least 12 hours for good visualization
-                                
-                                return weeklyData.slice(0, 7).map((day) => {
-                                  const dailyOvertime = Math.max(0, day.hoursWorked - 8);
-                                  const dailyRegular = Math.min(day.hoursWorked, 8);
-                                  
-                                  return (
-                                    <div key={day.date} className="flex items-center gap-3">
-                                      <span className="text-sm w-10 text-muted-foreground font-medium">
-                                        {day.dayName.slice(0, 3)}
-                                      </span>
-                                      <div className="flex-1 space-y-1">
-                                        <div className="flex justify-between items-center">
-                                          <span className="text-xs text-muted-foreground">
-                                            {day.hoursWorked > 0 ? formatTime(day.hoursWorked) : 'No hours'}
-                                          </span>
-                                          {dailyOvertime > 0 && (
-                                            <span className="text-xs text-amber-600 font-medium">
-                                              +{formatTime(dailyOvertime)} OT
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="relative bg-gray-200 rounded-full h-2">
-                                          {/* Regular hours (green) */}
-                                          <div 
-                                            className="bg-green-500 h-2 rounded-full absolute left-0 top-0 transition-all duration-300"
-                                            style={{ width: `${(dailyRegular / maxDailyHours) * 100}%` }}
-                                          ></div>
-                                          {/* Overtime hours (amber) - positioned after regular hours */}
-                                          {dailyOvertime > 0 && (
-                                            <div 
-                                              className="bg-amber-500 h-2 rounded-r-full absolute top-0 transition-all duration-300"
-                                              style={{ 
-                                                left: `${(dailyRegular / maxDailyHours) * 100}%`,
-                                                width: `${(dailyOvertime / maxDailyHours) * 100}%` 
-                                              }}
-                                            ></div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                });
-                              })()}
-                            </div>
-                          </div>
+
                         </div>
                       </div>
                     )}

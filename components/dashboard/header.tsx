@@ -96,12 +96,13 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
       };
 
       fetchNotifications();
-      const interval = setInterval(fetchNotifications, 30000); // Update every 30 seconds
+      const interval = setInterval(fetchNotifications, 10000); // Update every 10 seconds for more responsive notifications
       
       // Listen for real-time updates
       const cleanupFunctions = [
         dashboardEvents.on('high_value_policy_updated', fetchNotifications),
         dashboardEvents.on('request_submitted', fetchNotifications),
+        dashboardEvents.on('request_status_updated', fetchNotifications),
         dashboardEvents.on('policy_sale', fetchNotifications)
       ];
 

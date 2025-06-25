@@ -126,6 +126,7 @@ export function AdminDashboard() {
       dashboardEvents.on('policy_sale', handlePolicySale),
       dashboardEvents.on('client_review', handleClientReview),
       dashboardEvents.on('request_submitted', handleRequest),
+      dashboardEvents.on('request_status_updated', handleRequest),
       dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate)
     ];
 

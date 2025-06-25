@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { getAllRequests, updateRequestStatus, getEmployees } from "@/lib/database";
+import { dashboardEvents } from "@/lib/events";
 
 interface Request {
   id: string;
@@ -61,6 +62,24 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Listen for real-time events for live updates
+  useEffect(() => {
+    const handleRequestUpdate = () => {
+      loadData(); // Refresh requests when status changes or new requests are submitted
+    };
+
+    // Subscribe to events and store cleanup functions
+    const cleanupFunctions = [
+      dashboardEvents.on('request_submitted', handleRequestUpdate),
+      dashboardEvents.on('request_status_updated', handleRequestUpdate)
+    ];
+
+    return () => {
+      // Call all cleanup functions
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
   }, []);
 
   const loadData = async () => {
@@ -114,6 +133,9 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
           title: "Request Approved",
           description: `${request?.employeeName}'s ${request?.type} request has been approved.`,
         });
+        
+        // Emit event to update notification bell
+        dashboardEvents.emit('request_status_updated', { requestId, status: 'approved' });
       }
     } catch (error) {
       console.error('Error approving request:', error);
@@ -141,6 +163,9 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
           description: `${request?.employeeName}'s ${request?.type} request has been rejected.`,
           variant: "destructive",
         });
+        
+        // Emit event to update notification bell
+        dashboardEvents.emit('request_status_updated', { requestId, status: 'rejected' });
       }
     } catch (error) {
       console.error('Error rejecting request:', error);
@@ -167,6 +192,9 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
           title: "Request Status Updated",
           description: `${request?.employeeName}'s ${request?.type} request has been set to pending.`,
         });
+        
+        // Emit event to update notification bell
+        dashboardEvents.emit('request_status_updated', { requestId, status: 'pending' });
       }
     } catch (error) {
       console.error('Error updating request status:', error);
