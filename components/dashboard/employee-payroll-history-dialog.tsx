@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { History, Clock, DollarSign, TrendingUp, Calendar } from "lucide-react";
 import { getEmployeePayrollHistory, getEmployee, formatHoursMinutes } from "@/lib/database";
+import { dashboardEvents } from "@/lib/events";
 
 interface EmployeePayrollHistoryDialogProps {
   open: boolean;
@@ -27,6 +28,18 @@ export function EmployeePayrollHistoryDialog({
     if (open && employeeId) {
       loadPayrollHistory();
     }
+  }, [open, employeeId]);
+
+  // Listen for high value policy updates to refresh payroll data
+  useEffect(() => {
+    const handleHighValuePolicyUpdate = () => {
+      if (open && employeeId) {
+        loadPayrollHistory();
+      }
+    };
+
+    const cleanup = dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate);
+    return cleanup;
   }, [open, employeeId]);
 
   const loadPayrollHistory = async () => {
@@ -166,7 +179,7 @@ export function EmployeePayrollHistoryDialog({
                             <div className="font-medium">${employee?.hourly_rate || 25}/hr</div>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Sales Bonus:</span>
+                            <span className="text-muted-foreground">Total Bonuses:</span>
                             <div className="font-medium">${period.bonuses.toLocaleString()}</div>
                           </div>
                           <div>

@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees } from "@/lib/database";
+import { getEmployees, calculateActualHoursForPeriod } from "@/lib/database";
 import type { Employee } from "@/lib/supabase";
 
 interface CustomPublicMetadata {
@@ -55,6 +55,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   const [payrollEmployee, setPayrollEmployee] = useState<string | null>(null);
   const [historyEmployeeId, setHistoryEmployeeId] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<"admin" | "employee" | null>(null);
+  const [employeeOvertimeHours, setEmployeeOvertimeHours] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (user) {
@@ -73,11 +74,52 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     try {
       const data = await getEmployees();
       setEmployees(data);
+      
+      // Calculate overtime hours for each employee
+      await calculateOvertimeHours(data);
     } catch (error) {
       console.error('Error loading employees:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const calculateOvertimeHours = async (employeeList: Employee[]) => {
+    const overtimeHours: Record<string, number> = {};
+    
+    // Get current week dates
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
+    endOfWeek.setHours(23, 59, 59, 999);
+    
+    for (const employee of employeeList) {
+      try {
+        // Skip admin users for hour calculations (they don't clock in/out)
+        const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+        
+        if (!isAdmin) {
+          const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
+          const weeklyOvertimeLimit = 40; // Standard 40-hour work week
+          
+          if (weekHours > weeklyOvertimeLimit) {
+            overtimeHours[employee.clerk_user_id] = weekHours - weeklyOvertimeLimit;
+          } else {
+            overtimeHours[employee.clerk_user_id] = 0;
+          }
+        } else {
+          overtimeHours[employee.clerk_user_id] = 0; // Admin users don't have overtime
+        }
+      } catch (error) {
+        console.error(`Error calculating overtime for ${employee.name}:`, error);
+        overtimeHours[employee.clerk_user_id] = 0;
+      }
+    }
+    
+    setEmployeeOvertimeHours(overtimeHours);
   };
 
   const filteredEmployees = employees.filter((employee) => {
@@ -143,6 +185,13 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     }
   };
 
+  // Helper function to format hours
+  const formatHours = (hours: number) => {
+    const wholeHours = Math.floor(hours);
+    const minutes = Math.round((hours - wholeHours) * 60);
+    return minutes > 0 ? `${wholeHours}h ${minutes}m` : `${wholeHours}h`;
+  };
+
   const isAdmin = userRole === "admin";
 
   if (loading) {
@@ -197,7 +246,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                 <TableHead>Name</TableHead>
                 <TableHead>Department</TableHead>
                 <TableHead className="hidden md:table-cell">Position</TableHead>
-                <TableHead className="hidden lg:table-cell">Overtime Limit</TableHead>
+                <TableHead className="hidden lg:table-cell">Total Overtime Hours</TableHead>
                 <TableHead className="hidden lg:table-cell">Hourly Rate</TableHead>
                 <TableHead className="hidden md:table-cell">Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -226,7 +275,9 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                     <TableCell>{employee.department}</TableCell>
                     <TableCell className="hidden md:table-cell">{employee.position}</TableCell>
                     <TableCell className="hidden lg:table-cell">
-                      <span className="text-sm">{employee.max_hours_before_overtime}h</span>
+                      <span className="text-sm">
+                        {formatHours(employeeOvertimeHours[employee.clerk_user_id] || 0)}
+                      </span>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       <span className="text-sm">${employee.hourly_rate}/hr</span>

@@ -44,30 +44,27 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
     }
   }, [open, employeeName]);
 
+  // Listen for high value policy updates to refresh payroll data
+  useEffect(() => {
+    const handleHighValuePolicyUpdate = () => {
+      if (open && employeeName) {
+        // Add a small delay to ensure database updates are complete
+        setTimeout(() => {
+          loadPayrollData();
+        }, 500);
+      }
+    };
+
+    const cleanup = dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate);
+    return cleanup;
+  }, [open, employeeName]);
+
   const loadPayrollData = async () => {
     setLoading(true);
     
     try {
       // Get employee data first
       const employeeData = await getEmployee(employeeName || ""); // employeeName is actually employee ID
-      
-      // Get high-value policies for manual bonus setting - FOR THIS EMPLOYEE ONLY
-      const allPolicies = await getPolicySales(); // Get all policies
-      // Filter by employee ID (employeeName is actually employee ID now) and high-value amount
-      const highValuePols = allPolicies.filter(policy => 
-        policy.amount > 5000 && 
-        policy.employee_id === employeeName // employeeName is actually employee ID
-      );
-      setHighValuePolicies(highValuePols);
-      
-      // Initialize additional bonuses for high-value policies (separate from base bonus)
-      const initialAdditionalBonuses: {[key: string]: number | null} = {};
-      highValuePols.forEach(policy => {
-        // Load existing admin_bonus if available
-        const existingAdminBonus = (policy as any).admin_bonus || 0;
-        initialAdditionalBonuses[policy.id] = existingAdminBonus;
-      });
-      setAdditionalBonuses(initialAdditionalBonuses);
       
       // Calculate actual hours worked from time logs for current biweekly period
       const now = new Date();
@@ -84,6 +81,41 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 13); // 14 days total (0-13)
       
+      // Get high-value policy notifications for this employee to check for pending reviews
+      // Use overlapping date ranges to catch notifications that span across period boundaries
+      const { data: highValueNotificationsForAlert } = await supabase
+        .from('high_value_policy_notifications')
+        .select('*')
+        .eq('employee_id', employeeName!)
+        .lte('biweekly_period_start', endDate.toISOString().split('T')[0])
+        .gte('biweekly_period_end', startDate.toISOString().split('T')[0]);
+      
+
+      setHighValuePolicies(highValueNotificationsForAlert || []);
+      
+      // Debug: Log the alert data in detail
+      console.log('🚨 Alert Data Debug:', {
+        totalNotifications: (highValueNotificationsForAlert || []).length,
+        pendingPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'pending').length,
+        reviewedPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'reviewed').length,
+        resolvedPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'resolved').length,
+        policies: (highValueNotificationsForAlert || []).map(p => ({
+          id: p.id,
+          policy_number: p.policy_number,
+          status: p.status,
+          employee_id: p.employee_id
+        }))
+      });
+      
+      // Initialize additional bonuses for high-value policies (separate from base bonus)
+      const initialAdditionalBonuses: {[key: string]: number | null} = {};
+      (highValueNotificationsForAlert || []).forEach((policy: any) => {
+        // Load existing admin_bonus if available
+        const existingAdminBonus = policy.admin_bonus || 0;
+        initialAdditionalBonuses[policy.id] = existingAdminBonus;
+      });
+      setAdditionalBonuses(initialAdditionalBonuses);
+      
       const actualHours = await calculateActualHoursForPeriod(employeeName!, startDate, endDate);
       
       // Get all policy sales and client reviews for this employee
@@ -92,11 +124,15 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         getClientReviews(employeeName!)
       ]);
       
-      // Calculate different types of bonuses separately
+      // Calculate different types of bonuses separately with counts
       let brokerFeeBonuses = 0;
+      let brokerFeeBonusCount = 0;
       let crossSellingBonuses = 0; 
+      let crossSellingBonusCount = 0;
       let lifeInsuranceBonuses = 0;
+      let lifeInsuranceBonusCount = 0;
       let highValuePolicyBonuses = 0;
+      let highValuePolicyBonusCount = 0;
       let totalBrokerFees = 0;
       
       // Process policy sales for bonuses
@@ -108,10 +144,12 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         if (sale.broker_fee > 100) {
           const baseBrokerBonus = (sale.broker_fee - 100) * 0.1;
           brokerFeeBonuses += baseBrokerBonus;
+          brokerFeeBonusCount++;
           
           // Cross-selling bonus: double the broker fee bonus (additional amount)
           if (sale.cross_sold) {
             crossSellingBonuses += baseBrokerBonus; // Additional amount for cross-selling
+            crossSellingBonusCount++;
           }
         }
         
@@ -119,22 +157,57 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         if (sale.policy_type.toLowerCase().includes('life') || 
             (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
           lifeInsuranceBonuses += 10.00;
+          lifeInsuranceBonusCount++;
         }
         
-        // High-value policy admin bonuses
-        const adminBonus = (sale as any).admin_bonus || 0;
-        if (adminBonus > 0) {
-          highValuePolicyBonuses += adminBonus;
-        }
+        // Note: High-value policy admin bonuses are fetched separately from high_value_policy_notifications table
       });
       
       // Review bonuses: $10 for each 5-star review
-      const reviewBonuses = clientReviews.filter(review => review.rating === 5).length * 10;
+      const fiveStarReviews = clientReviews.filter(review => review.rating === 5);
+      const reviewBonuses = fiveStarReviews.length * 10;
+      const reviewBonusCount = fiveStarReviews.length;
       
-      // Calculate hourly pay
+      // Get high value policy bonuses for this employee in this period (only reviewed/resolved)
+      // Use overlapping date ranges to catch notifications that span across period boundaries
+      const { data: highValueNotifications } = await supabase
+        .from('high_value_policy_notifications')
+        .select('admin_bonus, current_bonus, status, biweekly_period_start, biweekly_period_end')
+        .eq('employee_id', employeeName!)
+        .lte('biweekly_period_start', endDate.toISOString().split('T')[0])
+        .gte('biweekly_period_end', startDate.toISOString().split('T')[0])
+        .in('status', ['reviewed', 'resolved']);
+      
+      
+      
+      if (highValueNotifications) {
+        highValueNotifications.forEach((hvn: any) => {
+          let bonusAmount = 0;
+          
+          // Include admin bonus if set
+          if (hvn.admin_bonus && hvn.admin_bonus > 0) {
+            bonusAmount += hvn.admin_bonus;
+          }
+          
+          // Include current bonus (auto-calculated bonus) if no admin bonus is set
+          if ((!hvn.admin_bonus || hvn.admin_bonus <= 0) && hvn.current_bonus && hvn.current_bonus > 0) {
+            bonusAmount += hvn.current_bonus;
+          }
+          
+          if (bonusAmount > 0) {
+            highValuePolicyBonuses += bonusAmount;
+            highValuePolicyBonusCount++;
+          }
+        });
+      }
+      
+
+      
+      // Calculate hourly pay (biweekly period = 80 regular hours)
       const hourlyRate = employeeData?.hourly_rate || 25;
-      const regularHours = Math.min(actualHours, 8);
-      const overtimeHours = Math.max(0, actualHours - 8);
+      const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
+      const regularHours = Math.min(actualHours, biweeklyRegularLimit);
+      const overtimeHours = Math.max(0, actualHours - biweeklyRegularLimit);
       const regularPay = regularHours * hourlyRate;
       const overtimePay = overtimeHours * hourlyRate * 1.0; // 1x rate for overtime
       const totalHourlyPay = regularPay + overtimePay;
@@ -156,10 +229,15 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         overtimePay,
         totalHourlyPay,
         brokerFeeBonuses,
+        brokerFeeBonusCount,
         crossSellingBonuses,
+        crossSellingBonusCount,
         lifeInsuranceBonuses,
+        lifeInsuranceBonusCount,
         reviewBonuses,
+        reviewBonusCount,
         highValuePolicyBonuses,
+        highValuePolicyBonusCount,
         totalBonuses,
         totalBrokerFees,
         totalPay,
@@ -347,16 +425,10 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                     <span className="ml-2 font-medium">${payrollData.regularPay.toFixed(2)}</span>
                   </div>
                   {payrollData.overtimeHours > 0 && (
-                    <>
-                      <div>
-                        <span className="text-sm text-muted-foreground">Overtime Hours:</span>
-                        <span className="ml-2 font-medium text-amber-600">{payrollData.overtimeHours.toFixed(1)}h</span>
-                      </div>
-                      <div>
-                        <span className="text-sm text-muted-foreground">Overtime Pay:</span>
-                        <span className="ml-2 font-medium text-amber-600">${payrollData.overtimePay.toFixed(2)}</span>
-                      </div>
-                    </>
+                    <div>
+                      <span className="text-sm text-muted-foreground">Overtime Hours:</span>
+                      <span className="ml-2 font-medium text-amber-600">{payrollData.overtimeHours.toFixed(1)}h</span>
+                    </div>
                   )}
                 </div>
                 <div className="border-t pt-3">
@@ -374,32 +446,54 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                 <CardTitle className="text-base">Bonus Breakdown</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <span className="text-sm text-muted-foreground">Broker Fee Bonuses:</span>
-                    <span className="ml-2 font-medium text-green-600">${payrollData.brokerFeeBonuses.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">Cross-Selling Bonuses:</span>
-                    <span className="ml-2 font-medium text-blue-600">${payrollData.crossSellingBonuses.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">Life Insurance Bonuses:</span>
-                    <span className="ml-2 font-medium text-purple-600">${payrollData.lifeInsuranceBonuses.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">Review Bonuses:</span>
-                    <span className="ml-2 font-medium text-indigo-600">${payrollData.reviewBonuses.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">High Value Policy Bonuses:</span>
-                    <span className="ml-2 font-medium text-amber-600">${payrollData.highValuePolicyBonuses.toFixed(2)}</span>
-                  </div>
+                <div className="grid grid-cols-1 gap-4">
+                  {payrollData.brokerFeeBonusCount > 0 && (
+                    <div>
+                      <span className="text-sm text-muted-foreground">Auto Bonuses (Broker Fee):</span>
+                      <span className="ml-2 font-medium text-green-600">
+                        ${payrollData.brokerFeeBonuses.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {payrollData.crossSellingBonusCount > 0 && (
+                    <div>
+                      <span className="text-sm text-muted-foreground">Cross-Selling Bonuses:</span>
+                      <span className="ml-2 font-medium text-blue-600">
+                        {payrollData.crossSellingBonusCount} x ${(payrollData.crossSellingBonuses / payrollData.crossSellingBonusCount).toFixed(2)} = ${payrollData.crossSellingBonuses.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {payrollData.lifeInsuranceBonusCount > 0 && (
+                    <div>
+                      <span className="text-sm text-muted-foreground">Life Insurance Bonuses:</span>
+                      <span className="ml-2 font-medium text-purple-600">
+                        {payrollData.lifeInsuranceBonusCount} x $10.00 = ${payrollData.lifeInsuranceBonuses.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {payrollData.reviewBonusCount > 0 && (
+                    <div>
+                      <span className="text-sm text-muted-foreground">Review Bonuses:</span>
+                      <span className="ml-2 font-medium text-indigo-600">
+                        {payrollData.reviewBonusCount} x $10.00 = ${payrollData.reviewBonuses.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {(payrollData.highValuePolicyBonusCount > 0 || payrollData.highValuePolicyBonuses > 0) && (
+                    <div>
+                      <span className="text-sm text-muted-foreground">High Value Policy Bonuses:</span>
+                      <span className="ml-2 font-medium text-amber-600">
+                        ${payrollData.highValuePolicyBonuses.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  
+
                 </div>
                 <div className="border-t pt-3 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Total Broker Fees Earned:</span>
-                    <span className="text-sm font-medium text-blue-600">${payrollData.totalBrokerFees.toFixed(2)}</span>
+                  <div className="flex justify-between items-center p-2 bg-blue-50 dark:bg-blue-950/20 rounded-md">
+                    <span className="font-medium text-blue-800 dark:text-blue-200">Total Broker Fees Earned:</span>
+                    <span className="font-bold text-lg text-blue-600">${payrollData.totalBrokerFees.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="font-medium">Total Bonuses:</span>
@@ -409,8 +503,16 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
               </CardContent>
             </Card>
 
-            {/* High Value Policy Warning */}
-            {highValuePolicies.some(policy => (policy as any).status !== 'reviewed' && (policy as any).status !== 'resolved') && (
+            {/* High Value Policy Warning - Only show for pending policies */}
+            {(() => {
+              const hasPendingPolicies = highValuePolicies.some(policy => (policy as any).status === 'pending');
+              console.log('🚨 Alert Condition Check:', {
+                totalPolicies: highValuePolicies.length,
+                hasPendingPolicies,
+                policiesWithStatus: highValuePolicies.map(p => ({ id: p.id, status: (p as any).status }))
+              });
+              return hasPendingPolicies;
+            })() && (
               <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
                 <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
                   <AlertTriangle className="h-5 w-5" />
@@ -428,12 +530,12 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
                 <CardTitle className="text-lg text-center">Total Pay</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-primary">${payrollData.totalPay.toFixed(2)}</div>
-                  <div className="text-sm text-muted-foreground mt-2">
-                    Hours: ${payrollData.totalHourlyPay.toFixed(2)} + Bonuses: ${payrollData.totalBonuses.toFixed(2)} | Broker Fees: ${payrollData.totalBrokerFees.toFixed(2)}
+                                  <div className="text-center">
+                    <div className="text-3xl font-bold text-primary">${payrollData.totalPay.toFixed(2)}</div>
+                    <div className="text-sm text-muted-foreground mt-2">
+                      Hours: ${payrollData.totalHourlyPay.toFixed(2)} + Bonuses: ${payrollData.totalBonuses.toFixed(2)}
+                    </div>
                   </div>
-                </div>
               </CardContent>
             </Card>
 

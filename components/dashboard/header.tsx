@@ -56,9 +56,9 @@ export function DashboardHeader({ userRole, employeeName, employeeEmail }: Dashb
           
           const notificationItems: NotificationItem[] = [];
           
-          // Process high-value policy notifications
+          // Process high-value policy notifications (only pending ones for alerts)
           highValueNotifications?.forEach((notification: any) => {
-            if (notification.status === 'pending' || notification.status === 'reviewed') {
+            if (notification.status === 'pending') {
               const daysUntilEnd = notification.biweekly_period_end 
                 ? Math.ceil((new Date(notification.biweekly_period_end).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
                 : null;

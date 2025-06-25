@@ -3,7 +3,10 @@ import openai from '@/lib/openai';
 import { 
   getEmployees, 
   getPolicySales, 
-  getOvertimeRequests 
+  getOvertimeRequests,
+  getAllRequests,
+  getClientReviews,
+  getHighValuePolicyNotificationsList
 } from '@/lib/database';
 import { buildAdminSystemPrompt } from './system-prompts';
 
@@ -37,16 +40,21 @@ export async function handleAdminChat(message: string, userId: string) {
   }
 
   try {
-    // Get admin data for context - get ALL policy sales for company-wide view
-    const [employees, allOvertimeRequests, allPolicySales] = await Promise.all([
+    // Get admin data for context - get ALL data for company-wide view
+    const [employees, allOvertimeRequests, allPolicySales, allRequests, allReviews, highValueNotifications] = await Promise.all([
       getEmployees(),
       getOvertimeRequests(),
-      getPolicySales() // This gets ALL policy sales, not just for one employee
+      getPolicySales(), // This gets ALL policy sales, not just for one employee
+      getAllRequests(),
+      getClientReviews(),
+      getHighValuePolicyNotificationsList()
     ]);
 
     const activeEmployees = employees.filter(emp => emp.status === 'active');
     const pendingRequests = allOvertimeRequests.filter(req => req.status === 'pending');
+    const pendingAllRequests = allRequests.filter(req => req.status === 'pending');
     const totalSales = allPolicySales.reduce((sum, sale) => sum + sale.amount, 0);
+    const pendingHighValuePolicies = highValueNotifications.filter(hvp => hvp.status === 'pending');
 
     // Create context for the AI with ALL company data
     const systemPrompt = buildAdminSystemPrompt(
@@ -54,7 +62,10 @@ export async function handleAdminChat(message: string, userId: string) {
       activeEmployees, 
       pendingRequests,
       allPolicySales,
-      totalSales
+      totalSales,
+      pendingAllRequests,
+      allReviews,
+      pendingHighValuePolicies
     );
 
     const completion = await openai.chat.completions.create({

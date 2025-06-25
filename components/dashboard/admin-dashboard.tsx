@@ -117,6 +117,7 @@ export function AdminDashboard() {
     };
 
     const handleHighValuePolicyUpdate = () => {
+      console.log('🔔 AdminDashboard: Received high_value_policy_updated event, refreshing data...');
       loadData(true); // Silent refresh when high-value policies are updated (resolved/unresolved)
     };
 
@@ -139,6 +140,8 @@ export function AdminDashboard() {
       setLoading(true);
     }
     
+    console.log('🔄 AdminDashboard: Loading data...', { silentUpdate });
+    
     try {
       // Debug database contents
       await debugDatabaseContents();
@@ -150,6 +153,12 @@ export function AdminDashboard() {
         getHighValuePolicyNotificationsList(),
         getAllRequests()
       ]);
+      
+      console.log('🔄 AdminDashboard: Loaded notifications:', notificationsData.length, notificationsData.map(n => ({
+        id: n.id,
+        policy_number: n.policy_number,
+        status: n.status
+      })));
       
       setEmployees(employeesData);
       setPolicySales(salesData);
@@ -168,12 +177,13 @@ export function AdminDashboard() {
       setHighValueNotifications(notificationsData);
       
       // Count pending requests
-      const pendingCount = requestsData.filter(req => req.status === 'pending').length;
-      setPendingRequestsCount(pendingCount);
+      const pendingRequestCount = requestsData.filter(req => req.status === 'pending').length;
+      setPendingRequestsCount(pendingRequestCount);
       
-      // Update stable count for high-value policies (exclude resolved)
-      const unresolvedCount = notificationsData.filter(n => n.status !== 'resolved').length;
-      setStablePendingCount(unresolvedCount);
+      // Update stable count for high-value policies (only pending ones)
+      const pendingHighValueCount = notificationsData.filter(n => n.status === 'pending').length;
+      console.log('🔄 AdminDashboard: Setting pending count to:', pendingHighValueCount);
+      setStablePendingCount(pendingHighValueCount);
       
 
       
@@ -182,7 +192,7 @@ export function AdminDashboard() {
       }
       
     } catch (error) {
-      console.error('Error loading dashboard data:', error);
+      console.error('❌ AdminDashboard: Error loading dashboard data:', error);
     } finally {
       if (!silentUpdate) {
         setLoading(false);
@@ -232,8 +242,8 @@ export function AdminDashboard() {
     }
   };
 
-  // Use stable count to prevent flicker during refreshes - exclude resolved policies
-  const pendingHighValueCount = hasInitiallyLoaded ? stablePendingCount : highValueNotifications.filter(n => n.status !== 'resolved').length;
+  // Use stable count to prevent flicker during refreshes - only pending policies
+  const pendingHighValueCount = hasInitiallyLoaded ? stablePendingCount : highValueNotifications.filter(n => n.status === 'pending').length;
 
   return (
     <div className="space-y-6">
@@ -366,7 +376,7 @@ export function AdminDashboard() {
                   <div>
                     <h4 className="font-medium text-blue-900 dark:text-blue-100">Bi-Weekly Payroll Schedule</h4>
                     <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                      Payroll reports are automatically calculated every 2 weeks. Company expenditure includes total employee compensation, bonuses, and overtime pay.
+                      Payroll reports are automatically calculated every 2 weeks. Company expenditure includes total employee compensation and bonuses.
                     </p>
                   </div>
                 </div>
