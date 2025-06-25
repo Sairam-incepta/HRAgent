@@ -478,12 +478,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   };
 
   const getMaxHours = () => {
-    const maxDailyHours = Math.max(...weeklyData.map(day => day.hoursWorked));
-    // Use a dynamic scale: if max daily hours is less than 4, scale to 8 hours for better visualization
-    // Otherwise use the actual max hours or 8 hours, whichever is higher
-    if (maxDailyHours === 0) return 8; // Default scale when no hours worked
-    if (maxDailyHours < 4) return 8; // Use 8-hour scale for small values
-    return Math.max(maxDailyHours, 8); // Use actual max or 8 hours minimum
+    return Math.max(...weeklyData.map(day => day.hoursWorked), employeeSettings.maxHoursBeforeOvertime);
   };
 
   const formatDate = (dateString: string) => {
@@ -764,12 +759,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       </Card>
 
       <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-[#005cb3]" />
-              <CardTitle>This Week&apos;s Performance</CardTitle>
-            </div>
-          </CardHeader>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-[#005cb3]" />
+            <CardTitle>This Week&apos;s Performance</CardTitle>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
@@ -778,69 +773,64 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
             </div>
           </div>
           
-          {/* Spacing to push bar chart down */}
-          <div className="py-4"></div>
-          
           {/* Vertical Bar Chart Container */}
-          <div className="bg-muted/10 rounded-lg p-4">
-            <div className="flex items-end justify-between gap-2 pt-8" style={{ height: '140px' }}>
-              {weeklyData.map((day) => {
-                const maxHours = getMaxHours();
-                // Calculate bar height in pixels (max 100px for the chart area)
-                const barHeight = maxHours > 0 ? Math.max((day.hoursWorked / maxHours) * 100, day.hoursWorked > 0 ? 3 : 1) : 1;
-                const isToday = day.isToday;
-                
-                // Format hours and minutes for display
-                const timeDisplay = formatTimeDisplay(day.hoursWorked);
-                
-                return (
-                  <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
-                    {/* Sales indicator */}
-                    {day.policiesSold > 0 && (
-                      <div className="text-xs text-[#005cb3] font-medium mb-1">
-                        {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
-                      </div>
-                    )}
-                    
-                    {/* Time label above bar */}
-                    <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
-                      {timeDisplay}
+          <div className="flex items-end justify-between gap-2 h-40 bg-muted/10 rounded-lg p-4">
+            {weeklyData.map((day) => {
+              const maxHours = getMaxHours();
+              const percentage = maxHours > 0 ? (day.hoursWorked / maxHours) * 100 : 0;
+              const isToday = day.isToday;
+              
+              // Format hours and minutes for display
+              const timeDisplay = formatTimeDisplay(day.hoursWorked);
+              
+              return (
+                <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
+                  {/* Sales indicator */}
+                  {day.policiesSold > 0 && (
+                    <div className="text-xs text-[#005cb3] font-medium mb-1">
+                      {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
                     </div>
-                    
-                    {/* Vertical Bar with fixed pixel height */}
-                    <div className="relative w-8 flex flex-col justify-end" style={{ height: '100px' }}>
-                      <div 
-                        className={`w-full rounded-t-sm transition-all duration-500 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/70' 
-                              : 'bg-muted-foreground/30'
-                        }`}
-                        style={{ 
-                          height: `${barHeight}px`
-                        }}
-                      />
-                    </div>
-                    
-                    {/* Day label and date (X-axis) */}
-                    <div className="text-center">
-                      <div className="text-xs text-muted-foreground font-medium">
-                        {day.dayName.slice(0, 3).toUpperCase()}
-                      </div>
-                      <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
-                        {formatDate(day.date)}
-                      </div>
-                    </div>
-                    
-                    {/* Today indicator */}
-                    {isToday && (
-                      <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
-                    )}
+                  )}
+                  
+                  {/* Time label above bar */}
+                  <div className="text-xs font-medium text-center min-h-[24px] flex items-end">
+                    {timeDisplay}
                   </div>
-                );
-              })}
-            </div>
+                  
+                  {/* Vertical Bar */}
+                  <div className="relative flex-1 w-8 flex flex-col justify-end">
+                    <div 
+                      className={`w-full rounded-t-sm transition-all duration-500 ${
+                        isToday 
+                          ? 'bg-[#005cb3]' 
+                          : day.hoursWorked > 0 
+                            ? 'bg-[#005cb3]/70' 
+                            : 'bg-muted-foreground/30'
+                      }`}
+                      style={{ 
+                        height: `${Math.max(percentage, day.hoursWorked > 0 ? 10 : 5)}%`,
+                        minHeight: '4px'
+                      }}
+                    />
+                  </div>
+                  
+                  {/* Day label and date (X-axis) */}
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground font-medium">
+                      {day.dayName.slice(0, 3).toUpperCase()}
+                    </div>
+                    <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
+                      {formatDate(day.date)}
+                    </div>
+                  </div>
+                  
+                  {/* Today indicator */}
+                  {isToday && (
+                    <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

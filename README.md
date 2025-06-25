@@ -54,7 +54,7 @@ Visit `http://localhost:8000`
 - **Frontend:** Next.js 14, React, TypeScript
 - **Database:** Supabase (PostgreSQL)
 - **Auth:** Clerk
-- **AI:** OpenAI GPT-4.1
+- **AI:** OpenAI GPT-4
 - **UI:** Tailwind CSS + shadcn/ui
 
 ## 📊 Database

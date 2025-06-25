@@ -230,27 +230,6 @@ export const getTodayPolicySales = async (employeeId: string): Promise<PolicySal
   return data || [];
 };
 
-export const getTodayClientReviews = async (employeeId: string): Promise<ClientReview[]> => {
-  const today = new Date();
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-
-  const { data, error } = await supabase
-    .from('client_reviews')
-    .select('*')
-    .eq('employee_id', employeeId)
-    .gte('review_date', startOfDay.toISOString())
-    .lt('review_date', endOfDay.toISOString())
-    .order('review_date', { ascending: false });
-
-  if (error) {
-    console.error('Error fetching today\'s client reviews:', error);
-    return [];
-  }
-
-  return data || [];
-};
-
 // Get today's time tracking data for an employee from actual time logs
 export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalHours: number; clockedIn: boolean }> => {
   try {
@@ -517,30 +496,18 @@ export const updateConversationState = async (state: {
   employeeId: string;
   currentFlow: 'policy_entry' | 'review_entry' | 'cross_sell_entry' | 'daily_summary' | 'hours_entry' | 'policy_entry_batch' | 'review_entry_batch' | 'policy_entry_natural' | 'review_entry_natural' | 'none';
   collectedData: Record<string, any>;
-  nextQuestion?: string;
-  step?: number;
+  nextQuestion: string;
   lastUpdated: Date;
 }): Promise<void> => {
-  const updateData: any = {
+  const { error } = await supabase
+    .from('conversation_states')
+    .upsert({
       employee_id: state.employeeId,
       current_flow: state.currentFlow,
       collected_data: state.collectedData,
+      next_question: state.nextQuestion,
       last_updated: state.lastUpdated.toISOString()
-  };
-
-  // Include nextQuestion for backward compatibility with old flows
-  if (state.nextQuestion) {
-    updateData.next_question = state.nextQuestion;
-  }
-
-  // Include step for new streamlined flows
-  if (state.step !== undefined) {
-    updateData.step = state.step;
-  }
-
-  const { error } = await supabase
-    .from('conversation_states')
-    .upsert(updateData, {
+    }, {
       onConflict: 'employee_id'  // Specify the unique column for conflict resolution
     });
 

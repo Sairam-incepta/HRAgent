@@ -47,7 +47,7 @@ async function generateInitialGreeting(employee: any): Promise<string> {
   }
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4.1",
+    model: "gpt-4",
     messages: [
       {
         role: "system",
@@ -68,7 +68,7 @@ async function generateInitialGreeting(employee: any): Promise<string> {
 // Generate AI-powered clock out message
 async function generateClockOutMessage(employeeName: string): Promise<string> {
   const completion = await openai.chat.completions.create({
-    model: "gpt-4.1",
+    model: "gpt-4",
     messages: [
       {
         role: "system",
@@ -255,35 +255,35 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
   // Check if AI response indicates a conversation flow should be started
   const lowerResponse = response.toLowerCase();
   
-  // Start streamlined conversation flows based on trigger phrases
+  // Start conversation flows based on AI's intelligent response - but only after the AI has responded
   if ((lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy') || lowerMessage.includes('policy sale'))
-      && (lowerResponse.includes('policy') || lowerResponse.includes('details') || lowerResponse.includes('record'))) {
-    // Set conversation state for streamlined policy entry
+      && (lowerResponse.includes('policy number') || lowerResponse.includes('details') || lowerResponse.includes('record'))) {
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
       currentFlow: 'policy_entry',
       collectedData: {},
-      step: 1,
+      nextQuestion: 'policy_number',
       lastUpdated: new Date()
     });
   } else if ((lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review'))
              && (lowerResponse.includes('client') || lowerResponse.includes('review') || lowerResponse.includes('feedback'))) {
-    // Set conversation state for streamlined review entry
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
       currentFlow: 'review_entry',
       collectedData: {},
-      step: 1,
+      nextQuestion: 'client_name',
       lastUpdated: new Date()
     });
   } else if ((lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary'))
              && (lowerResponse.includes('day') || lowerResponse.includes('summary') || lowerResponse.includes('accomplishments'))) {
-    // Set conversation state for AI-generated daily summary
+    // Set conversation state for next message
     await updateConversationState({
       employeeId: userId,
       currentFlow: 'daily_summary',
       collectedData: {},
-      step: 1,
+      nextQuestion: 'description',
       lastUpdated: new Date()
     });
   }

@@ -1,11 +1,10 @@
 // Simple event system for dashboard refreshes
-type EventType = 'policy_sale' | 'client_review' | 'request_submitted' | 'request_status_updated' | 'time_logged' | 'daily_summary' | 'policy_sales_updated' | 'high_value_policy_updated';
+type EventType = 'policy_sale' | 'client_review' | 'request_submitted' | 'time_logged' | 'daily_summary' | 'policy_sales_updated' | 'high_value_policy_updated';
 
 interface EventData {
   policy_sale: { employeeId: string; policyId: string };
   client_review: { employeeId: string; reviewId: string };
   request_submitted: { employeeId: string; requestId: string };
-  request_status_updated: { requestId: string; status: string };
   time_logged: { employeeId: string; logId: string };
   daily_summary: { employeeId: string; summaryId: string };
   policy_sales_updated: { employeeId?: string; type: 'new' | 'updated' | 'deleted' };
