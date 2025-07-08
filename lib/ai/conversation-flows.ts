@@ -912,3 +912,24 @@ async function saveDailySummary(data: any): Promise<boolean> {
     return false;
   }
 }
+
+// Function to detect trigger phrases - must be exported
+export function getTriggerPhrase(message: string): 'policy_entry' | 'review_entry' | 'daily_summary' | null {
+  const lowerCaseMessage = message.toLowerCase();
+  
+  const policyTriggers = ['sold a policy', 'new policy', 'add policy', 'policy entry'];
+  const reviewTriggers = ['client review', 'add review', 'log a review', 'new review'];
+  const summaryTriggers = ['daily summary', 'end of day', 'log my day', 'summary'];
+
+  if (policyTriggers.some(phrase => lowerCaseMessage.includes(phrase))) {
+    return 'policy_entry';
+  }
+  if (reviewTriggers.some(phrase => lowerCaseMessage.includes(phrase))) {
+    return 'review_entry';
+  }
+  if (summaryTriggers.some(phrase => lowerCaseMessage.includes(phrase))) {
+    return 'daily_summary';
+  }
+  
+  return null;
+}

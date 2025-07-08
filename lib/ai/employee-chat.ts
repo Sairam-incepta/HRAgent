@@ -12,7 +12,7 @@ import {
   clearConversationState
 } from '@/lib/database';
 import { buildEmployeeSystemPrompt, buildClockOutPrompt } from './system-prompts';
-import { handleConversationFlow } from './conversation-flows';
+import { handleConversationFlow, getTriggerPhrase } from './conversation-flows';
 
 // Clean up markdown formatting - selective bold formatting
 function cleanMarkdownResponse(response: string): string {
@@ -87,6 +87,29 @@ async function generateClockOutMessage(employeeName: string): Promise<string> {
 }
 
 export async function handleEmployeeChat(message: string, userId: string, userName: string = 'there') {
+  const lowerCaseMessage = message.toLowerCase();
+
+  // Handle "nevermind" or "cancel"
+  const cancelPhrases = ['nevermind', 'cancel', 'stop', 'forget it', 'wrong one'];
+  const containsCancelPhrase = cancelPhrases.some(phrase => lowerCaseMessage.includes(phrase));
+
+  if (containsCancelPhrase) {
+    await clearConversationState(userId);
+
+    // Check if the user wants to start a *new* flow right away
+    const newTrigger = getTriggerPhrase(message);
+    if (newTrigger) {
+      // A new flow is being started, so we let the main logic handle it
+      // after we've cleared the state.
+      console.log('User cancelled previous action and started a new flow.');
+    } else {
+      // If it's just a cancellation, confirm and stop.
+      return NextResponse.json({ 
+        response: cleanMarkdownResponse("Okay, I've cancelled that for you. What would you like to do now?") 
+      });
+    }
+  }
+
   // Handle reset conversation command
   if (message.toLowerCase().includes('reset conversation') || message.toLowerCase().includes('start over') || message.toLowerCase().includes('clear conversation')) {
     await clearConversationState(userId);
@@ -154,14 +177,13 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
   }
 
   // Check if user is starting a new conversation with trigger phrases
-  const lowerMessage = message.toLowerCase();
   const isTriggerPhrase = (
-    lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || 
-    lowerMessage.includes('add policy') || lowerMessage.includes('policy sale') ||
-    lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || 
-    lowerMessage.includes('review') ||
-    lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || 
-    lowerMessage.includes('today\'s summary')
+    lowerCaseMessage.includes('sold a policy') || lowerCaseMessage.includes('new policy') || 
+    lowerCaseMessage.includes('add policy') || lowerCaseMessage.includes('policy sale') ||
+    lowerCaseMessage.includes('client review') || lowerCaseMessage.includes('customer feedback') || 
+    lowerCaseMessage.includes('review') ||
+    lowerCaseMessage.includes('daily summary') || lowerCaseMessage.includes('end of day') || 
+    lowerCaseMessage.includes('today\'s summary')
   );
 
   // Get current conversation state
@@ -256,7 +278,7 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
   const lowerResponse = response.toLowerCase();
   
   // Start streamlined conversation flows based on trigger phrases
-  if ((lowerMessage.includes('sold a policy') || lowerMessage.includes('new policy') || lowerMessage.includes('add policy') || lowerMessage.includes('policy sale'))
+  if ((lowerCaseMessage.includes('sold a policy') || lowerCaseMessage.includes('new policy') || lowerCaseMessage.includes('add policy') || lowerCaseMessage.includes('policy sale'))
       && (lowerResponse.includes('policy') || lowerResponse.includes('details') || lowerResponse.includes('record'))) {
     // Set conversation state for streamlined policy entry
     await updateConversationState({
@@ -266,7 +288,7 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
       step: 1,
       lastUpdated: new Date()
     });
-  } else if ((lowerMessage.includes('client review') || lowerMessage.includes('customer feedback') || lowerMessage.includes('review'))
+  } else if ((lowerCaseMessage.includes('client review') || lowerCaseMessage.includes('customer feedback') || lowerCaseMessage.includes('review'))
              && (lowerResponse.includes('client') || lowerResponse.includes('review') || lowerResponse.includes('feedback'))) {
     // Set conversation state for streamlined review entry
     await updateConversationState({
@@ -276,7 +298,7 @@ export async function handleEmployeeChat(message: string, userId: string, userNa
       step: 1,
       lastUpdated: new Date()
     });
-  } else if ((lowerMessage.includes('daily summary') || lowerMessage.includes('end of day') || lowerMessage.includes('today\'s summary'))
+  } else if ((lowerCaseMessage.includes('daily summary') || lowerCaseMessage.includes('end of day') || lowerCaseMessage.includes('today\'s summary'))
              && (lowerResponse.includes('day') || lowerResponse.includes('summary') || lowerResponse.includes('accomplishments'))) {
     // Set conversation state for AI-generated daily summary
     await updateConversationState({
