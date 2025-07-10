@@ -63,6 +63,12 @@ export function TimeTracker({
   const [totalLunchTime, setTotalLunchTime] = useState(0);
   const [currentLunchTime, setCurrentLunchTime] = useState(0);
 
+  // ===== Daily lunch accumulation across multiple sessions =====
+  const DAILY_LUNCH_KEY_PREFIX = 'letsinsure_daily_lunch_';
+  const [dailyLunchSeconds, setDailyLunchSeconds] = useState(0);
+  const dailyLunchSecondsRef = useRef(0);
+  const getDailyLunchKey = (date: string) => `${DAILY_LUNCH_KEY_PREFIX}${date}`;
+
   // Confirmation dialog states
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
   const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
@@ -111,33 +117,11 @@ export function TimeTracker({
 
   const calculateTotalTimeWorked = (logs: any[]) => {
     let total = 0;
-
-    const LUNCH_30_MIN_SECONDS = 30 * 60;
-    const LUNCH_45_MIN_SECONDS = 45 * 60;
-
     logs.forEach(log => {
       if (log.clock_in && log.clock_out) {
-        const clockIn = new Date(log.clock_in);
-        const clockOut = new Date(log.clock_out);
-        const grossSeconds = (clockOut.getTime() - clockIn.getTime()) / 1000;
-
-        // Apply the same automatic lunch-deduction rules we use on the backend
-        //  • < 4 hours  – no deduction
-        //  • 4–8 hours – 30-minute deduction
-        //  • > 8 hours – 45-minute deduction
-        const hours = grossSeconds / 3600;
-        let lunchDeduction = 0;
-        if (hours >= 4 && hours <= 8) {
-          lunchDeduction = LUNCH_30_MIN_SECONDS;
-        } else if (hours > 8) {
-          lunchDeduction = LUNCH_45_MIN_SECONDS;
-        }
-
-        const netSeconds = Math.max(0, grossSeconds - lunchDeduction);
-        total += netSeconds;
+        total += (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
       }
     });
-
     return Math.floor(total);
   };
 
@@ -151,11 +135,12 @@ export function TimeTracker({
       setLogsToday(logs);
 
       const totalFromLogs = calculateTotalTimeWorked(logs);
-      baseTimeRef.current = totalFromLogs;
+      const adjustedFromLogs = Math.max(0, totalFromLogs - dailyLunchSecondsRef.current);
+      baseTimeRef.current = adjustedFromLogs;
 
       const openLog = logs.find(log => log.clock_in && !log.clock_out);
       if (!openLog) {
-        setElapsedTime(totalFromLogs);
+        setElapsedTime(adjustedFromLogs);
       }
     } finally {
       setIsUpdatingLogs(false);
@@ -199,6 +184,15 @@ export function TimeTracker({
       loadTimeSession();
     }
   }, [user?.id, fetchAndSumLogs, loadTimeSession]);
+
+  // Load saved daily lunch seconds once on mount (per day)
+  useEffect(() => {
+    const today = getCurrentDate();
+    const stored = localStorage.getItem(getDailyLunchKey(today));
+    const savedSeconds = stored ? parseInt(stored, 10) : 0;
+    setDailyLunchSeconds(savedSeconds);
+    dailyLunchSecondsRef.current = savedSeconds;
+  }, []);
 
   useEffect(() => {
     if (intervalRef.current) {
@@ -361,6 +355,11 @@ export function TimeTracker({
     const lunchDuration = (Date.now() - lunchStartTime) / 1000;
     totalLunchTimeRef.current += lunchDuration;
     setTotalLunchTime(totalLunchTimeRef.current);
+
+    // Persist this lunch duration for the whole day
+    dailyLunchSecondsRef.current += lunchDuration;
+    setDailyLunchSeconds(dailyLunchSecondsRef.current);
+    localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
 
     setLunchStartTime(null);
     setCurrentLunchTime(0);
