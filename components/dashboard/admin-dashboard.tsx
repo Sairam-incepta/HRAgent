@@ -144,13 +144,27 @@ export function AdminDashboard() {
     console.log('🔄 AdminDashboard: Loading data...', { silentUpdate });
     
     try {
-      // Debug database contents
-      await debugDatabaseContents();
-      
-      const [employeesData, salesData, periodsData, notificationsData, requestsData] = await Promise.all([
-        getEmployees(),
-        getPolicySales(),
-        getPayrollPeriods(),
+      // Run the pricey debug helper only once in development
+      if (!silentUpdate && process.env.NODE_ENV === 'development') {
+        // Fire and forget – don’t block rendering if it’s slow
+        debugDatabaseContents().catch(() => {});
+      }
+
+      // Light-weight refresh when called in background
+      let employeesData: any[] = employees;
+      let salesData: any[] = policySales;
+      let periodsData: PayrollPeriod[] = payrollPeriods;
+
+      if (!silentUpdate) {
+        // Full fetch for initial or manual refresh
+        [employeesData, salesData, periodsData] = await Promise.all([
+          getEmployees(),
+          getPolicySales(),
+          getPayrollPeriods()
+        ]);
+      }
+
+      const [notificationsData, requestsData] = await Promise.all([
         getHighValuePolicyNotificationsList(),
         getAllRequests()
       ]);
@@ -161,20 +175,22 @@ export function AdminDashboard() {
         status: n.status
       })));
       
-      setEmployees(employeesData);
-      setPolicySales(salesData);
-      
-      // Filter periods to only show ones with actual data or current/upcoming periods
-      const filteredPeriods = periodsData.filter(period => {
-        // Always show current and upcoming periods
-        if (period.status === 'current' || period.status === 'upcoming') {
-          return true;
-        }
-        // For completed periods, only show if there's actual data (hours worked or sales)
-        return period.details.regularHours > 0 || period.details.totalSales > 0;
-      });
-      
-      setPayrollPeriods(filteredPeriods);
+      if (!silentUpdate) {
+        setEmployees(employeesData);
+        setPolicySales(salesData);
+
+        // Filter periods to only show ones with actual data or current/upcoming periods
+        const filteredPeriods = periodsData.filter(period => {
+          // Always show current and upcoming periods
+          if (period.status === 'current' || period.status === 'upcoming') {
+            return true;
+          }
+          // For completed periods, only show if there's actual data (hours worked or sales)
+          return period.details.regularHours > 0 || period.details.totalSales > 0;
+        });
+
+        setPayrollPeriods(filteredPeriods);
+      }
       setHighValueNotifications(notificationsData);
       
       // Count pending requests

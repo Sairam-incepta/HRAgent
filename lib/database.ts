@@ -801,23 +801,10 @@ export const formatHoursMinutes = (totalHours: number): string => {
 
 // Helper function to calculate work hours with lunch break deduction
 const calculateWorkHoursWithLunchDeduction = (clockInTime: Date, clockOutTime: Date): number => {
-  const totalMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
-  const totalHours = totalMinutes / 60;
-  
-  // Automatic lunch deduction rules:
-  // - No deduction for shifts under 4 hours
-  // - 30 minutes deduction for shifts 4-8 hours  
-  // - 45 minutes deduction for shifts over 8 hours
-  let lunchDeductionMinutes = 0;
-  
-  if (totalHours >= 4 && totalHours <= 8) {
-    lunchDeductionMinutes = 30; // 30-minute lunch break
-  } else if (totalHours > 8) {
-    lunchDeductionMinutes = 45; // 45-minute lunch break for longer shifts
-  }
-  
-  const workMinutes = Math.max(0, totalMinutes - lunchDeductionMinutes);
-  return workMinutes / 60;
+  // Return the exact time between clock-in and clock-out (in hours) without any heuristic deductions.
+  // Any unpaid breaks should be recorded as separate sessions, so gaps are already excluded.
+  const diffMs = clockOutTime.getTime() - clockInTime.getTime();
+  return Math.max(0, diffMs) / (1000 * 60 * 60);
 };
 
 // Helper function to calculate actual hours worked from time_logs for a date range
@@ -1750,20 +1737,33 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       // Get time logs for this specific date
       const timeLogs = await getTimeLogsForDay(employeeId, dateString);
       
-      // Calculate total hours worked for this day with lunch deduction
+      // Calculate net hours worked for this day (exclude gaps between sessions)
       let hoursWorked = 0;
-      timeLogs.forEach(log => {
-        if (log.clock_in && log.clock_out) {
-          const clockInTime = new Date(log.clock_in);
-          const clockOutTime = new Date(log.clock_out);
-          hoursWorked += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out) {
-          // If currently clocked in, calculate up to now with lunch deduction
-          const clockInTime = new Date(log.clock_in);
-          const now = new Date();
-          hoursWorked += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+      if (timeLogs && timeLogs.length > 0) {
+        // Sort by clock-in
+        const sorted = timeLogs.sort((a: any, b: any) => new Date(a.clock_in).getTime() - new Date(b.clock_in).getTime());
+
+        let grossSeconds = 0;
+        let gapSeconds = 0;
+
+        for (let j = 0; j < sorted.length; j++) {
+          const session = sorted[j];
+          const inTime = new Date(session.clock_in);
+          const outTime = session.clock_out ? new Date(session.clock_out) : new Date();
+
+          grossSeconds += (outTime.getTime() - inTime.getTime()) / 1000;
+
+          const nextSession = sorted[j + 1];
+          if (nextSession && session.clock_out) {
+            const nextIn = new Date(nextSession.clock_in);
+            const gap = (nextIn.getTime() - outTime.getTime()) / 1000;
+            if (gap > 0) gapSeconds += gap;
+          }
         }
-      });
+
+        const netSeconds = Math.max(0, grossSeconds - gapSeconds);
+        hoursWorked = netSeconds / 3600;
+      }
       
       // Get policy sales for this date (from existing function)
       const policySales = await getPolicySales(employeeId);
@@ -1796,25 +1796,39 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
 // Get today's total hours worked (with lunch deduction)
 export const getTodayHours = async (employeeId: string): Promise<number> => {
   try {
-    // Use local date string for today
     const today = getLocalDateString();
-    const timeLogs = await getTimeLogsForDay(employeeId, today);
-    
-    let totalHours = 0;
-    timeLogs.forEach(log => {
-      if (log.clock_in && log.clock_out) {
-        const clockInTime = new Date(log.clock_in);
-        const clockOutTime = new Date(log.clock_out);
-        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-      } else if (log.clock_in && !log.clock_out) {
-        // If currently clocked in, calculate up to now with lunch deduction
-        const clockInTime = new Date(log.clock_in);
-        const now = new Date();
-        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+    const logs = await getTimeLogsForDay(employeeId, today);
+
+    // No logs – worked 0 hours
+    if (!logs || logs.length === 0) return 0;
+
+    // Sort by clock-in just in case
+    const sorted = logs.sort((a, b) => new Date(a.clock_in).getTime() - new Date(b.clock_in).getTime());
+
+    let grossSeconds = 0;   // All time between clock-in and clock-out
+    let gapSeconds  = 0;    // Breaks between sessions (e.g. unpaid lunch)
+
+    for (let i = 0; i < sorted.length; i++) {
+      const current = sorted[i];
+      const clockIn  = new Date(current.clock_in);
+      const clockOut = current.clock_out ? new Date(current.clock_out) : new Date();
+
+      grossSeconds += (clockOut.getTime() - clockIn.getTime()) / 1000;
+
+      // Gap until next session → unpaid break
+      const next = sorted[i + 1];
+      if (next && current.clock_out) {
+        const nextIn = new Date(next.clock_in);
+        const gap = (nextIn.getTime() - clockOut.getTime()) / 1000;
+        if (gap > 0) gapSeconds += gap;
       }
-    });
-    
-    return Math.round(totalHours * 100) / 100; // Round to 2 decimal places
+    }
+
+    // Net seconds worked = gross – break gaps
+    const netSeconds = Math.max(0, grossSeconds - gapSeconds);
+
+    // Convert to hours and round to 2 decimals
+    return Math.round((netSeconds / 3600) * 100) / 100;
   } catch (error) {
     console.error('Error getting today hours:', error);
     return 0;

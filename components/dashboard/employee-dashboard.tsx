@@ -277,7 +277,37 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const handleTimeUpdate = useCallback((elapsedSeconds: number, status: string) => {
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
+
+    // Live-update today’s entry in the bar graph so users see progress instantly
+    setWeeklyData((prev) => {
+      if (!prev?.length) return prev;
+      const todayIdx = prev.findIndex((d) => d.isToday);
+      if (todayIdx === -1) return prev;
+      const updated = [...prev];
+      updated[todayIdx] = {
+        ...updated[todayIdx],
+        hoursWorked: parseFloat((elapsedSeconds / 3600).toFixed(2)),
+      };
+      return updated;
+    });
   }, []);
+
+  // Keep bar graph and progress bar accurate even after refresh when user is not clocked in
+  useEffect(() => {
+    if (currentElapsedTime === 0) return;
+    setWeeklyData((prev) => {
+      if (!prev?.length) return prev;
+      const idx = prev.findIndex((d) => d.isToday);
+      if (idx === -1) return prev;
+      const clone = [...prev];
+      const newHours = +(currentElapsedTime / 3600).toFixed(2);
+      if (clone[idx].hoursWorked === newHours) return prev;
+      clone[idx] = { ...clone[idx], hoursWorked: newHours };
+      return clone;
+    });
+  }, [currentElapsedTime]);
+
+  // (moved further down to ensure liveHours is defined)
 
   const handleClockInChange = useCallback((clockedIn: boolean) => {
     setIsClockedIn(clockedIn);
@@ -433,20 +463,47 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
+  // Helper derived value to ensure we always display the larger of live session hours or saved DB hours
+  const liveHours = Math.max(currentElapsedTime / 3600, todayHours);
+
+  // If todayHours fetched from DB exceeds current live timer, sync it so that UI updates before any clock-in
+  useEffect(() => {
+    const seconds = todayHours * 3600;
+    if (todayHours > 0 && seconds > currentElapsedTime) {
+      setCurrentElapsedTime(seconds);
+    }
+  }, [todayHours]);
+
+  // Once weeklyData is loaded from the DB, ensure today's entry shows liveHours
+  useEffect(() => {
+    if (!weeklyData || weeklyData.length === 0) return;
+    const idx = weeklyData.findIndex(d => d.isToday);
+    if (idx === -1) return;
+    const newHours = +liveHours.toFixed(2);
+    if (weeklyData[idx].hoursWorked === newHours) return;
+    setWeeklyData(prev => {
+      if (!prev) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], hoursWorked: newHours };
+      return copy;
+    });
+  }, [weeklyData, liveHours]);
+
   const getProgressPercentage = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    return Math.min((currentHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
+    return Math.min((liveHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
   };
 
   const getProgressColor = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    if (currentHours >= employeeSettings.maxHoursBeforeOvertime) {
+    if (liveHours >= employeeSettings.maxHoursBeforeOvertime) {
       return 'bg-amber-500';
-    } else if (currentHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
+    } else if (liveHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
       return 'bg-orange-500';
     }
     return 'bg-[#005cb3]';
   };
+
+  // Replace inline ternaries where we previously used todayHours or currentElapsedTime
+  const displayCurrentHours = liveHours;
 
   const loadRequests = async () => {
     if (!user?.id) return;
@@ -635,10 +692,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
                 <span className="text-sm">
-                  {isClockedIn
-                    ? formatTimeDisplay(currentElapsedTime / 3600)
-                    : formatTimeDisplay(todayHours)
-                  } / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                  {formatTimeDisplay(liveHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
               <Progress 
@@ -653,9 +707,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                     ? "On lunch break - timer paused"
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime
+                    : displayCurrentHours > employeeSettings.maxHoursBeforeOvertime
                     ? "Tracking your extended hours"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime * 0.8
+                    : displayCurrentHours > employeeSettings.maxHoursBeforeOvertime * 0.8
                     ? "Approaching your daily target hours"
                     : "Tracking your work hours"
                   }

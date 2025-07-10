@@ -134,8 +134,7 @@ export function TimeTracker({
       const logs = await getTimeLogsForDay(user.id, today);
       setLogsToday(logs);
 
-      const totalFromLogs = calculateTotalTimeWorked(logs);
-      const adjustedFromLogs = Math.max(0, totalFromLogs - dailyLunchSecondsRef.current);
+      const adjustedFromLogs = calculateTotalTimeWorked(logs);
       baseTimeRef.current = adjustedFromLogs;
 
       const openLog = logs.find(log => log.clock_in && !log.clock_out);
@@ -204,7 +203,7 @@ export function TimeTracker({
         if (!startTime) return;
         const now = Date.now();
         const currentSessionGrossTime = (now - startTime) / 1000;
-        const totalWorkTime = Math.max(0, Math.floor(baseTimeRef.current + currentSessionGrossTime - totalLunchTimeRef.current));
+        const totalWorkTime = Math.max(0, Math.floor(baseTimeRef.current + currentSessionGrossTime));
         setElapsedTime(totalWorkTime);
 
         const hoursWorked = totalWorkTime / 3600;
@@ -241,19 +240,25 @@ export function TimeTracker({
   }, [elapsedTime, status, onTimeUpdate]);
 
   const resetLunchStates = () => {
+    // Clear only the active lunch session timers but keep the accumulated total for the day
     setLunchStartTime(null);
     setCurrentLunchTime(0);
-    setTotalLunchTime(0);
-    totalLunchTimeRef.current = 0;
+    // totalLunchTimeRef / setTotalLunchTime persist the day’s accumulated lunch seconds;
+    // do NOT reset them here so multiple work sessions keep the correct lunch total.
   };
 
+  // Prevent rapid double-clicks & avoid hover-flicker
+  const [processingClock, setProcessingClock] = useState<'in' | 'out' | null>(null);
+  const [processingLunch, setProcessingLunch] = useState<'start' | 'end' | null>(null);
+
   const confirmClockIn = async () => {
+    setProcessingClock('in');
     if (!user) return;
     setClockInConfirmOpen(false);
 
     try {
       await fetchAndSumLogs(); // Get latest log data before clocking in
-      resetLunchStates(); // Reset lunch for the new session
+      resetLunchStates(); // clear any active break timers but keep daily total
       
       const now = new Date();
       const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
@@ -284,16 +289,20 @@ export function TimeTracker({
         description: (error as Error).message || "There was an error starting your timer. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setProcessingClock(null);
     }
   };
 
   const performClockOut = async () => {
+    setProcessingClock('out');
     if (!activeLogId || !user?.id) {
       toast({
         title: "Error",
         description: "No active clock-in session found to clock out.",
         variant: "destructive",
       });
+      setProcessingClock(null);
       return;
     }
 
@@ -336,44 +345,110 @@ export function TimeTracker({
         description: "There was an error saving your clock-out time. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setProcessingClock(null);
     }
   };
 
-  const confirmStartLunch = () => {
-    if (status === "working" || status === "overtime_pending") {
+  // ----- LUNCH BREAK HANDLERS -----
+  const confirmStartLunch = async () => {
+    if (processingLunch) return;
+    setProcessingLunch('start');
+    if (!(status === "working" || status === "overtime_pending")) return;
+    if (!activeLogId) {
+      console.warn("No active log when starting lunch – this should not happen.");
+      setProcessingLunch(null);
+      return;
+    }
+
+    try {
+      // Close the current work session at lunch start
+      await updateTimeLog({ logId: activeLogId, clockOut: new Date() });
+
+      // Freeze elapsed time up to this point (net, already excluding previous lunch)
+      baseTimeRef.current = elapsedTime;
+
+      // Clear work timer specifics
+      setActiveLogId(null);
+      setStartTime(null);
+
+      // Start lunch timers
       setLunchStartTime(Date.now());
       setStatus("lunch");
       onLunchChange?.(true);
+
+      // Notify dashboard to refresh weekly summary
+      dashboardEvents.emit('time_logged');
+    } catch (err) {
+      console.error("Failed to start lunch break:", err);
+      toast({
+        title: "Error starting lunch break",
+        description: "We couldn't save your time log. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingLunch(null);
       setLunchStartConfirmOpen(false);
       saveTimeSession();
     }
   };
 
-  const confirmEndLunch = () => {
-    if (!lunchStartTime) return;
+  const confirmEndLunch = async () => {
+    if (processingLunch) return;
+    setProcessingLunch('end');
+    if (!lunchStartTime || !user?.id) { setProcessingLunch(null); return; }
 
     const lunchDuration = (Date.now() - lunchStartTime) / 1000;
-    totalLunchTimeRef.current += lunchDuration;
-    setTotalLunchTime(totalLunchTimeRef.current);
 
-    // Persist this lunch duration for the whole day
-    dailyLunchSecondsRef.current += lunchDuration;
-    setDailyLunchSeconds(dailyLunchSecondsRef.current);
-    localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
+    try {
+      // Accumulate lunch seconds for the day
+      totalLunchTimeRef.current += lunchDuration;
+      setTotalLunchTime(totalLunchTimeRef.current);
 
-    setLunchStartTime(null);
-    setCurrentLunchTime(0);
+      dailyLunchSecondsRef.current += lunchDuration;
+      setDailyLunchSeconds(dailyLunchSecondsRef.current);
+      localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
 
-    const hoursWorked = elapsedTime / 3600;
-    setStatus(hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working");
+      // Start a new work session after lunch
+      const now = new Date();
+      const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
 
-    setLunchEndConfirmOpen(false);
-    onLunchChange?.(false);
-    toast({
-      title: "Back to Work!",
-      description: `You took a ${formatTime(lunchDuration)} break. Your work timer has resumed.`,
-    });
-    saveTimeSession();
+      if (error || !data) throw new Error(error?.message || "Unable to start new time log after lunch.");
+
+      const newLog = Array.isArray(data) ? data[0] : data;
+      if (!newLog) throw new Error("No time log returned after lunch.");
+
+      setActiveLogId(newLog.id);
+      setStartTime(now.getTime());
+
+      // Reset current break timers
+      setLunchStartTime(null);
+      setCurrentLunchTime(0);
+
+      // Resume working status (check overtime threshold)
+      const hoursWorkedSoFar = baseTimeRef.current / 3600;
+      const newStatus = hoursWorkedSoFar >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
+      setStatus(newStatus);
+      onLunchChange?.(false);
+
+      toast({
+        title: "Back to Work!",
+        description: `You took a ${formatTime(lunchDuration)} break. Your work timer has resumed.`,
+      });
+
+      dashboardEvents.emit('time_logged');
+    } catch (err) {
+      console.error("Failed to end lunch break:", err);
+      toast({
+        title: "Error ending lunch break",
+        description: (err as Error).message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingLunch(null);
+      setLunchEndConfirmOpen(false);
+      saveTimeSession();
+    }
   };
   
   const formatTime = (seconds: number) => {
@@ -389,37 +464,58 @@ export function TimeTracker({
     : totalLunchTime;
 
   const ClockInButton = () => (
-    <Button 
-      onClick={() => setClockInConfirmOpen(true)}
-      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+    <Button
+      disabled={processingClock === 'in'}
+      onClick={() => {
+        if (processingClock) return;
+        setClockInConfirmOpen(true);
+      }}
+      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96] transition-none"
     >
       <Play className="mr-2 h-4 w-4" /> Clock In
     </Button>
   );
 
   const ClockOutButton = () => (
-    <Button 
-      onClick={() => setClockOutConfirmOpen(true)}
-      variant="outline"
-      className="w-full sm:w-auto"
+    <Button
+      disabled={processingClock === 'out'}
+      onClick={() => {
+        if (processingClock) return;
+        setClockOutConfirmOpen(true);
+      }}
+      className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white transition-none"
     >
       <Square className="mr-2 h-4 w-4" /> Clock Out
     </Button>
   );
 
+  // Start lunch immediately with a single click (no confirmation dialog)
   const LunchBreakButton = () => (
-    <Button 
-      onClick={() => setLunchStartConfirmOpen(true)}
-      className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black h-10 px-4"
+    <Button
+      disabled={(processingLunch === 'start') || (status !== 'working' && status !== 'overtime_pending')}
+      onClick={confirmStartLunch}
+      className={cn(
+        'w-full sm:w-auto h-10 px-4',
+        processingLunch === 'start'
+          ? 'bg-[#f7b97f]/60 cursor-wait text-black'
+          : 'bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black'
+      )}
     >
       <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
     </Button>
   );
 
+  // End lunch immediately with a single click (no confirmation dialog)
   const EndLunchBreakButton = () => (
-    <Button 
-      onClick={() => setLunchEndConfirmOpen(true)}
-      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90 h-10 px-4"
+    <Button
+      disabled={(processingLunch === 'end') || status !== 'lunch'}
+      onClick={confirmEndLunch}
+      className={cn(
+        'w-full sm:w-auto h-10 px-4',
+        processingLunch === 'end'
+          ? 'bg-[#005cb3]/60 cursor-wait'
+          : 'bg-[#005cb3] hover:bg-[#005cb3]/90'
+      )}
     >
       <Check className="mr-2 h-4 w-4" /> End Lunch Break
     </Button>
@@ -436,7 +532,7 @@ export function TimeTracker({
       {status === "lunch" ? (
         <>
           <Clock className="h-4 w-4" />
-          <span>Lunch: {formatTime(currentLunchTime)}</span>
+          <span>Lunch: {formatTime(currentLunchTime + totalLunchTimeRef.current)}</span>
         </>
       ) : (
         "Not on Break"

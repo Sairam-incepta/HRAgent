@@ -1,130 +1,208 @@
-import { handlePolicyEntry } from './conversation-flows';
-import { openai } from '@ai-sdk/openai';
-import { addPolicySale } from '../db/policy-sales';
+// lib/ai/employee-chat.ts
+// REPLACED CONTENT — full AI-driven chat handler
 
-const TRIGGER_PHRASES = {
-  policy_entry: ['new policy', 'log a policy', 'sold a policy', 'add a policy'],
-  // other flows can be added here
-};
+import openai from '@/lib/openai';
+import {
+  addPolicySale,
+  addClientReview,
+  addDailySummary,
+  getChatMessages,
+} from '@/lib/database';
+import type { ChatCompletionMessageParam } from 'openai/resources';
 
-interface PolicyDraft {
-  clientName?: string;
-  policyNumber?: string;
-  policyType?: string;
-  amount?: number;
-  brokerFee?: number;
+// System prompt that tells GPT-4 what it can do and how to format actions
+const SYSTEM_PROMPT = `
+You are "Let's Insure Employee Assistant" (pet name/codename "LI"), an AI assistant helping insurance brokerage employees.
+
+Conversation rules when gathering data:
+• For a new policy sale, ask for missing details in this order, each time in friendly natural language:
+  1. Client name **and** policy type in one question.
+  2. Policy number **and** policy amount in one question.
+  3. Broker fee earned.
+  4. Whether the policy was cross-sold (yes/no).
+
+Guidelines for interpreting user answers:
+• The employee may provide multiple requested fields in a single message, either comma-separated (e.g. "2025-POL-2, $2,000") or in free natural language (e.g. "It was for 2 000 dollars, policy number 2025-POL-2").
+• Extract any details you can find from the response and only ask follow-up questions for the specific pieces of information that are still missing. Never re-ask for data you already have.
+• Accept common yes/no variations (yes, y, yep, yup, sure, absolutely / no, n, nope, nah) when confirming whether a policy was cross-sold.
+• Monetary values may include currency symbols or commas (e.g. "$2,000" or "2 000"). Strip non-numeric characters and parse them as numbers.
+• After a field has been answered clearly, do NOT ask for it again. If all required fields have been provided, immediately return the JSON action without further questioning.
+
+• For a client review, ask first for client name **and** rating (1-5), then ask for the review text.
+  • Rating may be provided as a digit (1-5) or written word ("five"). Parse either form.
+  • Accept comma-separated answers like "Krpt, 4" and treat the first token as name, second as rating.
+  • Once you have name, rating, and review text, output the JSON action immediately; never ask twice.
+
+• For an end-of-day *clock-out* interaction, gently ask the employee how their day was and request a short description of key activities. Use that description in the \`description\` / \`keyActivities\` fields of the \`add_daily_summary\` action. Respond with an encouraging remark once the summary is logged.
+  • Treat the literal message \`CLOCK_OUT_PROMPT\` as a signal that the employee has just clocked out and you should start the daily summary flow by asking "How was your day today? ..." as above.
+
+When all required info is available, reply ONLY with a single JSON object of the form:
+ {
+   "action": "add_policy_sale" | "add_client_review" | "add_daily_summary",
+   "payload": { ...details }
+ }
+
+Details for each action:
+1. add_policy_sale
+   payload: {
+     clientName: string,
+     policyNumber: string,
+     policyType: string,
+     amount: number,           // total premium
+     brokerFee: number,        // fee earned
+     crossSold: boolean,      // whether it was cross-sold
+     saleDate?: ISODate        // defaults to now if omitted
+   }
+2. add_client_review
+   payload: {
+     clientName: string,
+     rating: 1 | 2 | 3 | 4 | 5,
+     review: string,
+     policyNumber?: string,
+     reviewDate?: ISODate      // defaults to now if omitted
+   }
+3. add_daily_summary
+   payload: {
+     hoursWorked: number,
+     policiesSold: number,
+     totalSalesAmount: number,
+     totalBrokerFees: number,
+     description: string,
+     keyActivities: string[],
+     date?: ISODate            // defaults to today if omitted
+   }
+
+If information is missing, ask follow-up questions (as described) in natural language **instead of** returning JSON.
+Never output markdown fences—return raw JSON only when you are executing an action.
+`;
+
+interface LIAssistantResponse {
+  action?: 'add_policy_sale' | 'add_client_review' | 'add_daily_summary';
+  payload?: Record<string, any>;
 }
 
-type Stage = 'basic' | 'financial' | 'cross' | null;
+export async function handleEmployeeChat(message: string, employeeId: string): Promise<string> {
+  // 0. Retrieve brief conversation history (last 10 messages)
+  const historyRecords = await getChatMessages({ userId: employeeId, limit: 30 });
 
-const userConversationState: Record<string, { stage: Stage; draft: PolicyDraft }> = {};
+  // Oldest-first and drop consecutive duplicate messages to reduce confusion
+  const history: ChatCompletionMessageParam[] = [];
+  let lastContent: string | null = null;
+  historyRecords.reverse().forEach((m: any) => {
+    const content = m.content as string;
+    if (content !== lastContent) {
+      history.push({
+        role: (m.role === 'bot' ? 'assistant' : 'user') as 'assistant' | 'user',
+        content,
+      } as ChatCompletionMessageParam);
+      lastContent = content;
+    }
+  });
 
-export async function handleEmployeeChat(message: string, userId: string): Promise<string> {
-  if (!userId) {
-    throw new Error('User ID is required');
+  // Front-end already saves the user message; skip duplicate logging here
+
+  // 1. Send the message to GPT-4 with the system prompt plus history
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4.1',
+    temperature: 0.3,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history,
+      // Avoid sending the same message twice in a row to GPT
+      ...(history.length && history[history.length - 1].content === message
+        ? []
+        : [{ role: 'user', content: message } as ChatCompletionMessageParam]),
+    ],
+  });
+
+  const assistantReply = (completion.choices[0].message.content ?? '').trim();
+
+  // 2. Try to parse a JSON action
+  let parsed: LIAssistantResponse | null = null;
+  if (assistantReply.startsWith('{')) {
+    try {
+      parsed = JSON.parse(assistantReply) as LIAssistantResponse;
+    } catch (_) {
+      // Not valid JSON → fall through to returning raw reply
+    }
   }
 
-  const text = message.trim();
-
-  // If we are mid-flow handle accordingly
-  const state = userConversationState[userId];
-
-  if (state) {
-    switch (state.stage) {
-      case 'basic': {
-        // Expecting: client name, policy number, policy type
-        const parts = text.split(',').map(p => p.trim());
-        if (parts.length < 3) {
-          return "Please provide the client's name, policy number, and policy type separated by commas (e.g., Omega, POL-123, Home).";
-        }
-        const [clientName, policyNumber, policyType] = parts;
-        state.draft.clientName = clientName;
-        state.draft.policyNumber = policyNumber;
-        state.draft.policyType = policyType;
-        state.stage = 'financial';
-        return "Got it. Now, what's the total policy amount and your broker fee? (e.g., $1000, $150)";
-      }
-      case 'financial': {
-        // Expecting amount and broker fee
-        const nums = text.match(/[\d.,]+/g);
-        if (!nums || nums.length < 2) {
-          return "Please provide both the total amount and the broker fee, separated by a comma (e.g., $1000, $150).";
-        }
-        const amount = parseFloat(nums[0].replace(/,/g, ''));
-        const fee = parseFloat(nums[1].replace(/,/g, ''));
-        if (isNaN(amount) || isNaN(fee)) {
-          return "I couldn't parse those numbers. Please provide them again (e.g., 1000, 150).";
-        }
-        state.draft.amount = amount;
-        state.draft.brokerFee = fee;
-        state.stage = 'cross';
-        return "Was this policy cross-sold to an existing client? (yes/no)";
-      }
-      case 'cross': {
-        const yes = /^(y|yes)/i.test(text);
-        const no = /^(n|no)/i.test(text);
-        if (!yes && !no) {
-          return "Please answer yes or no – was this a cross-sold policy?";
-        }
-
-        const draft = state.draft;
-        const crossSold = yes;
-        const finalBrokerFee = crossSold ? (draft.brokerFee || 0) * 2 : draft.brokerFee || 0;
-
-        // Save to DB
+  // 3. Execute action if present
+  if (parsed && parsed.action && parsed.payload) {
+    try {
+      switch (parsed.action) {
+        case 'add_policy_sale': {
+          const {
+            clientName,
+            policyNumber,
+            policyType,
+            amount,
+            brokerFee,
+            saleDate,
+          } = parsed.payload;
+          const crossSold = parsed.payload.crossSold ?? false;
         await addPolicySale({
-          employeeId: userId,
-          clientName: draft.clientName!,
-          policyNumber: draft.policyNumber!,
-          policyType: draft.policyType!,
-          amount: draft.amount!,
-          brokerFee: finalBrokerFee,
-          crossSold,
-          saleDate: new Date(),
-        });
-
-        delete userConversationState[userId];
-        return `Policy sale for ${draft.clientName} (Policy #${draft.policyNumber}) has been recorded! ${crossSold ? 'Cross-sell bonus applied.' : ''}`;
+            employeeId,
+            clientName,
+            policyNumber,
+            policyType,
+            amount: Number(amount),
+            brokerFee: Number(brokerFee),
+            crossSold,
+            saleDate: saleDate ? new Date(saleDate) : new Date(),
+          });
+          return `✅ Policy sale for ${clientName} (#${policyNumber}) recorded successfully.`;
       }
-    }
+        case 'add_client_review': {
+          const {
+            clientName,
+            rating,
+            review,
+            policyNumber = 'Unknown',
+            reviewDate,
+          } = parsed.payload;
+          await addClientReview({
+            employeeId,
+            clientName,
+            policyNumber,
+            rating: Number(rating),
+            review,
+            reviewDate: reviewDate ? new Date(reviewDate) : new Date(),
+          });
+          return `✅ Client review from ${clientName} saved — great job!`;
+  }
+        case 'add_daily_summary': {
+          const {
+            hoursWorked,
+            policiesSold,
+            totalSalesAmount,
+            totalBrokerFees,
+            description,
+            keyActivities,
+            date,
+          } = parsed.payload;
+          await addDailySummary({
+            employeeId,
+            date: date ? new Date(date) : new Date(),
+            hoursWorked: Number(hoursWorked),
+            policiesSold: Number(policiesSold),
+            totalSalesAmount: Number(totalSalesAmount),
+            totalBrokerFees: Number(totalBrokerFees),
+            description,
+            keyActivities: keyActivities || [],
+          });
+          return '✅ Daily summary submitted successfully.';
+        }
+      }
+    } catch (err) {
+      console.error('Error executing AI action:', err);
+      return '⚠️ I tried to save that data but ran into a problem. Please try again later or contact support.';
+  }
   }
 
-  // If trigger phrase initiates new flow and not already in flow
-  const lowerCaseMessage = text.toLowerCase();
-  if (TRIGGER_PHRASES.policy_entry.some(phrase => lowerCaseMessage.includes(phrase))) {
-    userConversationState[userId] = { stage: 'basic', draft: {} };
-    return "Great! Let's log the policy. Please provide the client's name, policy number, and policy type (e.g., Omega, POL-123, Home).";
-  }
+  // 4. No action → just relay GPT’s reply
 
-  // General AI fallback
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a helpful assistant for an insurance agent. Keep responses concise and ask clarifying questions when necessary.`
-          },
-          { role: 'user', content: message }
-        ],
-        temperature: 0.7,
-      })
-    });
+  // Front-end records the assistant reply, so no need to save it again here
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API request failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content;
-  } catch (error) {
-    console.error('Error fetching general AI response:', error);
-    return "I'm sorry, I'm having trouble connecting at the moment. Please try again later.";
-  }
+  return assistantReply;
 }
