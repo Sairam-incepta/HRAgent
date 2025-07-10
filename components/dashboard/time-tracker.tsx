@@ -111,11 +111,33 @@ export function TimeTracker({
 
   const calculateTotalTimeWorked = (logs: any[]) => {
     let total = 0;
+
+    const LUNCH_30_MIN_SECONDS = 30 * 60;
+    const LUNCH_45_MIN_SECONDS = 45 * 60;
+
     logs.forEach(log => {
       if (log.clock_in && log.clock_out) {
-        total += (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
+        const clockIn = new Date(log.clock_in);
+        const clockOut = new Date(log.clock_out);
+        const grossSeconds = (clockOut.getTime() - clockIn.getTime()) / 1000;
+
+        // Apply the same automatic lunch-deduction rules we use on the backend
+        //  • < 4 hours  – no deduction
+        //  • 4–8 hours – 30-minute deduction
+        //  • > 8 hours – 45-minute deduction
+        const hours = grossSeconds / 3600;
+        let lunchDeduction = 0;
+        if (hours >= 4 && hours <= 8) {
+          lunchDeduction = LUNCH_30_MIN_SECONDS;
+        } else if (hours > 8) {
+          lunchDeduction = LUNCH_45_MIN_SECONDS;
+        }
+
+        const netSeconds = Math.max(0, grossSeconds - lunchDeduction);
+        total += netSeconds;
       }
     });
+
     return Math.floor(total);
   };
 
