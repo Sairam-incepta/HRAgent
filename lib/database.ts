@@ -251,7 +251,7 @@ export const getTodayClientReviews = async (employeeId: string): Promise<ClientR
   return data || [];
 };
 
-// Get today's time tracking data for an employee from actual time logs
+// Get today's time tracking data for an employee from actual time logs (with lunch deduction)
 export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalHours: number; clockedIn: boolean }> => {
   try {
     // Get today's date in local timezone
@@ -266,15 +266,15 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
     // Calculate total hours worked and check if currently clocked in
     timeLogs.forEach(log => {
       if (log.clock_in && log.clock_out) {
-        // Completed session
-        const startTime = new Date(log.clock_in).getTime();
-        const endTime = new Date(log.clock_out).getTime();
-        totalHours += (endTime - startTime) / (1000 * 60 * 60); // Convert to hours
+        // Completed session with lunch deduction
+        const clockInTime = new Date(log.clock_in);
+        const clockOutTime = new Date(log.clock_out);
+        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
       } else if (log.clock_in && !log.clock_out) {
-        // Currently clocked in - calculate up to now
-        const startTime = new Date(log.clock_in).getTime();
-        const now = Date.now();
-        totalHours += (now - startTime) / (1000 * 60 * 60);
+        // Currently clocked in - calculate up to now with lunch deduction
+        const clockInTime = new Date(log.clock_in);
+        const now = new Date();
+        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
         clockedIn = true;
       }
     });
@@ -799,6 +799,27 @@ export const formatHoursMinutes = (totalHours: number): string => {
   }
 };
 
+// Helper function to calculate work hours with lunch break deduction
+const calculateWorkHoursWithLunchDeduction = (clockInTime: Date, clockOutTime: Date): number => {
+  const totalMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
+  const totalHours = totalMinutes / 60;
+  
+  // Automatic lunch deduction rules:
+  // - No deduction for shifts under 4 hours
+  // - 30 minutes deduction for shifts 4-8 hours  
+  // - 45 minutes deduction for shifts over 8 hours
+  let lunchDeductionMinutes = 0;
+  
+  if (totalHours >= 4 && totalHours <= 8) {
+    lunchDeductionMinutes = 30; // 30-minute lunch break
+  } else if (totalHours > 8) {
+    lunchDeductionMinutes = 45; // 45-minute lunch break for longer shifts
+  }
+  
+  const workMinutes = Math.max(0, totalMinutes - lunchDeductionMinutes);
+  return workMinutes / 60;
+};
+
 // Helper function to calculate actual hours worked from time_logs for a date range
 export const calculateActualHoursForPeriod = async (employeeId: string, startDate: Date, endDate: Date): Promise<number> => {
   try {
@@ -823,20 +844,20 @@ export const calculateActualHoursForPeriod = async (employeeId: string, startDat
         // Calculate hours for this day
         timeLogs.forEach(log => {
           if (log.clock_in && log.clock_out) {
-            const startTime = new Date(log.clock_in).getTime();
-            const endTime = new Date(log.clock_out).getTime();
-            const dayHours = (endTime - startTime) / (1000 * 60 * 60);
+            const clockInTime = new Date(log.clock_in);
+            const clockOutTime = new Date(log.clock_out);
+            const dayHours = calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
             totalHours += dayHours;
-            console.log(`  ✅ Complete session: ${dayHours.toFixed(2)} hours (${log.clock_in} to ${log.clock_out})`);
+            console.log(`  ✅ Complete session: ${dayHours.toFixed(2)} work hours (${log.clock_in} to ${log.clock_out}, lunch deducted)`);
           } else if (log.clock_in && !log.clock_out) {
             // If currently clocked in, calculate up to now (only if it's today)
             const today = getLocalDateString();
             if (dateString === today) {
-              const startTime = new Date(log.clock_in).getTime();
-              const now = Date.now();
-              const dayHours = (now - startTime) / (1000 * 60 * 60);
+              const clockInTime = new Date(log.clock_in);
+              const now = new Date();
+              const dayHours = calculateWorkHoursWithLunchDeduction(clockInTime, now);
               totalHours += dayHours;
-              console.log(`  ⏳ Active session: ${dayHours.toFixed(2)} hours (${log.clock_in} to now)`);
+              console.log(`  ⏳ Active session: ${dayHours.toFixed(2)} work hours (${log.clock_in} to now, lunch deducted)`);
             } else {
               console.log(`  ⚠️ Incomplete session: clocked in at ${log.clock_in} but no clock out`);
             }
@@ -851,7 +872,7 @@ export const calculateActualHoursForPeriod = async (employeeId: string, startDat
     console.log(`⏰ Period summary for employee ${employeeId}:`, {
       daysChecked,
       daysWithLogs,
-      totalHours: totalHours.toFixed(2)
+      totalWorkHours: totalHours.toFixed(2)
     });
     
     return Math.round(totalHours * 100) / 100; // Round to 2 decimal places
@@ -1729,18 +1750,18 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
       // Get time logs for this specific date
       const timeLogs = await getTimeLogsForDay(employeeId, dateString);
       
-      // Calculate total hours worked for this day
+      // Calculate total hours worked for this day with lunch deduction
       let hoursWorked = 0;
       timeLogs.forEach(log => {
         if (log.clock_in && log.clock_out) {
-          const startTime = new Date(log.clock_in).getTime();
-          const endTime = new Date(log.clock_out).getTime();
-          hoursWorked += (endTime - startTime) / (1000 * 60 * 60); // Convert to hours
+          const clockInTime = new Date(log.clock_in);
+          const clockOutTime = new Date(log.clock_out);
+          hoursWorked += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
         } else if (log.clock_in && !log.clock_out) {
-          // If currently clocked in, calculate up to now
-          const startTime = new Date(log.clock_in).getTime();
-          const now = Date.now();
-          hoursWorked += (now - startTime) / (1000 * 60 * 60);
+          // If currently clocked in, calculate up to now with lunch deduction
+          const clockInTime = new Date(log.clock_in);
+          const now = new Date();
+          hoursWorked += calculateWorkHoursWithLunchDeduction(clockInTime, now);
         }
       });
       
@@ -1772,7 +1793,7 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
   }
 };
 
-// Get today's total hours worked
+// Get today's total hours worked (with lunch deduction)
 export const getTodayHours = async (employeeId: string): Promise<number> => {
   try {
     // Use local date string for today
@@ -1782,14 +1803,14 @@ export const getTodayHours = async (employeeId: string): Promise<number> => {
     let totalHours = 0;
     timeLogs.forEach(log => {
       if (log.clock_in && log.clock_out) {
-        const startTime = new Date(log.clock_in).getTime();
-        const endTime = new Date(log.clock_out).getTime();
-        totalHours += (endTime - startTime) / (1000 * 60 * 60);
+        const clockInTime = new Date(log.clock_in);
+        const clockOutTime = new Date(log.clock_out);
+        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
       } else if (log.clock_in && !log.clock_out) {
-        // If currently clocked in, calculate up to now
-        const startTime = new Date(log.clock_in).getTime();
-        const now = Date.now();
-        totalHours += (now - startTime) / (1000 * 60 * 60);
+        // If currently clocked in, calculate up to now with lunch deduction
+        const clockInTime = new Date(log.clock_in);
+        const now = new Date();
+        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
       }
     });
     

@@ -25,24 +25,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, userRole, isDailySummarySubmission } = await request.json();
-
-    // Determine actual user role if not provided
-    const actualUserRole = userRole || getUserRole(userId);
+    const { message, userRole: providedRole } = await request.json();
+    const userRole = providedRole || getUserRole(userId);
 
     // Handle daily summary submission directly
-    if (isDailySummarySubmission) {
+    if (message.toLowerCase().includes('daily summary') && userRole === 'employee') {
+       // This is a simplified check. A more robust implementation might be needed.
+       // Assuming the summary content is in the message.
       return await handleDailySummarySubmission(message, userId);
     }
 
-    // Handle admin vs employee differently using proper modules
-    if (actualUserRole === 'admin') {
-      return await handleAdminChat(message, userId);
+    if (userRole === 'admin') {
+      const response = await handleAdminChatModule(message, userId);
+      return NextResponse.json({ response });
     } else {
-      return await handleEmployeeChatModule(message, userId);
+      const response = await handleEmployeeChatModule(message, userId);
+      return NextResponse.json({ response });
     }
 
   } catch (error) {
+    if (error instanceof Error) {
+      console.error('Chat API error:', error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
     console.error('Chat API error:', error);
     return NextResponse.json(
       { error: 'Failed to process chat request' },

@@ -30,7 +30,7 @@ import {
   User
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import TimeTracker from "@/components/dashboard/time-tracker";
+import { TimeTracker } from "@/components/dashboard/time-tracker";
 import { RequestDialog } from "@/components/dashboard/request-dialog";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { Input } from "@/components/ui/input";
@@ -764,12 +764,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       </Card>
 
       <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-[#005cb3]" />
-              <CardTitle>This Week&apos;s Performance</CardTitle>
-            </div>
-          </CardHeader>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-[#005cb3]" />
+            <CardTitle>This Week&apos;s Performance</CardTitle>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
@@ -784,62 +784,62 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
           {/* Vertical Bar Chart Container */}
           <div className="bg-muted/10 rounded-lg p-4">
             <div className="flex items-end justify-between gap-2 pt-8" style={{ height: '140px' }}>
-              {weeklyData.map((day) => {
-                const maxHours = getMaxHours();
+            {weeklyData.map((day) => {
+              const maxHours = getMaxHours();
                 // Calculate bar height in pixels (max 100px for the chart area)
                 const barHeight = maxHours > 0 ? Math.max((day.hoursWorked / maxHours) * 100, day.hoursWorked > 0 ? 3 : 1) : 1;
-                const isToday = day.isToday;
-                
-                // Format hours and minutes for display
-                const timeDisplay = formatTimeDisplay(day.hoursWorked);
-                
-                return (
-                  <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
-                    {/* Sales indicator */}
-                    {day.policiesSold > 0 && (
-                      <div className="text-xs text-[#005cb3] font-medium mb-1">
-                        {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
-                      </div>
-                    )}
-                    
-                    {/* Time label above bar */}
-                    <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
-                      {timeDisplay}
+              const isToday = day.isToday;
+              
+              // Format hours and minutes for display
+              const timeDisplay = formatTimeDisplay(day.hoursWorked);
+              
+              return (
+                <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
+                  {/* Sales indicator */}
+                  {day.policiesSold > 0 && (
+                    <div className="text-xs text-[#005cb3] font-medium mb-1">
+                      {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
                     </div>
-                    
+                  )}
+                  
+                  {/* Time label above bar */}
+                    <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
+                    {timeDisplay}
+                  </div>
+                  
                     {/* Vertical Bar with fixed pixel height */}
                     <div className="relative w-8 flex flex-col justify-end" style={{ height: '100px' }}>
-                      <div 
-                        className={`w-full rounded-t-sm transition-all duration-500 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/70' 
-                              : 'bg-muted-foreground/30'
-                        }`}
-                        style={{ 
+                    <div 
+                      className={`w-full rounded-t-sm transition-all duration-500 ${
+                        isToday 
+                          ? 'bg-[#005cb3]' 
+                          : day.hoursWorked > 0 
+                            ? 'bg-[#005cb3]/70' 
+                            : 'bg-muted-foreground/30'
+                      }`}
+                      style={{ 
                           height: `${barHeight}px`
-                        }}
-                      />
-                    </div>
-                    
-                    {/* Day label and date (X-axis) */}
-                    <div className="text-center">
-                      <div className="text-xs text-muted-foreground font-medium">
-                        {day.dayName.slice(0, 3).toUpperCase()}
-                      </div>
-                      <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
-                        {formatDate(day.date)}
-                      </div>
-                    </div>
-                    
-                    {/* Today indicator */}
-                    {isToday && (
-                      <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
-                    )}
+                      }}
+                    />
                   </div>
-                );
-              })}
+                  
+                  {/* Day label and date (X-axis) */}
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground font-medium">
+                      {day.dayName.slice(0, 3).toUpperCase()}
+                    </div>
+                    <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
+                      {formatDate(day.date)}
+                    </div>
+                  </div>
+                  
+                  {/* Today indicator */}
+                  {isToday && (
+                    <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
+                  )}
+                </div>
+              );
+            })}
             </div>
           </div>
         </CardContent>

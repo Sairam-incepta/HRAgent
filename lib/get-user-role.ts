@@ -14,7 +14,7 @@ export async function getUserRole(): Promise<UserRole> {
   }
 
   const publicMetadata = sessionClaims?.publicMetadata as CustomPublicMetadata;
-  
+
   // Use role from Clerk metadata instead of hardcoded user ID
   return publicMetadata?.role || "employee";
 } 

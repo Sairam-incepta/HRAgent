@@ -1,314 +1,130 @@
-import { NextResponse } from 'next/server';
-import openai from '@/lib/openai';
-import { 
-  getPolicySales, 
-  getClientReviews, 
-  getEmployeeHours,
-  getCrossSoldPolicies,
-  getDailySummaries,
-  getEmployee,
-  getConversationState,
-  updateConversationState,
-  clearConversationState
-} from '@/lib/database';
-import { buildEmployeeSystemPrompt, buildClockOutPrompt } from './system-prompts';
-import { handleConversationFlow, getTriggerPhrase } from './conversation-flows';
+import { handlePolicyEntry } from './conversation-flows';
+import { openai } from '@ai-sdk/openai';
+import { addPolicySale } from '../db/policy-sales';
 
-// Clean up markdown formatting - selective bold formatting
-function cleanMarkdownResponse(response: string): string {
-  return response
-    // Convert markdown to HTML
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
-    .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
-    .replace(/_(.*?)_/g, '<em>$1</em>')                // _italic_ -> <em>
-    // Clean up bullet points
-    .replace(/^\s*-\s*/gm, '• ')
-    // Clean up excessive line breaks
-    .replace(/\n\n\n+/g, '\n\n')
-    // Add selective bold formatting for important data only
-    .replace(/(\$[\d,]+)/g, '<strong>$1</strong>')                    // Dollar amounts
-    .replace(/(\d+)\s+(policies?|sales?|employees?)/gi, '<strong>$1</strong> $2') // Counts
-    .replace(/^([A-Z][^:•\n]*):$/gm, '<strong>$1:</strong>')         // Section headers only
-    .trim();
+const TRIGGER_PHRASES = {
+  policy_entry: ['new policy', 'log a policy', 'sold a policy', 'add a policy'],
+  // other flows can be added here
+};
+
+interface PolicyDraft {
+  clientName?: string;
+  policyNumber?: string;
+  policyType?: string;
+  amount?: number;
+  brokerFee?: number;
 }
 
-// Generate AI-powered initial greeting
-async function generateInitialGreeting(employee: any): Promise<string> {
-  const currentHour = new Date().getHours();
-  let greeting = "Hello";
-  
-  if (currentHour < 12) {
-    greeting = "Good morning";
-  } else if (currentHour < 17) {
-    greeting = "Good afternoon";
-  } else {
-    greeting = "Good evening";
+type Stage = 'basic' | 'financial' | 'cross' | null;
+
+const userConversationState: Record<string, { stage: Stage; draft: PolicyDraft }> = {};
+
+export async function handleEmployeeChat(message: string, userId: string): Promise<string> {
+  if (!userId) {
+    throw new Error('User ID is required');
   }
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4.1",
-    messages: [
-      {
-        role: "system",
-        content: `Generate a warm, encouraging welcome message for ${employee.name}, an employee at Let's Insure. Use "${greeting}" as the greeting. Keep it professional but friendly, mention you're their HR Assistant, and briefly explain how you can help with tracking sales, reviews, and daily summaries. Be motivating and supportive. Don't use excessive formatting.`
-      },
-      {
-        role: "user",
-        content: "Generate the welcome message"
+  const text = message.trim();
+
+  // If we are mid-flow handle accordingly
+  const state = userConversationState[userId];
+
+  if (state) {
+    switch (state.stage) {
+      case 'basic': {
+        // Expecting: client name, policy number, policy type
+        const parts = text.split(',').map(p => p.trim());
+        if (parts.length < 3) {
+          return "Please provide the client's name, policy number, and policy type separated by commas (e.g., Omega, POL-123, Home).";
+        }
+        const [clientName, policyNumber, policyType] = parts;
+        state.draft.clientName = clientName;
+        state.draft.policyNumber = policyNumber;
+        state.draft.policyType = policyType;
+        state.stage = 'financial';
+        return "Got it. Now, what's the total policy amount and your broker fee? (e.g., $1000, $150)";
       }
-    ],
-    max_tokens: 200,
-    temperature: 0.7,
-  });
-
-  return completion.choices[0]?.message?.content || `${greeting}, ${employee.name}! I'm your HR Assistant, ready to help you track your achievements and support your success. How can I help you today?`;
-}
-
-// Generate AI-powered clock out message
-async function generateClockOutMessage(employeeName: string): Promise<string> {
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4.1",
-    messages: [
-      {
-        role: "system",
-        content: `Generate an encouraging, conversational message for ${employeeName} who just clocked out. Ask about their day in a warm, supportive way. Be genuinely interested in hearing about their experiences - both wins and challenges. Keep it natural and motivating. Don't use excessive formatting.`
-      },
-      {
-        role: "user",
-        content: "Generate the clock out message"
+      case 'financial': {
+        // Expecting amount and broker fee
+        const nums = text.match(/[\d.,]+/g);
+        if (!nums || nums.length < 2) {
+          return "Please provide both the total amount and the broker fee, separated by a comma (e.g., $1000, $150).";
+        }
+        const amount = parseFloat(nums[0].replace(/,/g, ''));
+        const fee = parseFloat(nums[1].replace(/,/g, ''));
+        if (isNaN(amount) || isNaN(fee)) {
+          return "I couldn't parse those numbers. Please provide them again (e.g., 1000, 150).";
+        }
+        state.draft.amount = amount;
+        state.draft.brokerFee = fee;
+        state.stage = 'cross';
+        return "Was this policy cross-sold to an existing client? (yes/no)";
       }
-    ],
-    max_tokens: 150,
-    temperature: 0.8,
-  });
+      case 'cross': {
+        const yes = /^(y|yes)/i.test(text);
+        const no = /^(n|no)/i.test(text);
+        if (!yes && !no) {
+          return "Please answer yes or no – was this a cross-sold policy?";
+        }
 
-  return completion.choices[0]?.message?.content || `Hey ${employeeName}! How did your day go? I'd love to hear about it!`;
-}
+        const draft = state.draft;
+        const crossSold = yes;
+        const finalBrokerFee = crossSold ? (draft.brokerFee || 0) * 2 : draft.brokerFee || 0;
 
-export async function handleEmployeeChat(message: string, userId: string, userName: string = 'there') {
-  const lowerCaseMessage = message.toLowerCase();
+        // Save to DB
+        await addPolicySale({
+          employeeId: userId,
+          clientName: draft.clientName!,
+          policyNumber: draft.policyNumber!,
+          policyType: draft.policyType!,
+          amount: draft.amount!,
+          brokerFee: finalBrokerFee,
+          crossSold,
+          saleDate: new Date(),
+        });
 
-  // Handle "nevermind" or "cancel"
-  const cancelPhrases = ['nevermind', 'cancel', 'stop', 'forget it', 'wrong one'];
-  const containsCancelPhrase = cancelPhrases.some(phrase => lowerCaseMessage.includes(phrase));
-
-  if (containsCancelPhrase) {
-    await clearConversationState(userId);
-
-    // Check if the user wants to start a *new* flow right away
-    const newTrigger = getTriggerPhrase(message);
-    if (newTrigger) {
-      // A new flow is being started, so we let the main logic handle it
-      // after we've cleared the state.
-      console.log('User cancelled previous action and started a new flow.');
-    } else {
-      // If it's just a cancellation, confirm and stop.
-      return NextResponse.json({ 
-        response: cleanMarkdownResponse("Okay, I've cancelled that for you. What would you like to do now?") 
-      });
+        delete userConversationState[userId];
+        return `Policy sale for ${draft.clientName} (Policy #${draft.policyNumber}) has been recorded! ${crossSold ? 'Cross-sell bonus applied.' : ''}`;
+      }
     }
   }
 
-  // Handle reset conversation command
-  if (message.toLowerCase().includes('reset conversation') || message.toLowerCase().includes('start over') || message.toLowerCase().includes('clear conversation')) {
-    await clearConversationState(userId);
-    return NextResponse.json({ 
-      response: "✅ Conversation reset! You can now start fresh with a new policy entry, client review, or daily summary. What would you like to do?" 
-    });
+  // If trigger phrase initiates new flow and not already in flow
+  const lowerCaseMessage = text.toLowerCase();
+  if (TRIGGER_PHRASES.policy_entry.some(phrase => lowerCaseMessage.includes(phrase))) {
+    userConversationState[userId] = { stage: 'basic', draft: {} };
+    return "Great! Let's log the policy. Please provide the client's name, policy number, and policy type (e.g., Omega, POL-123, Home).";
   }
 
-  // Handle employee welcome message with simple placeholder (no AI generation needed)
-  if (message === "WELCOME_MESSAGE") {
-    return NextResponse.json({ 
-      response: "Hey there! I'm your HR Assistant, ready to help you track your sales, reviews, and daily progress. What can I help you with today?" 
-    });
-  }
-
-  // Handle special clock out prompt generation
-  if (message === "CLOCK_OUT_PROMPT") {
-    try {
-            const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
+  // General AI fallback
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4-turbo',
         messages: [
           {
-            role: "system",
-            content: buildClockOutPrompt()
+            role: 'system',
+            content: `You are a helpful assistant for an insurance agent. Keep responses concise and ask clarifying questions when necessary.`
           },
-          {
-            role: "user",
-            content: "Generate a warm check-in question for the employee who just finished their workday."
-          }
+          { role: 'user', content: message }
         ],
-        max_tokens: 80,
-        temperature: 0.9,
-      });
+        temperature: 0.7,
+      })
+    });
 
-      let response = completion.choices[0]?.message?.content || "How was your day? I'd love to hear about it!";
-      
-      // Remove any surrounding quotes that might be added by the AI
-      response = response.replace(/^["']|["']$/g, '');
-      
-      return NextResponse.json({ response });
-    } catch (error) {
-      console.error('Error generating clock out prompt:', error);
-      return NextResponse.json({ response: "How was your day? I'd love to hear about it!" });
+    if (!response.ok) {
+      throw new Error(`OpenAI API request failed with status ${response.status}`);
     }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('Error fetching general AI response:', error);
+    return "I'm sorry, I'm having trouble connecting at the moment. Please try again later.";
   }
-
-  // Handle special system messages
-  if (message === 'INITIAL_GREETING') {
-    const employee = await getEmployee(userId);
-    if (!employee) {
-      return NextResponse.json({ 
-        response: "Welcome! I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system." 
-      });
-    }
-    const greeting = await generateInitialGreeting(employee);
-    return NextResponse.json({ response: greeting });
-  }
-
-  // Try to get employee record - if it doesn't exist, provide helpful message
-  const employee = await getEmployee(userId);
-  if (!employee) {
-    return NextResponse.json({ 
-      response: "I notice you don't have an employee record set up yet. Please contact your administrator to have your account properly configured in the system. Once that's done, I'll be able to help you track your sales and work hours!" 
-    });
-  }
-
-  // Check if user is starting a new conversation with trigger phrases
-  const isTriggerPhrase = (
-    lowerCaseMessage.includes('sold a policy') || lowerCaseMessage.includes('new policy') || 
-    lowerCaseMessage.includes('add policy') || lowerCaseMessage.includes('policy sale') ||
-    lowerCaseMessage.includes('client review') || lowerCaseMessage.includes('customer feedback') || 
-    lowerCaseMessage.includes('review') ||
-    lowerCaseMessage.includes('daily summary') || lowerCaseMessage.includes('end of day') || 
-    lowerCaseMessage.includes('today\'s summary')
-  );
-
-  // Get current conversation state
-  const conversationState = await getConversationState(userId);
-
-  // If user is using a trigger phrase but there's an existing conversation state, 
-  // clear it to start fresh (they might be starting a new entry)
-  if (isTriggerPhrase && conversationState && conversationState.current_flow !== 'none') {
-    console.log('User used trigger phrase with existing conversation state - clearing to start fresh');
-    await clearConversationState(userId);
-    // Continue with normal AI response flow
-  } else if (conversationState && conversationState.current_flow !== 'none') {
-    console.log('Found active conversation state:', conversationState);
-    
-    // Get employee data for context - ENSURE we get fresh data every time
-    const [policySales, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
-      getPolicySales(userId),
-      getClientReviews(userId),
-      getEmployeeHours(userId),
-      getCrossSoldPolicies(userId),
-      getDailySummaries(userId)
-    ]);
-    
-    // Calculate totals for system prompt
-    const totalPolicies = policySales.length;
-    const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
-    const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
-    
-    // Prepare employee data for conversation flow
-    const employeeFlowData = {
-      employee,
-      totalPolicies,
-      totalSalesAmount,
-      totalBrokerFees,
-      employeeHours,
-      crossSoldPolicies,
-      policySales,
-      clientReviews,
-      dailySummaries
-    };
-    
-    return await handleConversationFlow(conversationState, message, userId, employeeFlowData);
-  }
-
-  // Get employee data for context - ENSURE we get fresh data every time
-  const [policySales, clientReviews, employeeHours, crossSoldPolicies, dailySummaries] = await Promise.all([
-    getPolicySales(userId),
-    getClientReviews(userId),
-    getEmployeeHours(userId),
-    getCrossSoldPolicies(userId),
-    getDailySummaries(userId)
-  ]);
-
-  // Calculate totals (but don't include bonus information)
-  const totalPolicies = policySales.length;
-  const totalSalesAmount = policySales.reduce((sum, sale) => sum + sale.amount, 0);
-  const totalBrokerFees = policySales.reduce((sum, sale) => sum + sale.broker_fee, 0);
-
-  // Create context for the AI with CURRENT data (NO BONUS INFORMATION)
-  const systemPrompt = buildEmployeeSystemPrompt(
-    employee,
-    totalPolicies,
-    totalSalesAmount,
-    totalBrokerFees,
-    employeeHours,
-    crossSoldPolicies,
-    policySales,
-    clientReviews,
-    dailySummaries
-  );
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4.1",
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt
-      },
-      {
-        role: "user",
-        content: message
-      }
-    ],
-    max_tokens: 1000,
-    temperature: 0.7,
-  });
-
-  let rawResponse = completion.choices[0]?.message?.content || "I'm sorry, I couldn't process your request.";
-  let response = cleanMarkdownResponse(rawResponse);
-
-  // Check if AI response indicates a conversation flow should be started
-  const lowerResponse = response.toLowerCase();
-  
-  // Start streamlined conversation flows based on trigger phrases
-  if ((lowerCaseMessage.includes('sold a policy') || lowerCaseMessage.includes('new policy') || lowerCaseMessage.includes('add policy') || lowerCaseMessage.includes('policy sale'))
-      && (lowerResponse.includes('policy') || lowerResponse.includes('details') || lowerResponse.includes('record'))) {
-    // Set conversation state for streamlined policy entry
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'policy_entry',
-      collectedData: {},
-      step: 1,
-      lastUpdated: new Date()
-    });
-  } else if ((lowerCaseMessage.includes('client review') || lowerCaseMessage.includes('customer feedback') || lowerCaseMessage.includes('review'))
-             && (lowerResponse.includes('client') || lowerResponse.includes('review') || lowerResponse.includes('feedback'))) {
-    // Set conversation state for streamlined review entry
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'review_entry',
-      collectedData: {},
-      step: 1,
-      lastUpdated: new Date()
-    });
-  } else if ((lowerCaseMessage.includes('daily summary') || lowerCaseMessage.includes('end of day') || lowerCaseMessage.includes('today\'s summary'))
-             && (lowerResponse.includes('day') || lowerResponse.includes('summary') || lowerResponse.includes('accomplishments'))) {
-    // Set conversation state for AI-generated daily summary
-    await updateConversationState({
-      employeeId: userId,
-      currentFlow: 'daily_summary',
-      collectedData: {},
-      step: 1,
-      lastUpdated: new Date()
-    });
-  }
-
-  return NextResponse.json({ response });
 }

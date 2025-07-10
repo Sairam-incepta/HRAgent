@@ -50,12 +50,12 @@ export default function ClerkWrapper() {
         detectedRole: role,
         fullUserObject: user
       });
-      
-      setUserRole(role);
+          
+          setUserRole(role);
       setRoleLoading(false);
-      
-      // Load employee data for header
-      loadEmployeeData();
+          
+          // Load employee data for header
+          loadEmployeeData();
     } else if (isLoaded && !user) {
       setRoleLoading(false);
     }

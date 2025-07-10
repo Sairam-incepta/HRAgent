@@ -193,14 +193,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="password">Password *</Label>
             <div className="relative">
-              <Input
-                id="password"
+            <Input
+              id="password"
                 type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter initial password"
-                required
-              />
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter initial password"
+              required
+            />
               <Button
                 type="button"
                 variant="ghost"
@@ -220,14 +220,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm Password *</Label>
             <div className="relative">
-              <Input
-                id="confirmPassword"
+            <Input
+              id="confirmPassword"
                 type={showConfirmPassword ? "text" : "password"}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                required
-              />
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
+              required
+            />
               <Button
                 type="button"
                 variant="ghost"
@@ -291,7 +291,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
                 required
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label htmlFor="maxHours">Max Hours Before Overtime *</Label>
               <Input

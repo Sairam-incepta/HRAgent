@@ -7,9 +7,9 @@ import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react"
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { 
-  getTimeLogsForDay, 
-  createTimeLog, 
+import {
+  getTimeLogsForDay,
+  createTimeLog,
   updateTimeLog,
   getPolicySales,
   getHighValuePolicyNotificationsList,
@@ -35,16 +35,17 @@ interface TimeTrackerProps {
 
 interface TimeSession {
   startTime: number;
-  pausedTime: number;
   status: TimeStatus;
   date: string; // YYYY-MM-DD format
+  lunchStartTime?: number; // Use undefined instead of null
+  totalLunchTime?: number;
 }
 
 const STORAGE_KEY = 'letsinsure_time_session';
 
-export function TimeTracker({ 
-  onClockInChange, 
-  onLunchChange, 
+export function TimeTracker({
+  onClockInChange,
+  onLunchChange,
   onTimeUpdate,
   onClockOut,
   maxHoursBeforeOvertime = 8,
@@ -54,10 +55,14 @@ export function TimeTracker({
   const [status, setStatus] = useState<TimeStatus>("idle");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
-  const [pausedTime, setPausedTime] = useState(0);
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
   const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
-  
+
+  // NEW: Lunch break tracking
+  const [lunchStartTime, setLunchStartTime] = useState<number | null>(null);
+  const [totalLunchTime, setTotalLunchTime] = useState(0);
+  const [currentLunchTime, setCurrentLunchTime] = useState(0);
+
   // Confirmation dialog states
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
   const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
@@ -74,539 +79,359 @@ export function TimeTracker({
 
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
 
-  // NEW: Store base time in a ref
   const baseTimeRef = useRef(0);
+  const totalLunchTimeRef = useRef(0);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Update baseTimeRef whenever logsToday changes
-  useEffect(() => {
-    const baseTime = logsToday
-      .filter(log => log.clock_in && log.clock_out)
-      .reduce((total, log) => {
-        return total + (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
-      }, 0);
-    baseTimeRef.current = baseTime;
-  }, [logsToday]);
-
-  // ENHANCED: More responsive timer with immediate updates and better overtime handling
-  useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    
-    if ((status === "working" || status === "overtime_pending") && startTime) {
-      // Function to update timer
-      const updateTimer = () => {
-        const now = Date.now();
-        const currentSessionTime = (now - startTime) / 1000;
-        const totalElapsed = Math.floor(baseTimeRef.current + currentSessionTime);
-        
-        setElapsedTime(totalElapsed);
-        
-        // Notify parent component immediately
-        onTimeUpdate?.(totalElapsed, status);
-        
-        // Overtime check with better logic
-        const hoursWorked = totalElapsed / 3600;
-        if (hoursWorked > maxHoursBeforeOvertime && !overtimeNotificationShown && status !== 'overtime_pending') {
-          setOvertimeNotificationShown(true);
-          setOvertimeDialogOpen(true);
-          setStatus("overtime_pending");
-        }
+  const saveTimeSession = useCallback(() => {
+    if (status !== 'idle' && startTime) {
+      const sessionData: TimeSession = {
+        startTime: startTime,
+        status: status,
+        date: getCurrentDate(),
+        lunchStartTime: lunchStartTime || undefined,
+        totalLunchTime: totalLunchTimeRef.current
       };
-      
-      // Update immediately when timer starts
-      updateTimer();
-      
-      // Then update every second
-      interval = setInterval(updateTimer, 1000);
-    } else if (status === "lunch") {
-      // When on lunch, keep the elapsed time static but still notify parent
-      onTimeUpdate?.(elapsedTime, status);
-    } else if (status === "idle") {
-      // When idle, report the final elapsed time
-      onTimeUpdate?.(elapsedTime, status);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
     }
-    
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [status, startTime, onTimeUpdate, maxHoursBeforeOvertime, overtimeNotificationShown]);
+  }, [status, startTime, lunchStartTime]);
 
-  // ENHANCED: Ensure parent always gets updated when elapsedTime changes
-  useEffect(() => {
-    onTimeUpdate?.(elapsedTime, status);
-  }, [elapsedTime, status, onTimeUpdate]);
-
-  // Get current date in user's timezone
   const getCurrentDate = () => {
     const now = new Date();
-    // Convert to user's detected timezone
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const localDate = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
     const year = localDate.getFullYear();
     const month = String(localDate.getMonth() + 1).padStart(2, '0');
     const day = String(localDate.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`; // YYYY-MM-DD format in user's timezone
+    return `${year}-${month}-${day}`;
   };
 
-  // Add this function to calculate total time worked today
   const calculateTotalTimeWorked = (logs: any[]) => {
     let total = 0;
     logs.forEach(log => {
       if (log.clock_in && log.clock_out) {
         total += (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
-      } else if (log.clock_in && !log.clock_out) {
-        total += (Date.now() - new Date(log.clock_in).getTime()) / 1000;
       }
     });
     return Math.floor(total);
   };
 
-  // Update fetchAndSumLogs to store logs
-  const fetchAndSumLogs = async () => {
+  const fetchAndSumLogs = useCallback(async () => {
     if (!user?.id) return;
-    
+
     setIsUpdatingLogs(true);
     try {
-      const today = getCurrentDate(); // Use timezone-aware date
+      const today = getCurrentDate();
       const logs = await getTimeLogsForDay(user.id, today);
       setLogsToday(logs);
-      
-      let total = calculateTotalTimeWorked(logs);
-      let openLogId: string | null = null;
-      
-      // Find any open log (clocked in but not out)
+
+      const totalFromLogs = calculateTotalTimeWorked(logs);
+      baseTimeRef.current = totalFromLogs;
+
       const openLog = logs.find(log => log.clock_in && !log.clock_out);
-      if (openLog) {
-        openLogId = openLog.id;
-        setStartTime(new Date(openLog.clock_in).getTime());
-        setStatus("working");
+      if (!openLog) {
+        setElapsedTime(totalFromLogs);
       }
-      
-      setElapsedTime(total);
-      setActiveLogId(openLogId);
     } finally {
       setIsUpdatingLogs(false);
     }
+  }, [user?.id]);
+
+  const loadTimeSession = useCallback(() => {
+    const savedSessionRaw = localStorage.getItem(STORAGE_KEY);
+    if (!savedSessionRaw) return;
+
+    try {
+      const savedSession: TimeSession = JSON.parse(savedSessionRaw);
+      const today = getCurrentDate();
+
+      if (savedSession.date === today && user?.id) {
+        setStartTime(savedSession.startTime);
+        setStatus(savedSession.status);
+
+        const accumulatedLunch = savedSession.totalLunchTime || 0;
+        setTotalLunchTime(accumulatedLunch);
+        totalLunchTimeRef.current = accumulatedLunch;
+
+        if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
+          setLunchStartTime(savedSession.lunchStartTime);
+          onLunchChange?.(true);
+        }
+
+        onClockInChange?.(true);
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (error) {
+      console.error("Failed to load time session:", error);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [user?.id, onClockInChange, onLunchChange]);
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchAndSumLogs();
+      loadTimeSession();
+    }
+  }, [user?.id, fetchAndSumLogs, loadTimeSession]);
+
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+
+    if (status === "working" || status === "overtime_pending") {
+      const updateWorkTimer = () => {
+        if (!startTime) return;
+        const now = Date.now();
+        const currentSessionGrossTime = (now - startTime) / 1000;
+        const totalWorkTime = Math.max(0, Math.floor(baseTimeRef.current + currentSessionGrossTime - totalLunchTimeRef.current));
+        setElapsedTime(totalWorkTime);
+
+        const hoursWorked = totalWorkTime / 3600;
+        if (hoursWorked >= maxHoursBeforeOvertime && status === 'working' && !overtimeNotificationShown) {
+          setStatus("overtime_pending");
+          setOvertimeNotificationShown(true);
+          setOvertimeDialogOpen(true);
+        }
+      };
+      updateWorkTimer();
+      intervalRef.current = setInterval(updateWorkTimer, 1000);
+
+    } else if (status === "lunch" && lunchStartTime) {
+      const updateLunchTimer = () => {
+        const now = Date.now();
+        const currentBreakDuration = (now - lunchStartTime) / 1000;
+        setCurrentLunchTime(Math.floor(currentBreakDuration));
+      };
+      updateLunchTimer();
+      intervalRef.current = setInterval(updateLunchTimer, 1000);
+    }
+
+    saveTimeSession();
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [status, startTime, lunchStartTime, saveTimeSession, maxHoursBeforeOvertime, overtimeNotificationShown]);
+
+  useEffect(() => {
+    onTimeUpdate?.(elapsedTime, status);
+  }, [elapsedTime, status, onTimeUpdate]);
+
+  const resetLunchStates = () => {
+    setLunchStartTime(null);
+    setCurrentLunchTime(0);
+    setTotalLunchTime(0);
+    totalLunchTimeRef.current = 0;
   };
 
-  // Load current bonuses from different sources
-  const loadCurrentBonuses = async () => {
-    if (!user?.id) return;
-    
+  const confirmClockIn = async () => {
+    if (!user) return;
+    setClockInConfirmOpen(false);
+
     try {
-      const [policySales, clientReviews] = await Promise.all([
-        getPolicySales(user.id),
-        getClientReviews(user.id)
-      ]);
+      await fetchAndSumLogs(); // Get latest log data before clocking in
+      resetLunchStates(); // Reset lunch for the new session
       
-      // Calculate different types of bonuses separately
-      let brokerFeeBonuses = 0;
-      let crossSellingBonuses = 0; 
-      let lifeInsuranceBonuses = 0;
-      let highValuePolicyBonuses = 0;
-      
-      // Process policy sales for bonuses
-      policySales.forEach(sale => {
-        // Broker fee bonus: 10% of (broker fee - 100)
-        if (sale.broker_fee > 100) {
-          const baseBrokerBonus = (sale.broker_fee - 100) * 0.1;
-          brokerFeeBonuses += baseBrokerBonus;
-          
-          // Cross-selling bonus: double the broker fee bonus
-          if (sale.cross_sold) {
-            crossSellingBonuses += baseBrokerBonus; // Additional amount for cross-selling
-          }
-        }
-        
-        // Life insurance bonus: $10 for life insurance policies
-        if (sale.policy_type.toLowerCase().includes('life') || 
-            (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
-          lifeInsuranceBonuses += 10.00;
-        }
-      });
-      
-      // Get high-value policy admin bonuses from notifications table
-      const { data: highValueNotifications } = await supabase
-        .from('high_value_policy_notifications')
-        .select('admin_bonus')
-        .eq('employee_id', user.id);
-      
-      if (highValueNotifications) {
-        highValuePolicyBonuses = highValueNotifications.reduce((sum: number, hvn: any) => sum + (hvn.admin_bonus || 0), 0);
+      const now = new Date();
+      const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
+
+      if (error || !data) {
+        throw new Error(error?.message || "Failed to create time log entry.");
       }
       
-      // Review bonuses: $10 for each 5-star review
-      const reviewBonuses = clientReviews.filter(review => review.rating === 5).length * 10;
-      
-      // Set total bonuses for pay calculation
-      const totalBonuses = brokerFeeBonuses + crossSellingBonuses + lifeInsuranceBonuses + reviewBonuses + highValuePolicyBonuses;
-      setCurrentBonuses(totalBonuses);
-      
-    } catch (error) {
-      console.error('Error loading bonuses:', error);
-    }
-  };
+      const newLog = Array.isArray(data) ? data[0] : data;
+      if (!newLog) {
+          throw new Error("Failed to create time log entry.");
+      }
 
-  // Check for unreviewed high-value policies
-  const checkUnreviewedPolicies = async () => {
-    if (!user?.id) return;
-    
-    try {
-      const notifications = await getHighValuePolicyNotificationsList();
-      const userUnreviewed = notifications.filter(n => 
-        n.employee_id === user.id && 
-        (n.status === 'pending' || n.status === 'reviewed')
-      );
-      setUnreviewedPolicies(userUnreviewed.length);
+      setStartTime(now.getTime());
+      setStatus("working");
+      setActiveLogId(newLog.id);
+      onClockInChange?.(true);
+
+      toast({
+        title: "Clocked In",
+        description: `Your work timer has started at ${now.toLocaleTimeString()}. Let's have a great day!`,
+        className: "bg-green-100 text-green-800",
+      });
     } catch (error) {
-      console.error('Error checking unreviewed policies:', error);
+      console.error("Error creating time log:", error);
+      toast({
+        title: "Clock In Failed",
+        description: (error as Error).message || "There was an error starting your timer. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
   const performClockOut = async () => {
-    if (!activeLogId) return;
-    
-    try {
-      const clockOutTime = new Date();
-      console.log('🚪 Clock out - elapsed time before update:', elapsedTime);
-      
-      const updatedLog = await updateTimeLog({ 
-        logId: activeLogId, 
-        clockOut: clockOutTime 
-      });
-      
-      if (!updatedLog) {
-        throw new Error('Failed to update time log');
-      }
-      
-      console.log('✅ Time log updated successfully');
-      
-      // Add a small delay to ensure the database update completes
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Immediately fetch updated logs to get accurate total time
-      await fetchAndSumLogs();
-      
-      console.log('📊 Clock out - elapsed time after fetch:', elapsedTime);
-      
-      setStatus("idle");
-      setActiveLogId(null);
-      onClockInChange?.(false);
-      onLunchChange?.(false);
-      setClockOutConfirmOpen(false);
-      
-      // Notify parent to refresh weekly data
-      console.log('📡 Notifying parent of time update:', elapsedTime, "idle");
-      onTimeUpdate?.(elapsedTime, "idle");
-      
-      toast({
-        title: "Clocked Out",
-        description: `You clocked out at ${clockOutTime.toLocaleTimeString()} after ${formatTime(elapsedTime)} total today`
-      });
-      
-      console.log('💰 Clock out - calling onClockOut with hours:', elapsedTime / 3600);
-      onClockOut?.(elapsedTime / 3600);
-    } catch (error) {
-      console.error('❌ Error clocking out:', error);
+    if (!activeLogId || !user?.id) {
       toast({
         title: "Error",
-        description: "Failed to clock out. Please try again.",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const confirmClockIn = async () => {
-    if (!user?.id) {
-      toast({
-        title: "Error",
-        description: "You must be logged in to clock in.",
-        variant: "destructive"
+        description: "No active clock-in session found to clock out.",
+        variant: "destructive",
       });
       return;
     }
-    
-    // Debug: Log the user ID being sent
-    console.log('Attempting to clock in with user ID:', user.id);
-    console.log('User email:', user.emailAddresses[0]?.emailAddress);
-    
+
     try {
-      const now = new Date();
+      // Capture the final, correctly calculated net time BEFORE resetting state.
+      const finalElapsedTime = elapsedTime;
+
+      await updateTimeLog({ logId: activeLogId, clockOut: new Date() });
       
-      // Create new time log in database
-      const { data: timeLog, error } = await createTimeLog({ 
-        employeeId: user.id, 
-        clockIn: now 
-      });
-      
-      if (error) {
-        console.error('Failed to create time log:', error);
-        console.error('User ID sent:', user.id);
-        toast({
-          title: "Error: Clock-in Failed",
-          description: `Database error: ${error.message}. User ID: ${user.id}. Please contact support.`,
-          variant: "destructive"
-        });
-        return;
-      }
-      
-      // Update local state
-      setStatus("working");
-      setStartTime(now.getTime());
-      setOvertimeNotificationShown(false);
-      
-      if (timeLog) {
-        setActiveLogId(timeLog.id);
-      }
-      
-      // Fetch all of today's logs to get the total time
-      await fetchAndSumLogs();
-      
-      // Update parent component
-      onClockInChange?.(true);
-      
-      // Notify parent to refresh weekly data
-      onTimeUpdate?.(elapsedTime, "working");
-      
-      // Close dialog
-      setClockInConfirmOpen(false);
-      
+      onClockOut?.(finalElapsedTime / 3600);
       toast({
-        title: "Clocked In",
-        description: `You clocked in at ${now.toLocaleTimeString()}${elapsedTime > 0 ? ` (continuing from ${formatTime(elapsedTime)})` : ''}`,
+        title: "Clocked Out",
+        description: `You worked for ${formatTime(finalElapsedTime)} today. Great job!`,
+        className: "bg-green-100 text-green-800",
       });
-    } catch (error) {
-      console.error('Error clocking in:', error);
-      toast({
-        title: "Error",
-        description: "Failed to clock in. Please try again.",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const isWorkingStatus = (s: TimeStatus): s is "working" | "overtime_pending" => {
-    return s === "working" || s === "overtime_pending";
-  };
-
-  // Add useEffect to load initial state on mount
-  useEffect(() => {
-    if (user?.id) {
-      fetchAndSumLogs();
-      loadCurrentBonuses(); // Load bonuses on mount
-      checkUnreviewedPolicies(); // Load unreviewed policies on mount
-    }
-  }, [user?.id]);
-
-  // Add event listener for policy sales updates
-  useEffect(() => {
-    const handlePolicySaleUpdate = () => {
-      loadCurrentBonuses(); // Reload bonuses when policy sales are updated
-      checkUnreviewedPolicies(); // Check for unreviewed policies
-    };
-
-    const cleanupFunctions = [
-      dashboardEvents.on('policy_sale', handlePolicySaleUpdate),
-      dashboardEvents.on('high_value_policy_updated', handlePolicySaleUpdate)
-    ];
-    
-    return () => {
-      cleanupFunctions.forEach(cleanup => cleanup());
-    };
-  }, []);
-
-  // Load time session from localStorage on component mount
-  useEffect(() => {
-    const loadTimeSession = () => {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const session: TimeSession = JSON.parse(stored);
-          const currentDate = getCurrentDate(); // Use timezone-aware date
-          
-          // Only restore session if it's from today
-          if (session.date === currentDate) {
-            setStatus(session.status);
-            setStartTime(session.startTime);
-            setPausedTime(session.pausedTime);
-            
-            // Calculate elapsed time based on current time
-            if (session.status === "working" || session.status === "overtime_pending") {
-              const now = Date.now();
-              const elapsed = Math.floor((now - session.startTime) / 1000) + session.pausedTime;
-              setElapsedTime(elapsed);
-            } else if (session.status === "lunch") {
-              setElapsedTime(session.pausedTime);
-            }
-            
-            // Restore notification state
-            const hoursWorked = (session.pausedTime + (session.status === "working" ? (Date.now() - session.startTime) / 1000 : 0)) / 3600;
-            if (hoursWorked > maxHoursBeforeOvertime) {
-              setOvertimeNotificationShown(true);
-            }
-          } else {
-            // Clear old session data
-            localStorage.removeItem(STORAGE_KEY);
-          }
-        }
-      } catch (error) {
-        console.error('Error loading time session:', error);
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    };
-
-    loadTimeSession();
-  }, [maxHoursBeforeOvertime]);
-
-  // Save time session to localStorage whenever relevant state changes
-  useEffect(() => {
-    if (status !== "idle" && startTime) {
-      const session: TimeSession = {
-        startTime,
-        pausedTime,
-        status,
-        date: getCurrentDate()
-      };
       
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-      } catch (error) {
-        console.error('Error saving time session:', error);
-      }
-    } else if (status === "idle") {
-      // Clear session when idle
+      dashboardEvents.emit('time_logged');
+
+      // Reset all session-specific states
+      setStatus("idle");
+      setActiveLogId(null);
+      setStartTime(null);
       localStorage.removeItem(STORAGE_KEY);
+      resetLunchStates(); // Clear out lunch timers
+
+      // Explicitly set the displayed time to the final calculated value.
+      // And update the base ref for any subsequent clock-ins on the same day.
+      setElapsedTime(finalElapsedTime);
+      baseTimeRef.current = finalElapsedTime;
+      
+      // We still need to refresh the logs for other UI elements, but we do it manually
+      // without calling fetchAndSumLogs() to avoid its side-effects on elapsedTime.
+      const today = getCurrentDate();
+      const logs = await getTimeLogsForDay(user.id, today);
+      setLogsToday(logs);
+
+    } catch (error) {
+      toast({
+        title: "Clock Out Failed",
+        description: "There was an error saving your clock-out time. Please try again.",
+        variant: "destructive",
+      });
     }
-  }, [status, startTime, pausedTime]);
-
-  // ENHANCED: More accurate time formatting
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // ENHANCED: More accurate pay calculation with bonus breakdown
-  const calculatePay = (seconds: number) => {
-    const hours = seconds / 3600;
-    const regularHours = Math.min(hours, maxHoursBeforeOvertime);
-    const overtimeHours = Math.max(0, hours - maxHoursBeforeOvertime);
-    
-    const regularPay = regularHours * hourlyRate;
-    const overtimePay = overtimeHours * hourlyRate * 1.0; // 1x rate for overtime
-    const basePay = regularPay + overtimePay;
-    
-    return {
-      regularPay: Math.round(regularPay * 100) / 100,
-      overtimePay: Math.round(overtimePay * 100) / 100,
-      totalPay: Math.round((basePay + currentBonuses) * 100) / 100, // Include bonuses
-      overtimeHours: Math.round(overtimeHours * 100) / 100,
-      bonuses: Math.round(currentBonuses * 100) / 100,
-      basePay: Math.round(basePay * 100) / 100 // Hours × rate only
-    };
-  };
-
-  const confirmClockOut = () => {
-    performClockOut();
-    setClockOutConfirmOpen(false);
   };
 
   const confirmStartLunch = () => {
-    if (status === "working") {
-      setPausedTime(elapsedTime);
+    if (status === "working" || status === "overtime_pending") {
+      setLunchStartTime(Date.now());
       setStatus("lunch");
       onLunchChange?.(true);
       setLunchStartConfirmOpen(false);
-      
-      toast({
-        title: "Lunch Break Started",
-        description: `Timer paused at ${formatTime(elapsedTime)}. Enjoy your break!`,
-      });
+      saveTimeSession();
     }
   };
 
   const confirmEndLunch = () => {
-    if (status === "lunch") {
-      setStartTime(Date.now());
-      setStatus("working");
-      onLunchChange?.(false);
-      setLunchEndConfirmOpen(false);
-      
-      toast({
-        title: "Lunch Break Ended",
-        description: "Timer resumed. Welcome back!",
-      });
-    }
-  };
+    if (!lunchStartTime) return;
 
-  const handleOvertimeRequest = (reason: string) => {
-    // In a real app, this would submit to the backend
-    setStatus("working"); // Continue working while waiting for approval
+    const lunchDuration = (Date.now() - lunchStartTime) / 1000;
+    totalLunchTimeRef.current += lunchDuration;
+    setTotalLunchTime(totalLunchTimeRef.current);
+
+    setLunchStartTime(null);
+    setCurrentLunchTime(0);
+
+    const hoursWorked = elapsedTime / 3600;
+    setStatus(hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working");
+
+    setLunchEndConfirmOpen(false);
+    onLunchChange?.(false);
     toast({
-      title: "Overtime Request Submitted",
-      description: "Your overtime request has been sent to admin for approval. You can continue working.",
+      title: "Back to Work!",
+      description: `You took a ${formatTime(lunchDuration)} break. Your work timer has resumed.`,
     });
+    saveTimeSession();
+  };
+  
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return [h, m, s].map((v) => v.toString().padStart(2, "0")).join(":");
   };
 
-  const handleForceClockOut = () => {
-    const payInfo = calculatePay(elapsedTime);
-    performClockOut();
-    
-    toast({
-      title: "Automatically Clocked Out",
-      description: `You've been paid overtime for ${payInfo.overtimeHours.toFixed(1)} hours: $${payInfo.overtimePay.toFixed(2)}`,
-    });
-  };
+  // JSX Rendering
+  const totalLunchDisplaySeconds = status === 'lunch'
+    ? totalLunchTimeRef.current + currentLunchTime
+    : totalLunchTime;
 
-  const pauseTimer = () => {
-    if (status === "working") {
-      setPausedTime(elapsedTime);
-      setStatus("lunch");
-    }
-  };
+  const ClockInButton = () => (
+    <Button 
+      onClick={() => setClockInConfirmOpen(true)}
+      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
+    >
+      <Play className="mr-2 h-4 w-4" /> Clock In
+    </Button>
+  );
 
-  const resumeTimer = () => {
-    if (status === "lunch") {
-      setStartTime(Date.now());
-      setStatus("working");
-    }
-  };
+  const ClockOutButton = () => (
+    <Button 
+      onClick={() => setClockOutConfirmOpen(true)}
+      variant="outline"
+      className="w-full sm:w-auto"
+    >
+      <Square className="mr-2 h-4 w-4" /> Clock Out
+    </Button>
+  );
 
-  // Expose pause/resume functions to parent
-  useEffect(() => {
-    (window as any).pauseTimer = pauseTimer;
-    (window as any).resumeTimer = resumeTimer;
-    return () => {
-      delete (window as any).pauseTimer;
-      delete (window as any).resumeTimer;
-    };
-  }, [status, elapsedTime]);
+  const LunchBreakButton = () => (
+    <Button 
+      onClick={() => setLunchStartConfirmOpen(true)}
+      className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black h-10 px-4"
+    >
+      <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
+    </Button>
+  );
 
-  const hoursWorked = elapsedTime / 3600;
-  const isInOvertime = hoursWorked > maxHoursBeforeOvertime;
-  const payInfo = calculatePay(elapsedTime);
+  const EndLunchBreakButton = () => (
+    <Button 
+      onClick={() => setLunchEndConfirmOpen(true)}
+      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90 h-10 px-4"
+    >
+      <Check className="mr-2 h-4 w-4" /> End Lunch Break
+    </Button>
+  );
 
-  const getStatusDisplay = () => {
-    switch (status) {
-      case "idle":
-        return "Not Clocked In";
-      case "lunch":
-        return "On Lunch Break";
-      case "overtime_pending":
-        return "Overtime Pending";
-      case "working":
-        return isInOvertime ? "In Overtime" : "Currently Working";
-      default:
-        return "Not Clocked In";
-    }
-  };
+  const LunchBreakDisplay = () => (
+    <div className={`
+      rounded-full px-4 py-1.5 text-sm font-medium flex items-center gap-2
+      ${status === "lunch" 
+        ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
+        : "bg-muted text-muted-foreground"
+      }
+    `}>
+      {status === "lunch" ? (
+        <>
+          <Clock className="h-4 w-4" />
+          <span>Lunch: {formatTime(currentLunchTime)}</span>
+        </>
+      ) : (
+        "Not on Break"
+      )}
+    </div>
+  );
+  
+  const TotalLunchDisplay = () => (
+    <div className="text-xs text-muted-foreground">
+      Total lunch: {formatTime(Math.floor(totalLunchTime))}
+    </div>
+  );
 
-  const getStatusClass = () => {
+  function getStatusClass(status: TimeStatus) {
+    const isInOvertime = status === "overtime_pending" || (status === "working" && (elapsedTime / 3600) > maxHoursBeforeOvertime);
+  
     switch (status) {
       case "idle":
         return "bg-muted text-muted-foreground";
@@ -621,229 +446,116 @@ export function TimeTracker({
       default:
         return "bg-muted text-muted-foreground";
     }
-  };
+  }
+  
+  function getStatusDisplay(status: TimeStatus) {
+    const isInOvertime = status === "overtime_pending" || (status === "working" && (elapsedTime / 3600) > maxHoursBeforeOvertime);
+  
+    switch (status) {
+      case "idle":
+        return "Not Clocked In";
+      case "lunch":
+        return "On Lunch Break";
+      case "overtime_pending":
+        return "Overtime Pending";
+      case "working":
+        return isInOvertime ? "In Overtime" : "Currently Working";
+      default:
+        return "Not Clocked In";
+    }
+  }
 
   return (
     <>
-      <Card className="w-full sm:w-auto transition-all duration-300 hover:shadow-md">
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row items-center gap-3">
-            <div className="flex gap-2 w-full sm:w-auto">
-              {status === "idle" ? (
-                <Button 
-                  onClick={() => setClockInConfirmOpen(true)}
-                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90"
-                >
-                  <Play className="mr-2 h-4 w-4" /> Clock In
-                </Button>
-              ) : (
-                <Button 
-                  onClick={() => setClockOutConfirmOpen(true)}
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                >
-                  <Square className="mr-2 h-4 w-4" /> Clock Out
-                </Button>
-              )}
-            </div>
-            
-            <div className={cn(
-              "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
-              getStatusClass()
-            )}>
-              {getStatusDisplay()}
-              {(status !== "idle" || elapsedTime > 0) && (
-                <span className="ml-2 font-mono">{formatTime(elapsedTime)}</span>
-              )}
-            </div>
-            
-            {(status !== "idle" || elapsedTime > 0) && (
-              <div className="text-sm font-medium text-muted-foreground">
-                Pay: ${payInfo.basePay.toFixed(2)}
-              </div>
-            )}
-            
-
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Lunch Break Button (separate card for better UX) */}
-      {status !== "idle" && (
-        <Card className="w-full sm:w-auto">
+      <div className="flex flex-col sm:flex-row gap-4">
+        <Card className="w-full sm:w-auto transition-all duration-300 hover:shadow-md">
           <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              {status !== "lunch" ? (
-                <Button 
-                  onClick={() => setLunchStartConfirmOpen(true)}
-                  className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black h-10 px-4"
-                >
-                  <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
-                </Button>
-              ) : (
-                <Button 
-                  onClick={() => setLunchEndConfirmOpen(true)}
-                  className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#005cb3]/90 h-10 px-4"
-                >
-                  <Check className="mr-2 h-4 w-4" /> End Lunch Break
-                </Button>
-              )}
-              <div className={`
-                rounded-full px-4 py-1.5 text-sm font-medium
-                ${status === "lunch" 
-                  ? "bg-[#f7b97f]/20 text-[#f7b97f] dark:bg-[#f7b97f]/30 dark:text-[#f7b97f]"
-                  : "bg-muted text-muted-foreground"
-                }
-              `}>
-                {status === "lunch" ? "On Lunch Break" : "Not on Break"}
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex gap-2 w-full sm:w-auto">
+                {status === "idle" ? <ClockInButton /> : <ClockOutButton />}
+              </div>
+              
+              <div className={cn(
+                "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
+                getStatusClass(status)
+              )}>
+                {getStatusDisplay(status)}
+                {(status !== "idle" || elapsedTime > 0) && (
+                  <span className="ml-2 font-mono">{formatTime(elapsedTime)}</span>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
-      )}
 
-      {/* Clock In Confirmation Dialog */}
-      <AlertDialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Clock In</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                Are you sure you want to clock in and start tracking your work time?
-                {elapsedTime > 0 && (
-                  <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded text-sm">
-                    You have {formatTime(elapsedTime)} of work time from earlier today that will continue.
-                  </div>
-                )}
+        {status !== "idle" && (
+          <Card className="w-full sm:w-auto">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                {status !== "lunch" ? <LunchBreakButton /> : <EndLunchBreakButton />}
+                <LunchBreakDisplay />
+                {totalLunchTime > 0 && status !== "lunch" && <TotalLunchDisplay />}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmClockIn}
-              className="bg-[#005cb3] hover:bg-[#005cb3]/90"
-            >
-              <Play className="mr-2 h-4 w-4" />
-              Clock In
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      
+      {/* Dialogs */}
+      <Dialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Confirm Clock In</DialogTitle></DialogHeader>
+          <DialogDescription>Ready to start your workday at {new Date().toLocaleTimeString()}?</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClockInConfirmOpen(false)}>Cancel</Button>
+            <Button className="bg-[#005cb3] hover:bg-[#005cb3]/90" onClick={confirmClockIn}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Confirm Clock Out</DialogTitle></DialogHeader>
+          <DialogDescription>Are you sure you want to end your work session? Your total time today is {formatTime(elapsedTime)}.</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClockOutConfirmOpen(false)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700" onClick={() => {performClockOut(); setClockOutConfirmOpen(false);}}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={lunchStartConfirmOpen} onOpenChange={setLunchStartConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Start Lunch Break</DialogTitle></DialogHeader>
+          <DialogDescription>This will pause your work timer. Lunch time does not count towards your work hours.</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLunchStartConfirmOpen(false)}>Cancel</Button>
+            <Button className="bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black" onClick={confirmStartLunch}>Start Lunch</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={lunchEndConfirmOpen} onOpenChange={setLunchEndConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>End Lunch Break</DialogTitle></DialogHeader>
+          <DialogDescription>Ready to get back to work? Your current break is {formatTime(currentLunchTime)}.</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLunchEndConfirmOpen(false)}>Cancel</Button>
+            <Button className="bg-[#005cb3] hover:bg-[#005cb3]/90" onClick={confirmEndLunch}>End Break</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* Clock Out Confirmation Dialog */}
-      <AlertDialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Clock Out</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to clock out? Your work session will end.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmClockOut}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              <Square className="mr-2 h-4 w-4" />
-              Clock Out
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Start Lunch Confirmation Dialog */}
-      <AlertDialog open={lunchStartConfirmOpen} onOpenChange={setLunchStartConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Start Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                Are you sure you want to start your lunch break? Your work timer will be paused.
-                <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-sm">
-                  Current work time: {formatTime(elapsedTime)}
-                </div>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmStartLunch}
-              className="bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black"
-            >
-              <Coffee className="mr-2 h-4 w-4" />
-              Start Lunch
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* End Lunch Confirmation Dialog */}
-      <AlertDialog open={lunchEndConfirmOpen} onOpenChange={setLunchEndConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>End Lunch Break</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                Are you sure you want to end your lunch break and resume work? Your timer will continue from where it was paused.
-                <div className="mt-2 p-2 bg-green-50 dark:bg-green-950/20 rounded text-sm">
-                  Work time when paused: {formatTime(elapsedTime)}
-                </div>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmEndLunch}
-              className="bg-[#005cb3] hover:bg-[#005cb3]/90"
-            >
-              <Check className="mr-2 h-4 w-4" />
-              End Lunch
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={overtimeDialogOpen} onOpenChange={setOvertimeDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Overtime Notification</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div>
-                You&apos;ve worked {hoursWorked.toFixed(1)} hours today.
-                {isInOvertime && (
-                  <div className="mt-2 p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-sm">
-                    You&apos;ve worked {payInfo.overtimeHours.toFixed(1)} hours of overtime.
-                  </div>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={() => handleOvertimeRequest("Overtime request")}
-              className="bg-amber-600 hover:bg-amber-700"
-            >
-              <AlertTriangle className="mr-2 h-4 w-4" />
-              Request Overtime
-            </AlertDialogAction>
-            <AlertDialogAction 
-              onClick={handleForceClockOut}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              <Clock className="mr-2 h-4 w-4" />
-              Clock Out
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <OvertimeNotificationDialog
+        open={overtimeDialogOpen}
+        onOpenChange={setOvertimeDialogOpen}
+        currentHours={elapsedTime / 3600}
+        maxHours={maxHoursBeforeOvertime}
+        onSubmitRequest={(reason) => {
+          setStatus("working");
+        }}
+        onClockOut={performClockOut}
+      />
     </>
   );
 }
-
-// Memoize the component to prevent unnecessary re-mounts
-export default memo(TimeTracker);
