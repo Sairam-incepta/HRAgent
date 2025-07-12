@@ -590,6 +590,33 @@ export const getEmployee = async (clerkUserId: string): Promise<Employee | null>
   return data;
 };
 
+// Get the correct hourly rate for a specific date
+export const getEmployeeRateForDate = async (employeeId: string, targetDate: Date): Promise<number> => {
+  const { data: employee, error } = await supabase
+    .from('employees')
+    .select('hourly_rate, rate_effective_date, previous_rate')
+    .eq('id', employeeId)
+    .single();
+
+  if (error || !employee) {
+    console.error('Error fetching employee for rate calculation:', error);
+    return 0;
+  }
+
+  const targetDateStr = targetDate.toISOString().split('T')[0];
+  
+  // If the target date is before the current rate became effective,
+  // use the previous rate (if available)
+  if (employee.rate_effective_date && 
+      targetDateStr < employee.rate_effective_date && 
+      employee.previous_rate) {
+    return employee.previous_rate;
+  }
+  
+  // Otherwise use current rate
+  return employee.hourly_rate;
+};
+
 export const createEmployee = async (employee: {
   clerkUserId: string;
   name: string;
@@ -639,7 +666,8 @@ export const updateEmployee = async (
     status: 'active' | 'inactive' | 'on_leave';
     maxHoursBeforeOvertime: number;
     hourlyRate: number;
-  }>
+  }>,
+  changedBy?: string
 ): Promise<Employee | null> => {
   const updateData: any = {};
   
@@ -649,7 +677,26 @@ export const updateEmployee = async (
   if (updates.position) updateData.position = updates.position;
   if (updates.status) updateData.status = updates.status;
   if (updates.maxHoursBeforeOvertime) updateData.max_hours_before_overtime = updates.maxHoursBeforeOvertime;
-  if (updates.hourlyRate) updateData.hourly_rate = updates.hourlyRate;
+  
+  // Handle rate change with history tracking
+  if (updates.hourlyRate) {
+    // Get current employee data to check if rate is actually changing
+    const { data: currentEmployee } = await supabase
+      .from('employees')
+      .select('hourly_rate')
+      .eq('id', employeeId)
+      .single();
+    
+    if (currentEmployee && currentEmployee.hourly_rate !== updates.hourlyRate) {
+      // Rate is changing - track the history
+      updateData.previous_rate = currentEmployee.hourly_rate;
+      updateData.rate_effective_date = new Date().toISOString().split('T')[0];
+      updateData.rate_changed_at = new Date().toISOString();
+      updateData.rate_changed_by = changedBy || 'system';
+    }
+    
+    updateData.hourly_rate = updates.hourlyRate;
+  }
 
   const { data, error } = await supabase
     .from('employees')
@@ -1213,7 +1260,9 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         empBonusBreakdown.reviewBonuses.amount +
         empBonusBreakdown.highValuePolicyBonuses.amount;
 
-      const totalPay = (totalHours * emp.hourly_rate) + totalBonuses;
+      // Get the correct rate for this payroll period
+      const periodRate = await getEmployeeRateForDate(emp.id, start);
+      const totalPay = (totalHours * periodRate) + totalBonuses;
       const salesAmount = empSales.reduce((sum: number, s: any) => sum + s.amount, 0);
 
       // Add to summary breakdown
@@ -1435,8 +1484,10 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
       const regularHours = Math.min(totalHours, biweeklyRegularLimit);
       const overtimeHours = Math.max(0, totalHours - biweeklyRegularLimit);
-      const regularPay = regularHours * employee.hourly_rate;
-      const overtimePay = overtimeHours * employee.hourly_rate * 1.0; // 1x rate for overtime
+      // Get the correct rate for this historical period
+      const periodRate = await getEmployeeRateForDate(employee.id, startDate);
+      const regularPay = regularHours * periodRate;
+      const overtimePay = overtimeHours * periodRate * 1.0; // 1x rate for overtime
       const totalPay = regularPay + overtimePay + totalBonuses;
       
       const salesAmount = periodSales.reduce((sum, sale) => sum + sale.amount, 0);

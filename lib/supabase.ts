@@ -113,6 +113,10 @@ export interface Employee {
   status: 'active' | 'inactive' | 'on_leave'; // Changed to match database
   max_hours_before_overtime: number;
   hourly_rate: number;
+  rate_effective_date?: string;
+  previous_rate?: number;
+  rate_changed_at?: string;
+  rate_changed_by?: string;
   created_at: string;
 }
 
