@@ -31,7 +31,6 @@ export interface PolicySale {
   bonus: number;
   employee_id: string;
   sale_date: string;
-  cross_sold: boolean;
   cross_sold_type?: string;
   cross_sold_to?: string;
   client_description?: string;

@@ -146,7 +146,7 @@ export function EmployeeDetailsDialog({
   const totalPolicies = employeePolicies.length;
   const totalSales = employeePolicies.reduce((sum, policy) => sum + policy.amount, 0);
   const totalBonus = employeeBonus?.total_bonus || 0;
-  const crossSoldCount = employeePolicies.filter(policy => policy.cross_sold).length;
+          const crossSoldCount = employeePolicies.filter(policy => policy.is_cross_sold_policy).length;
 
   const formatDate = (dateString: string) => {
     // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
@@ -720,7 +720,7 @@ export function EmployeeDetailsDialog({
                               <div>
                                 <span className="text-muted-foreground">Cross-sold:</span>
                                 <span className="ml-2 font-medium">
-                                  {policy.cross_sold ? `Yes - ${policy.cross_sold_type}` : "No"}
+                                  {policy.is_cross_sold_policy ? `Yes - ${policy.cross_sold_type}` : "No"}
                                 </span>
                               </div>
                             </div>

@@ -147,7 +147,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
           brokerFeeBonusCount++;
           
           // Cross-selling bonus: double the broker fee bonus (additional amount)
-          if (sale.cross_sold) {
+          if (sale.is_cross_sold_policy) {
             crossSellingBonuses += baseBrokerBonus; // Additional amount for cross-selling
             crossSellingBonusCount++;
           }

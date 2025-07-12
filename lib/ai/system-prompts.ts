@@ -174,7 +174,7 @@ TODAY'S DATA:
 - Total Broker Fees: $${totalBrokerFees.toLocaleString()}
 
 POLICIES SOLD TODAY:
-${policySales.map(sale => `- ${sale.policy_type} policy (${sale.policy_number}) for ${sale.client_name}: $${sale.amount.toLocaleString()}${sale.cross_sold ? ' (Cross-sold)' : ''}`).join('\n')}
+${policySales.map(sale => `- ${sale.policy_type} policy (${sale.policy_number}) for ${sale.client_name}: $${sale.amount.toLocaleString()}${sale.is_cross_sold_policy ? ' (Cross-sold)' : ''}`).join('\n')}
 
 CLIENT REVIEWS TODAY:
 ${clientReviews.map(review => `- ${review.client_name}: ${review.rating}/5 stars - "${review.review}"`).join('\n')}

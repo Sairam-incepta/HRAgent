@@ -135,11 +135,10 @@ export const addPolicySale = async (sale: {
         broker_fee: sale.brokerFee,
         employee_id: sale.employeeId,
         sale_date: sale.saleDate.toISOString(),
-        cross_sold: sale.crossSold || false,
         cross_sold_type: sale.crossSoldType,
         cross_sold_to: sale.crossSoldTo,
         client_description: sale.clientDescription,
-        is_cross_sold_policy: sale.isCrossSoldPolicy || false,
+        is_cross_sold_policy: sale.isCrossSoldPolicy || sale.crossSold || false,
         bonus: calculateBonus(sale.brokerFee, sale.isCrossSoldPolicy || false)
       })
       .select()
@@ -197,7 +196,7 @@ export const getCrossSoldPolicies = async (employeeId: string): Promise<PolicySa
     .from('policy_sales')
     .select('*')
     .eq('employee_id', employeeId)
-    .eq('cross_sold', true)
+    .eq('is_cross_sold_policy', true)
     .order('sale_date', { ascending: false });
 
   if (error) {
@@ -1159,7 +1158,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
           empBonusBreakdown.brokerFeeBonuses.amount += baseBrokerBonus;
           
           // Cross-selling bonus: double the broker fee bonus (additional amount)
-          if (sale.cross_sold) {
+          if (sale.is_cross_sold_policy) {
             empBonusBreakdown.crossSellingBonuses.count++;
             empBonusBreakdown.crossSellingBonuses.amount += baseBrokerBonus; // Additional amount for cross-selling
           }
