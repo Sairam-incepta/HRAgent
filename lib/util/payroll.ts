@@ -289,8 +289,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       employees, 
       policySales, 
       highValueNotifications, 
-      clientReviews,
-      allTimeLogs
+      clientReviews
     ] = await Promise.all([
       getEmployees(),
       getPolicySales(),
@@ -305,19 +304,17 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         .from('client_reviews')
         .select('*')
         .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString()),
-      // OPTIMIZATION: Get all time logs for all employees in one query
-      supabase
-        .from('time_logs')
-        .select('*')
-        .in('employee_id', employees.map(emp => emp.clerk_user_id))
-        .gte('date', getLocalDateString(start))
-        .lte('date', getLocalDateString(end))
-        .order('date', { ascending: true })
-        .order('clock_in', { ascending: true })
+        .lte('created_at', end.toISOString())
     ]);
 
-    console.log(`📊 Found ${employees.length} employees and ${policySales.length} total policy sales`);
+    const { data: allTimeLogs } = await supabase
+      .from('time_logs')
+      .select('*')
+      .in('employee_id', employees.map(emp => emp.clerk_user_id))
+      .gte('date', getLocalDateString(start))
+      .lte('date', getLocalDateString(end))
+      .order('date', { ascending: true })
+      .order('clock_in', { ascending: true });
 
     const periodSales = policySales.filter((sale: any) => {
       const saleDate = new Date(sale.sale_date);

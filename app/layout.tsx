@@ -7,6 +7,8 @@ import { ClerkProvider } from '@clerk/nextjs';
 
 const inter = Inter({ subsets: ['latin'] });
 
+console.log('ClerkProvider loaded', process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+
 export const metadata: Metadata = {
   title: 'LetsInsure HR - Insurance & HR Management',
   description: 'Modern HR management system with time tracking, chatbot assistance, and comprehensive employee management',
@@ -19,9 +21,9 @@ export default function RootLayout({
 }) {
   return (
     <ClerkProvider>
-      <html lang="en" suppressHydrationWarning>
-        <body className={`${inter.className} min-h-screen`}>
-          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={true}>
+      <html lang="en" suppressHydrationWarning className="dark h-full">
+        <body className={`${inter.className} h-full`} suppressHydrationWarning>
+          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
             {children}
             <Toaster />
           </ThemeProvider>
