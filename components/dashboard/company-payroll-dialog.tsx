@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { FileText, Users, TrendingUp, Clock, DollarSign, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getPayrollPeriodDetails } from "@/lib/util/payroll";
+import { getPayrollPeriods, getPayrollPeriodDetails } from "@/lib/util/payroll";
 import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
 import { dashboardEvents } from "@/lib/events";
 import { createClient } from "@supabase/supabase-js";
@@ -26,6 +26,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
   const [payrollData, setPayrollData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [highValuePolicies, setHighValuePolicies] = useState<any[]>([]);
+  const currentRequestRef = useRef<number>(0);
 
   useEffect(() => {
     if (open && payrollPeriod) {
@@ -49,68 +50,85 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
   const loadPayrollData = async () => {
     if (!payrollPeriod) return;
     
+    // Generate unique request ID and store it
+    const requestId = Date.now();
+    currentRequestRef.current = requestId;
+    
     setLoading(true);
     try {
-      // Parse the period to get start and end dates
-      // For simplicity, we'll calculate the last 14 days from today for current period
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(endDate.getDate() - 13);
+      // SIMPLE: Use the same logic from getPayrollPeriods to find the matching period
+      const allPeriods = await getPayrollPeriods();
+      const matchingPeriod = allPeriods.find(p => p.period === payrollPeriod);
       
+      if (!matchingPeriod) {
+        throw new Error(`Period ${payrollPeriod} not found`);
+      }
+      
+      // Use the startDate and endDate that are already calculated
       const details = await getPayrollPeriodDetails(
-        startDate.toISOString().split('T')[0],
-        endDate.toISOString().split('T')[0]
+        matchingPeriod.startDate, 
+        matchingPeriod.endDate
       );
 
       // Use the same logic as personal payroll dialog for high value policies
       const notifications = await getHighValuePolicyNotificationsList();
-      setHighValuePolicies(notifications);
       
-      console.log('🔍 Company Payroll - High Value Policies:', {
-        totalPolicies: notifications.length,
-        pendingPolicies: notifications.filter(policy => policy.status === 'pending').length,
-        policiesWithStatus: notifications.map(p => ({ id: p.id, policy_number: p.policy_number, status: p.status }))
-      });
+      // ONLY UPDATE STATE IF THIS IS STILL THE CURRENT REQUEST
+      if (requestId === currentRequestRef.current) {
+        setHighValuePolicies(notifications);
+        
+        console.log('🔍 Company Payroll - High Value Policies:', {
+          totalPolicies: notifications.length,
+          pendingPolicies: notifications.filter(policy => policy.status === 'pending').length,
+          policiesWithStatus: notifications.map(p => ({ id: p.id, policy_number: p.policy_number, status: p.status }))
+        });
 
-      // Group employees by department
-      const departmentMap = new Map();
-      details.employees.forEach(emp => {
-        if (!departmentMap.has(emp.department)) {
-          departmentMap.set(emp.department, {
-            employees: 0,
-            totalPay: 0,
-            totalHours: 0,
-            totalSales: 0
-          });
-        }
-        const dept = departmentMap.get(emp.department);
-        dept.employees += 1;
-        dept.totalPay += emp.totalPay;
-        dept.totalHours += emp.regularHours + emp.overtimeHours;
-        dept.totalSales += emp.salesAmount;
-      });
+        // Group employees by department
+        const departmentMap = new Map();
+        details.employees.forEach(emp => {
+          if (!departmentMap.has(emp.department)) {
+            departmentMap.set(emp.department, {
+              employees: 0,
+              totalPay: 0,
+              totalHours: 0,
+              totalSales: 0
+            });
+          }
+          const dept = departmentMap.get(emp.department);
+          dept.employees += 1;
+          dept.totalPay += emp.totalPay;
+          dept.totalHours += emp.regularHours + emp.overtimeHours;
+          dept.totalSales += emp.salesAmount;
+        });
 
-      const departmentBreakdown = Array.from(departmentMap.entries()).map(([dept, data]) => ({
-        department: dept,
-        employees: data.employees,
-        totalPay: Math.round(data.totalPay),
-        avgHours: Math.round((data.totalHours / data.employees) * 10) / 10,
-        totalSales: data.totalSales
-      }));
+        const departmentBreakdown = Array.from(departmentMap.entries()).map(([dept, data]) => ({
+          department: dept,
+          employees: data.employees,
+          totalPay: Math.round(data.totalPay),
+          avgHours: Math.round((data.totalHours / data.employees) * 10) / 10,
+          totalSales: data.totalSales
+        }));
 
-      setPayrollData({
-        payPeriod: payrollPeriod,
-        summary: details.summary,
-        departmentBreakdown,
-        topPerformers: details.employees
-          .filter(emp => emp.salesAmount > 0)
-          .sort((a, b) => b.salesAmount - a.salesAmount)
-          .slice(0, 3)
-      });
+        setPayrollData({
+          payPeriod: payrollPeriod,
+          summary: details.summary,
+          departmentBreakdown,
+          topPerformers: details.employees
+            .filter(emp => emp.salesAmount > 0)
+            .sort((a, b) => b.salesAmount - a.salesAmount)
+            .slice(0, 3)
+        });
+      }
     } catch (error) {
-      console.error('Error loading payroll data:', error);
+      // ONLY LOG ERROR IF THIS IS STILL THE CURRENT REQUEST
+      if (requestId === currentRequestRef.current) {
+        console.error('Error loading payroll data:', error);
+      }
     } finally {
-      setLoading(false);
+      // ONLY UPDATE LOADING STATE IF THIS IS STILL THE CURRENT REQUEST
+      if (requestId === currentRequestRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -245,7 +263,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Avg Hourly Rate:</span>
-                        <span className="text-sm font-medium">${(payrollData.summary.totalRegularPay / payrollData.summary.totalRegularHours || 0).toFixed(2)}/hr</span>
+                        <span className="text-sm font-medium">${payrollData.summary.totalRegularHours > 0 ? (payrollData.summary.totalRegularPay / payrollData.summary.totalRegularHours).toFixed(2) : '0.00'}/hr</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Total Sales:</span>

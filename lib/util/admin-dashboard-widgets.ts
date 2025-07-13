@@ -10,7 +10,7 @@ export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number;
     
     // Filter out admin users
     const nonAdminEmployees = employees.filter(emp => {
-      const isAdmin = emp.position === 'HR Manager' || emp.email === 'admin@letsinsure.hr';
+      const isAdmin = emp.position === 'Administrator';
       return !isAdmin;
     });
 
@@ -91,7 +91,7 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
     
     // Filter out admin users
     const nonAdminEmployees = employees.filter(emp => {
-      const isAdmin = emp.position === 'HR Manager' || emp.email === 'admin@letsinsure.hr';
+      const isAdmin = emp.position === 'Administrator';
       return !isAdmin;
     });
 
