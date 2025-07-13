@@ -81,17 +81,22 @@ export function TimeTracker({
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const saveTimeSession = useCallback(() => {
-    if (status !== 'idle' && (startTime || status === 'lunch')) {
-      const sessionData: TimeSession = {
-        startTime: startTime || 0, // Use 0 for lunch breaks when startTime is null
-        status: status,
-        date: getCurrentDate(),
-        lunchStartTime: lunchStartTime || undefined,
-        totalLunchTime: totalLunchTimeRef.current
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
+    try {
+      if (status !== 'idle' && (startTime || status === 'lunch')) {
+        const sessionData: TimeSession = {
+          startTime: startTime || 0, // Use 0 for lunch breaks when startTime is null
+          status: status,
+          date: getCurrentDate(),
+          lunchStartTime: lunchStartTime || undefined,
+          totalLunchTime: totalLunchTimeRef.current
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (error) {
+      console.error('Failed to save time session to localStorage:', error);
+      // Component continues to work without localStorage persistence
     }
   }, [status, startTime, lunchStartTime]);
 
@@ -137,62 +142,125 @@ export function TimeTracker({
   }, [user?.id]);
 
   const loadTimeSession = useCallback(async () => {
-    const savedSessionRaw = localStorage.getItem(STORAGE_KEY);
+    let savedSessionRaw: string | null = null;
+    try {
+      savedSessionRaw = localStorage.getItem(STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to read time session from localStorage:', error);
+      return; // Component continues to work without localStorage
+    }
+    
     if (!savedSessionRaw) return;
 
     try {
       const savedSession: TimeSession = JSON.parse(savedSessionRaw);
       const today = getCurrentDate();
 
-      if (savedSession.date === today && user?.id) {
-        setStatus(savedSession.status);
+      if (user?.id) {
+        // Check if there's an active database session, regardless of date
+        // This handles midnight crossover where localStorage date != today
+        let hasActiveSession = false;
         
-        // Only set startTime for working sessions, not lunch breaks
-        if (savedSession.status !== 'lunch' && savedSession.startTime) {
-          setStartTime(savedSession.startTime);
-        }
-
-        const accumulatedLunch = savedSession.totalLunchTime || 0;
-        setTotalLunchTime(accumulatedLunch);
-        totalLunchTimeRef.current = accumulatedLunch;
-
-        if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
-          setLunchStartTime(savedSession.lunchStartTime);
-          onLunchChange?.(true);
-        }
-
-        // Restore activeLogId from database
         if (savedSession.status === 'working' || savedSession.status === 'overtime_pending') {
           try {
-            const logs = await getTimeLogsForDay(user.id, today);
-            const activeLog = logs.find(log => log.clock_in && !log.clock_out);
-            if (activeLog) {
-              setActiveLogId(activeLog.id);
-            } else {
-              // If no active log found, reset to idle state
-              console.warn('No active time log found for restored session, resetting to idle');
-              setStatus('idle');
-              setStartTime(null);
-              localStorage.removeItem(STORAGE_KEY);
-              return;
+            // Check last 7 days for active sessions (handles long sessions)
+            let foundActiveLogId: string | null = null;
+            
+            for (let i = 0; i < 7; i++) {
+              const checkDate = new Date();
+              const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+              const localDate = new Date(checkDate.toLocaleString("en-US", { timeZone: userTimezone }));
+              localDate.setDate(localDate.getDate() - i);
+              const year = localDate.getFullYear();
+              const month = String(localDate.getMonth() + 1).padStart(2, '0');
+              const day = String(localDate.getDate()).padStart(2, '0');
+              const dateStr = `${year}-${month}-${day}`;
+              
+                             const logs = await getTimeLogsForDay(user.id, dateStr);
+               const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
+               
+               if (activeLogs.length > 0) {
+                 // Handle multiple active sessions - use the most recent one
+                 const mostRecentLog = activeLogs.length === 1 
+                   ? activeLogs[0]
+                   : activeLogs.reduce((latest, current) => 
+                       new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
+                     );
+                 
+                 if (activeLogs.length > 1) {
+                   console.warn(`Midnight fix: Found ${activeLogs.length} active logs on ${dateStr}, using most recent:`, mostRecentLog.id);
+                 }
+                 
+                 hasActiveSession = true;
+                 foundActiveLogId = mostRecentLog.id;
+                 console.log(`Found active session from ${dateStr}:`, mostRecentLog.id);
+                 break;
+               }
+            }
+            
+            if (foundActiveLogId) {
+              setActiveLogId(foundActiveLogId);
             }
           } catch (error) {
-            console.error('Error restoring active log ID:', error);
-            // If database query fails, reset to idle state to prevent broken state
-            setStatus('idle');
-            setStartTime(null);
-            localStorage.removeItem(STORAGE_KEY);
-            return;
+            console.error('Error checking for active session:', error);
           }
         }
 
-        onClockInChange?.(true);
+        // Validate lunch break state - only restore if recent (within 24 hours)
+        let validLunchBreak = false;
+        if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
+          const lunchAge = Date.now() - savedSession.lunchStartTime;
+          const maxLunchAge = 24 * 60 * 60 * 1000; // 24 hours
+          validLunchBreak = lunchAge < maxLunchAge;
+          
+          if (!validLunchBreak) {
+            console.warn('Lunch break too old, not restoring:', Math.round(lunchAge / (60 * 60 * 1000)), 'hours');
+          }
+        }
+
+        // Restore session if it's from today OR if there's an active database session OR valid lunch break
+        const shouldRestoreSession = savedSession.date === today || hasActiveSession || validLunchBreak;
+        
+        if (shouldRestoreSession) {
+          setStatus(savedSession.status);
+          
+          // Only set startTime for working sessions, not lunch breaks
+          if (savedSession.status !== 'lunch' && savedSession.startTime) {
+            setStartTime(savedSession.startTime);
+          }
+
+          const accumulatedLunch = savedSession.totalLunchTime || 0;
+          setTotalLunchTime(accumulatedLunch);
+          totalLunchTimeRef.current = accumulatedLunch;
+
+          if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
+            setLunchStartTime(savedSession.lunchStartTime);
+            onLunchChange?.(true);
+          }
+
+          onClockInChange?.(true);
+        } else {
+          // Only clear localStorage if no active session exists
+          try {
+            localStorage.removeItem(STORAGE_KEY);
+          } catch (error) {
+            console.error('Failed to clear localStorage:', error);
+          }
+        }
       } else {
-        localStorage.removeItem(STORAGE_KEY);
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch (error) {
+          console.error('Failed to clear localStorage:', error);
+        }
       }
     } catch (error) {
       console.error("Failed to load time session:", error);
-      localStorage.removeItem(STORAGE_KEY);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (clearError) {
+        console.error('Failed to clear localStorage after error:', clearError);
+      }
     }
   }, [user?.id, onClockInChange, onLunchChange]);
 
@@ -205,11 +273,122 @@ export function TimeTracker({
     }
   }, [user?.id, fetchAndSumLogs, loadTimeSession]);
 
+  // Multi-tab synchronization: Listen for localStorage changes from other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      // Only handle our specific time session storage key
+      if (e.key === STORAGE_KEY) {
+        try {
+          if (e.newValue) {
+            // Another tab updated the session - sync our state to match
+            const sessionData: TimeSession = JSON.parse(e.newValue);
+            
+            console.log('Syncing state from another tab:', sessionData);
+            
+            // Sync all session state variables
+            setStatus(sessionData.status);
+            
+            // Only set startTime for working sessions, not lunch breaks
+            if (sessionData.status !== 'lunch' && sessionData.startTime) {
+              setStartTime(sessionData.startTime);
+            } else {
+              setStartTime(null);
+            }
+            
+            // Sync lunch break state
+            if (sessionData.status === 'lunch' && sessionData.lunchStartTime) {
+              setLunchStartTime(sessionData.lunchStartTime);
+              onLunchChange?.(true);
+            } else {
+              setLunchStartTime(null);
+              onLunchChange?.(false);
+            }
+            
+            // Sync accumulated lunch time
+            const accumulatedLunch = sessionData.totalLunchTime || 0;
+            setTotalLunchTime(accumulatedLunch);
+            totalLunchTimeRef.current = accumulatedLunch;
+            
+                         // Restore activeLogId if available (critical for clock out functionality)
+             if (sessionData.status === 'working' || sessionData.status === 'overtime_pending') {
+               // Try to get activeLogId from database to sync properly
+               if (user?.id) {
+                 (async () => {
+                   try {
+                     const today = getCurrentDate();
+                     const logs = await getTimeLogsForDay(user.id, today);
+                     const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
+                     
+                     if (activeLogs.length > 0) {
+                       // If multiple active logs (database corruption), use most recent
+                       const activeLog = activeLogs.length === 1 
+                         ? activeLogs[0] 
+                         : activeLogs.reduce((latest, current) => 
+                             new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
+                           );
+                       
+                       if (activeLogs.length > 1) {
+                         console.warn(`Multi-tab sync: Found ${activeLogs.length} active logs, using most recent:`, activeLog.id);
+                       }
+                       
+                       setActiveLogId(activeLog.id);
+                     }
+                   } catch (error) {
+                     console.error('Failed to restore activeLogId during sync:', error);
+                   }
+                 })();
+               }
+             } else {
+               // Clear activeLogId for non-working states
+               setActiveLogId(null);
+             }
+             
+             // Notify parent components about state change
+             const isClockedIn = sessionData.status === 'working' || sessionData.status === 'overtime_pending';
+             onClockInChange?.(isClockedIn);
+            
+          } else {
+            // Another tab cleared the session - reset our state
+            console.log('Resetting state - session cleared in another tab');
+            setStatus('idle');
+            setStartTime(null);
+            setLunchStartTime(null);
+            setTotalLunchTime(0);
+            totalLunchTimeRef.current = 0;
+            setCurrentLunchTime(0);
+            setActiveLogId(null);
+            
+            // Notify parent components
+            onClockInChange?.(false);
+            onLunchChange?.(false);
+          }
+        } catch (error) {
+          console.error('Failed to sync session from another tab:', error);
+          // If data is corrupted, ignore the change
+        }
+      }
+    };
+
+    // Listen for storage changes from other tabs
+    window.addEventListener('storage', handleStorageChange);
+    
+    // Cleanup event listener on unmount
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [onClockInChange, onLunchChange]);
+
   // Load saved daily lunch seconds once on mount (per day)
   useEffect(() => {
     const today = getCurrentDate();
-    const stored = localStorage.getItem(getDailyLunchKey(today));
-    const savedSeconds = stored ? parseInt(stored, 10) : 0;
+    let savedSeconds = 0;
+    try {
+      const stored = localStorage.getItem(getDailyLunchKey(today));
+      savedSeconds = stored ? parseInt(stored, 10) : 0;
+    } catch (error) {
+      console.error('Failed to load daily lunch time from localStorage:', error);
+      // Component continues to work with 0 lunch time
+    }
     setDailyLunchSeconds(savedSeconds);
     dailyLunchSecondsRef.current = savedSeconds;
   }, []);
@@ -316,7 +495,30 @@ export function TimeTracker({
 
   const performClockOut = async () => {
     setProcessingClock('out');
-    if (!activeLogId || !user?.id) {
+    
+    let logIdToUse = activeLogId;
+    
+    // If no activeLogId in state, try to find it from database
+    if (!logIdToUse && user?.id) {
+      try {
+        const today = getCurrentDate();
+        const logs = await getTimeLogsForDay(user.id, today);
+        const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
+        
+        if (activeLogs.length > 0) {
+          const activeLog = activeLogs.length === 1 
+            ? activeLogs[0] 
+            : activeLogs.reduce((latest, current) => 
+                new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
+              );
+          logIdToUse = activeLog.id;
+        }
+      } catch (error) {
+        console.error('Error finding active log:', error);
+      }
+    }
+    
+    if (!logIdToUse || !user?.id) {
       toast({
         title: "Error",
         description: "No active clock-in session found to clock out.",
@@ -330,7 +532,7 @@ export function TimeTracker({
       // Capture the final, correctly calculated net time BEFORE resetting state.
       const finalElapsedTime = elapsedTime;
 
-      await updateTimeLog({ logId: activeLogId, clockOut: new Date() });
+      await updateTimeLog({ logId: logIdToUse, clockOut: new Date() });
       
       onClockOut?.(finalElapsedTime / 3600);
       toast({
@@ -345,7 +547,11 @@ export function TimeTracker({
       setStatus("idle");
       setActiveLogId(null);
       setStartTime(null);
-      localStorage.removeItem(STORAGE_KEY);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        console.error('Failed to clear localStorage after clock out:', error);
+      }
       resetLunchStates(); // Clear out lunch timers
 
       // Explicitly set the displayed time to the final calculated value.
@@ -392,8 +598,20 @@ export function TimeTracker({
       try {
         const today = getCurrentDate();
         const logs = await getTimeLogsForDay(user.id, today);
-        const activeLog = logs.find(log => log.clock_in && !log.clock_out);
-        if (activeLog) {
+        const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
+        
+        if (activeLogs.length > 0) {
+          // If multiple active logs (database corruption), use most recent
+          const activeLog = activeLogs.length === 1 
+            ? activeLogs[0] 
+            : activeLogs.reduce((latest, current) => 
+                new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
+              );
+          
+          if (activeLogs.length > 1) {
+            console.warn(`Found ${activeLogs.length} active logs, using most recent:`, activeLog.id);
+          }
+          
           setActiveLogId(activeLog.id);
         } else {
           toast({
@@ -465,7 +683,12 @@ export function TimeTracker({
 
       dailyLunchSecondsRef.current += lunchDuration;
       setDailyLunchSeconds(dailyLunchSecondsRef.current);
-      localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
+      try {
+        localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
+      } catch (error) {
+        console.error('Failed to save daily lunch time to localStorage:', error);
+        // Component continues to work without localStorage persistence
+      }
 
       // Start a new work session after lunch
       const now = new Date();
