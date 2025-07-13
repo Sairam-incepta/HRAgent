@@ -68,17 +68,16 @@ export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number;
 // Get total policy sales amount (not bonuses)
 export const getTotalPolicySalesAmount = async (): Promise<number> => {
   try {
-    // More efficient: use database aggregation instead of fetching all records
     const { data, error } = await supabase
       .from('policy_sales')
-      .select('amount.sum()');
-
+      .select('amount');
+    
     if (error) {
       console.error('Error getting total policy sales amount:', error);
       return 0;
     }
-
-    return data?.[0]?.sum || 0;
+    
+    return data?.reduce((sum, record) => sum + (record.amount || 0), 0) || 0;
   } catch (error) {
     console.error('Error getting total policy sales amount:', error);
     return 0;
