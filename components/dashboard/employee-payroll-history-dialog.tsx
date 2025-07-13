@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { History, Clock, DollarSign, TrendingUp, Calendar } from "lucide-react";
-import { getEmployeePayrollHistory, getEmployee, formatHoursMinutes } from "@/lib/database";
+import { getEmployeePayrollHistory } from "@/lib/util/payroll";
+import { getEmployee } from "@/lib/util/employee";
+import { formatHoursMinutes } from "@/lib/util/misc";
 import { dashboardEvents } from "@/lib/events";
 
 interface EmployeePayrollHistoryDialogProps {

@@ -2,12 +2,10 @@
 // REPLACED CONTENT — full AI-driven chat handler
 
 import openai from '@/lib/openai';
-import {
-  addPolicySale,
-  addClientReview,
-  addDailySummary,
-  getChatMessages,
-} from '@/lib/database';
+import { addPolicySale } from '../util/policies';
+import { addClientReview } from '../util/client-reviews';
+import { addDailySummary } from '../util/daily-summaries';
+import { getChatMessages } from '../util/chat-messages';
 import { buildEmployeeSystemPrompt } from './system-prompts';
 import type { ChatCompletionMessageParam } from 'openai/resources';
 

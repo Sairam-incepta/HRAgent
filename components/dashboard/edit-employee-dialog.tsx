@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { updateEmployee } from "@/lib/database";
+import { updateEmployee } from "@/lib/util/employee";
 import type { Employee } from "@/lib/supabase";
 
 interface EditEmployeeDialogProps {

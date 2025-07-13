@@ -48,15 +48,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { 
-  getEmployees, 
-  getPolicySales, 
-  getPayrollPeriods, 
-  getHighValuePolicyNotificationsList,
-  getAllRequests,
-  debugDatabaseContents,
-  type PayrollPeriod
-} from "@/lib/database";
+import { getEmployees } from "@/lib/util/employee";
+import { getPolicySales } from "@/lib/util/policies";
+import { getPayrollPeriods } from "@/lib/util/payroll";
+import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
+import { getAllRequests } from "@/lib/util/requests";
+import { type PayrollPeriod } from "@/lib/util/payroll";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
 import { useToast } from "@/hooks/use-toast";
@@ -144,11 +141,6 @@ export function AdminDashboard() {
     console.log('🔄 AdminDashboard: Loading data...', { silentUpdate });
     
     try {
-      // Run the pricey debug helper only once in development
-      if (!silentUpdate && process.env.NODE_ENV === 'development') {
-        // Fire and forget – don’t block rendering if it’s slow
-        debugDatabaseContents().catch(() => {});
-      }
 
       // Light-weight refresh when called in background
       let employeesData: any[] = employees;

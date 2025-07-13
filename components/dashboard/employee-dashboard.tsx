@@ -47,20 +47,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  getEmployeeRequests, 
-  getPolicySales, 
-  getClientReviews, 
-  getDailySummaries,
-  getWeeklySummary,
-  getTodayHours,
-  getThisWeekHours,
-  getEmployee,
-  logTimezoneInfo,
-  type Request 
-} from "@/lib/database";
+import { getEmployeeRequests } from "@/lib/util/employee-requests";
+import { getPolicySales } from "@/lib/util/policies";
+import { getClientReviews } from "@/lib/util/client-reviews";
+import { getWeeklySummary, getTodayHours, getThisWeekHours } from "@/lib/util/get";
+import { getEmployee } from "@/lib/util/employee";
+import { type Request } from "@/lib/util/employee-requests";
+
 import { dashboardEvents } from "@/lib/events";
-import { ChatInterface } from "./chat-interface";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -191,7 +185,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       const lastKnownDate = localStorage.getItem('last_known_date');
       
       if (lastKnownDate && lastKnownDate !== currentDate) {
-        logTimezoneInfo(); // Log timezone info for debugging
         loadWeeklyData();
         loadPerformanceData();
         loadRequests();

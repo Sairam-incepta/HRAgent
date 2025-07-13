@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { 
   Clock, 
   BarChart, 
-  MessageSquare, 
   FileText, 
   Settings, 
   Users, 

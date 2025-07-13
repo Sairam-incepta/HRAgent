@@ -10,7 +10,8 @@ import { ChatInput } from "./chat-input";
 import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, AlertTriangle, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { getChatMessages, addChatMessage } from "@/lib/database";
+import { getChatMessages, addChatMessage } from "@/lib/util/chat-messages";
+
 
 type Message = {
   id: string;

@@ -1,21 +1,13 @@
 'use client';
 
 import { useState, useEffect } from "react";
-import { Users, Clock, AlertCircle, TrendingUp, DollarSign } from "lucide-react";
-import { 
-  getEmployees, 
-  getPolicySales, 
-  debugTimeLogs, 
-  calculateActualHoursForPeriod,
-  getClockedInEmployeesCount,
-  getTotalPolicySalesAmount,
-  getOvertimeHoursThisWeek,
-  getClientReviews,
-  calculateLifeInsuranceReferralBonus,
-  calculateReviewBonus,
-  getTodayTimeTracking,
-  getPayrollPeriodDetails
-} from "@/lib/database";
+import { Users, Clock, TrendingUp, DollarSign } from "lucide-react";
+import { getEmployees } from "@/lib/util/employee";
+import { getPolicySales } from "@/lib/util/policies";
+import { calculateActualHoursForPeriod } from "@/lib/util/misc";
+import { getTotalPolicySalesAmount } from "@/lib/util/admin-dashboard-widgets";
+import { getTodayTimeTracking } from "@/lib/util/today";
+import { getPayrollPeriodDetails } from "@/lib/util/payroll";
 import { dashboardEvents } from "@/lib/events";
 
 export function AdminStats() {
@@ -58,9 +50,6 @@ export function AdminStats() {
   const loadStats = async () => {
     try {
       console.log("🔄 AdminStats: Loading statistics...");
-      
-      // Debug: Check what time logs exist in the database
-      await debugTimeLogs();
       
       // Get employees (all employees - role is handled by Clerk, not database)
       const employees = await getEmployees();

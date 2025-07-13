@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server';
 import openai from '@/lib/openai';
-import { 
-  getEmployees, 
-  getPolicySales, 
-  getOvertimeRequests,
-  getAllRequests,
-  getClientReviews,
-  getHighValuePolicyNotificationsList
-} from '@/lib/database';
+import { getEmployees } from '../util/employee';
+import { getPolicySales } from '../util/policies';
+import { getOvertimeRequests } from '../util/overtime-requests';
+import { getAllRequests } from '../util/requests';
+import { getClientReviews } from '../util/client-reviews';
+import { getHighValuePolicyNotificationsList } from '../util/high-value-policy-notifications';
 import { buildAdminSystemPrompt } from './system-prompts';
 
 // Clean up markdown formatting - avoid double formatting

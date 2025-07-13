@@ -13,7 +13,7 @@ import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { addRequest } from "@/lib/database";
+import { addRequest } from "@/lib/util/requests";
 import { useUser } from "@clerk/nextjs";
 
 interface RequestDialogProps {

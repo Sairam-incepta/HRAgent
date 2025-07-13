@@ -6,10 +6,9 @@ import { DashboardHeader } from "@/components/dashboard/header";
 import { EmployeeDashboard } from "@/components/dashboard/employee-dashboard";
 import { AdminDashboard } from "@/components/dashboard/admin-dashboard";
 import { ChatInterface } from "@/components/dashboard/chat-interface";
-import { Loader2, MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
+import { MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getEmployee } from "@/lib/database";
-import { getUserRole } from "@/lib/get-user-role";
+import { getEmployee } from "@/lib/util/employee";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface CustomPublicMetadata {

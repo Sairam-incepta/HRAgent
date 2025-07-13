@@ -8,7 +8,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,7 +15,8 @@ import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useClerk, useUser } from "@clerk/nextjs";
-import { getHighValuePolicyNotificationsList, getAllRequests } from "@/lib/database";
+import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
+import { getAllRequests } from "@/lib/util/requests";
 import { dashboardEvents } from "@/lib/events";
 
 interface DashboardHeaderProps {

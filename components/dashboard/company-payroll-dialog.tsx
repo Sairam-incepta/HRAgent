@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { FileText, Users, TrendingUp, Clock, DollarSign, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getPayrollPeriodDetails, getHighValuePolicyNotificationsList } from "@/lib/database";
+import { getPayrollPeriodDetails } from "@/lib/util/payroll";
+import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
 import { dashboardEvents } from "@/lib/events";
 import { createClient } from "@supabase/supabase-js";
 

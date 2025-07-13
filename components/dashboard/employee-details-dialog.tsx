@@ -6,13 +6,16 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, Calendar, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
-import { getPolicySales, getClientReviews, getEmployeeBonus, getWeeklySummary, getTimeLogsForDay, getDailySummaries } from "@/lib/database";
+import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
+import { getPolicySales } from "@/lib/util/policies";
+import { getClientReviews } from "@/lib/util/client-reviews";
+import { getEmployeeBonus } from "@/lib/util/employee-bonus";
+import { getWeeklySummary } from "@/lib/util/get";
+import { getTimeLogsForDay } from "@/lib/util/time-logs";
+import { getDailySummaries } from "@/lib/util/daily-summaries";
 import { PasswordResetDialog } from "./password-reset-dialog";
 import { dashboardEvents } from "@/lib/events";
-import { useUser } from '@clerk/nextjs';
 
 interface EmployeeDetailsDialogProps {
   open: boolean;

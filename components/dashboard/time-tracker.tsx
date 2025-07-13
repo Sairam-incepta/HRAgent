@@ -3,24 +3,14 @@
 import { useState, useRef, useEffect, memo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Play, Square, Coffee, Check, AlertTriangle, Clock } from "lucide-react";
+import { Play, Square, Coffee, Check, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-  getTimeLogsForDay,
-  createTimeLog,
-  updateTimeLog,
-  getPolicySales,
-  getHighValuePolicyNotificationsList,
-  getClientReviews
-} from "@/lib/database";
-import { supabase } from "@/lib/supabase";
+import { getTimeLogsForDay, createTimeLog, updateTimeLog } from "@/lib/util/time-logs";
 import { useUser } from '@clerk/nextjs';
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { dashboardEvents } from "@/lib/events";
 import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
-import { DailySummaryRequiredDialog } from "./daily-summary-required-dialog";
 
 type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
 

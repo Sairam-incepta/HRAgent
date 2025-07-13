@@ -3,14 +3,13 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { CreditCard, Download, FileText, AlertTriangle, Edit, Check, X } from "lucide-react";
+import { AlertTriangle} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { getPolicySales, getEmployee, calculateActualHoursForPeriod, getClientReviews } from "@/lib/database";
+import { getPolicySales } from "@/lib/util/policies";
+import { getEmployee } from "@/lib/util/employee";
+import { calculateActualHoursForPeriod } from "@/lib/util/misc";
+import { getClientReviews } from "@/lib/util/client-reviews";
 import { supabase } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
 

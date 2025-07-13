@@ -7,19 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertTriangle, DollarSign, Eye, CheckCircle, Clock, Calendar, RotateCcw, Settings } from "lucide-react";
-import { 
-  getHighValuePolicyNotificationsList, 
-  updateHighValuePolicyNotification, 
-  getEmployees,
-  getUrgentReviewPolicies,
-  shouldShowPeriodEndNotification,
-  closeExpiredBiweeklyPeriods
-} from "@/lib/database";
+import { getHighValuePolicyNotificationsList, updateHighValuePolicyNotification } from "@/lib/util/high-value-policy-notifications";
+import { getUrgentReviewPolicies } from "@/lib/util/policies";
+import { shouldShowPeriodEndNotification, closeExpiredBiweeklyPeriods } from "@/lib/util/misc";
 import { PayrollDialog } from "./payroll-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
-import { supabase } from "@/lib/supabase";
 import { Label } from "@/components/ui/label";
 
 // Simplified - no need for employee names anymore

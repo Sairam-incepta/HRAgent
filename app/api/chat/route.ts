@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { 
-  getTodayTimeTracking,
-  getTodayPolicySales,
-  addDailySummary
-} from '@/lib/database';
+import { getTodayTimeTracking, getTodayPolicySales } from '@/lib/util/today';
+import { addDailySummary } from '@/lib/util/daily-summaries';
 import { handleAdminChat as handleAdminChatModule } from '@/lib/ai/admin-chat';
 import { handleEmployeeChat as handleEmployeeChatModule } from '@/lib/ai/employee-chat';
 

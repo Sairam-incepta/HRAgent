@@ -29,7 +29,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { getAllRequests, updateRequestStatus, getEmployees } from "@/lib/database";
+import { getAllRequests, updateRequestStatus } from "@/lib/util/requests";
+import { getEmployees } from "@/lib/util/employee";
 import { dashboardEvents } from "@/lib/events";
 
 interface Request {
