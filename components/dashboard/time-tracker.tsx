@@ -29,9 +29,13 @@ interface TimeSession {
   date: string; // YYYY-MM-DD format
   lunchStartTime?: number; // Use undefined instead of null
   totalLunchTime?: number;
+  tabId?: string; // Add unique tab identifier
+  lastUpdate?: number; // Add timestamp for sync validation
 }
 
 const STORAGE_KEY = 'letsinsure_time_session';
+const SYNC_KEY = 'letsinsure_time_sync'; // New key for real-time sync
+const TAB_ID = Math.random().toString(36).substring(2, 15); // Unique tab identifier
 
 export function TimeTracker({
   onClockInChange,
@@ -52,6 +56,10 @@ export function TimeTracker({
   const [lunchStartTime, setLunchStartTime] = useState<number | null>(null);
   const [totalLunchTime, setTotalLunchTime] = useState(0);
   const [currentLunchTime, setCurrentLunchTime] = useState(0);
+
+  // Multi-tab sync state
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
+  const syncInterval = useRef<NodeJS.Timeout | null>(null);
 
   // ===== Daily lunch accumulation across multiple sessions =====
   const DAILY_LUNCH_KEY_PREFIX = 'letsinsure_daily_lunch_';
@@ -88,7 +96,9 @@ export function TimeTracker({
           status: status,
           date: getCurrentDate(),
           lunchStartTime: lunchStartTime || undefined,
-          totalLunchTime: totalLunchTimeRef.current
+          totalLunchTime: totalLunchTimeRef.current,
+          tabId: TAB_ID,
+          lastUpdate: Date.now()
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
       } else {
@@ -99,6 +109,73 @@ export function TimeTracker({
       // Component continues to work without localStorage persistence
     }
   }, [status, startTime, lunchStartTime]);
+
+  // Broadcast state changes to other tabs (simple approach)
+  const broadcastStateChange = useCallback((newState: {
+    status: TimeStatus;
+    elapsedTime: number;
+    startTime: number | null;
+    lunchStartTime: number | null;
+    activeLogId: string | null;
+    currentLunchTime: number;
+  }) => {
+    try {
+      const syncData = {
+        ...newState,
+        timestamp: Date.now(),
+        tabId: TAB_ID,
+      };
+      localStorage.setItem(SYNC_KEY, JSON.stringify(syncData));
+      console.log('📡 Broadcasting state to other tabs:', newState.status, newState.elapsedTime);
+    } catch (error) {
+      console.error('Failed to broadcast state change:', error);
+    }
+  }, []);
+
+  // Refresh data from database periodically and on important events
+  const refreshFromDatabase = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const today = getCurrentDate();
+      const logs = await getTimeLogsForDay(user.id, today);
+      setLogsToday(logs);
+
+      const totalWorkedFromDB = calculateTotalTimeWorked(logs);
+      const activeLog = logs.find(log => log.clock_in && !log.clock_out);
+      
+      console.log('🔄 Database refresh - Total worked:', totalWorkedFromDB, 'Active log:', activeLog?.id);
+      
+      if (activeLog) {
+        // Active session exists - calculate current elapsed time
+        const sessionStart = new Date(activeLog.clock_in).getTime();
+        const now = Date.now();
+        const currentSessionTime = (now - sessionStart) / 1000;
+        const currentElapsed = Math.floor(totalWorkedFromDB + currentSessionTime);
+        
+        setElapsedTime(currentElapsed);
+        setActiveLogId(activeLog.id);
+        setStartTime(sessionStart);
+        setStatus('working'); // Will be updated by timer logic if overtime
+        
+        console.log('⚡ Active session found - Setting elapsed time:', currentElapsed);
+      } else {
+        // No active session - use database total
+        setElapsedTime(totalWorkedFromDB);
+        setActiveLogId(null);
+        setStartTime(null);
+        setStatus('idle');
+        
+        console.log('💾 No active session - Using DB total:', totalWorkedFromDB);
+      }
+      
+      baseTimeRef.current = totalWorkedFromDB;
+      return { activeLog, totalWorkedFromDB };
+    } catch (error) {
+      console.error('Error refreshing from database:', error);
+      return null;
+    }
+  }, [user?.id]);
 
   const getCurrentDate = () => {
     const now = new Date();
@@ -120,263 +197,153 @@ export function TimeTracker({
     return Math.floor(total);
   };
 
-  const fetchAndSumLogs = useCallback(async () => {
-    if (!user?.id) return;
 
-    setIsUpdatingLogs(true);
-    try {
-      const today = getCurrentDate();
-      const logs = await getTimeLogsForDay(user.id, today);
-      setLogsToday(logs);
-
-      const adjustedFromLogs = calculateTotalTimeWorked(logs);
-      baseTimeRef.current = adjustedFromLogs;
-
-      const openLog = logs.find(log => log.clock_in && !log.clock_out);
-      if (!openLog) {
-        setElapsedTime(adjustedFromLogs);
-      }
-    } finally {
-      setIsUpdatingLogs(false);
-    }
-  }, [user?.id]);
 
   const loadTimeSession = useCallback(async () => {
-    let savedSessionRaw: string | null = null;
+    // With database-first approach, we only restore UI state from localStorage
+    // The database refresh already set the correct data
     try {
-      savedSessionRaw = localStorage.getItem(STORAGE_KEY);
-    } catch (error) {
-      console.error('Failed to read time session from localStorage:', error);
-      return; // Component continues to work without localStorage
-    }
-    
-    if (!savedSessionRaw) return;
+      const savedSessionRaw = localStorage.getItem(STORAGE_KEY);
+      if (!savedSessionRaw) return;
 
-    try {
       const savedSession: TimeSession = JSON.parse(savedSessionRaw);
       const today = getCurrentDate();
 
-      if (user?.id) {
-        // Check if there's an active database session, regardless of date
-        // This handles midnight crossover where localStorage date != today
-        let hasActiveSession = false;
+      // Only restore lunch break state if it's recent and valid
+      if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
+        const lunchAge = Date.now() - savedSession.lunchStartTime;
+        const maxLunchAge = 4 * 60 * 60 * 1000; // 4 hours max
         
-        if (savedSession.status === 'working' || savedSession.status === 'overtime_pending') {
-          try {
-            // Check last 7 days for active sessions (handles long sessions)
-            let foundActiveLogId: string | null = null;
-            
-            for (let i = 0; i < 7; i++) {
-              const checkDate = new Date();
-              const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-              const localDate = new Date(checkDate.toLocaleString("en-US", { timeZone: userTimezone }));
-              localDate.setDate(localDate.getDate() - i);
-              const year = localDate.getFullYear();
-              const month = String(localDate.getMonth() + 1).padStart(2, '0');
-              const day = String(localDate.getDate()).padStart(2, '0');
-              const dateStr = `${year}-${month}-${day}`;
-              
-                             const logs = await getTimeLogsForDay(user.id, dateStr);
-               const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
-               
-               if (activeLogs.length > 0) {
-                 // Handle multiple active sessions - use the most recent one
-                 const mostRecentLog = activeLogs.length === 1 
-                   ? activeLogs[0]
-                   : activeLogs.reduce((latest, current) => 
-                       new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
-                     );
-                 
-                 if (activeLogs.length > 1) {
-                   console.warn(`Midnight fix: Found ${activeLogs.length} active logs on ${dateStr}, using most recent:`, mostRecentLog.id);
-                 }
-                 
-                 hasActiveSession = true;
-                 foundActiveLogId = mostRecentLog.id;
-                 console.log(`Found active session from ${dateStr}:`, mostRecentLog.id);
-                 break;
-               }
-            }
-            
-            if (foundActiveLogId) {
-              setActiveLogId(foundActiveLogId);
-            }
-          } catch (error) {
-            console.error('Error checking for active session:', error);
-          }
-        }
-
-        // Validate lunch break state - only restore if recent (within 24 hours)
-        let validLunchBreak = false;
-        if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
-          const lunchAge = Date.now() - savedSession.lunchStartTime;
-          const maxLunchAge = 24 * 60 * 60 * 1000; // 24 hours
-          validLunchBreak = lunchAge < maxLunchAge;
+        if (lunchAge < maxLunchAge && savedSession.date === today) {
+          console.log('🍽️ Restoring valid lunch break state');
+          setStatus('lunch');
+          setLunchStartTime(savedSession.lunchStartTime);
+          onLunchChange?.(true);
           
-          if (!validLunchBreak) {
-            console.warn('Lunch break too old, not restoring:', Math.round(lunchAge / (60 * 60 * 1000)), 'hours');
-          }
-        }
-
-        // Restore session if it's from today OR if there's an active database session OR valid lunch break
-        const shouldRestoreSession = savedSession.date === today || hasActiveSession || validLunchBreak;
-        
-        if (shouldRestoreSession) {
-          setStatus(savedSession.status);
-          
-          // Only set startTime for working sessions, not lunch breaks
-          if (savedSession.status !== 'lunch' && savedSession.startTime) {
-            setStartTime(savedSession.startTime);
-          }
-
           const accumulatedLunch = savedSession.totalLunchTime || 0;
           setTotalLunchTime(accumulatedLunch);
           totalLunchTimeRef.current = accumulatedLunch;
-
-          if (savedSession.status === 'lunch' && savedSession.lunchStartTime) {
-            setLunchStartTime(savedSession.lunchStartTime);
-            onLunchChange?.(true);
-          }
-
-          onClockInChange?.(true);
         } else {
-          // Only clear localStorage if no active session exists
-          try {
-            localStorage.removeItem(STORAGE_KEY);
-          } catch (error) {
-            console.error('Failed to clear localStorage:', error);
-          }
+          console.log('🗑️ Clearing stale lunch break state');
+          localStorage.removeItem(STORAGE_KEY);
         }
       } else {
-        try {
+        // Clear any stale session data that doesn't match database
+        if (savedSession.date !== today) {
+          console.log('🗑️ Clearing stale session data');
           localStorage.removeItem(STORAGE_KEY);
-        } catch (error) {
-          console.error('Failed to clear localStorage:', error);
         }
       }
     } catch (error) {
-      console.error("Failed to load time session:", error);
+      console.error('Error loading session data:', error);
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch (clearError) {
         console.error('Failed to clear localStorage after error:', clearError);
       }
     }
-  }, [user?.id, onClockInChange, onLunchChange]);
+  }, [onLunchChange]);
 
   useEffect(() => {
     if (user?.id) {
-      fetchAndSumLogs();
-      loadTimeSession().catch(error => {
-        console.error('Error loading time session:', error);
-      });
+      const initializeComponent = async () => {
+        try {
+          setIsLoadingInitialData(true);
+          console.log('🚀 Initializing time tracker...');
+          
+          // Refresh from database first (source of truth)
+          const dbResult = await refreshFromDatabase();
+          
+          // Then load localStorage session data for UI state only
+          await loadTimeSession();
+          
+          console.log('✅ Time tracker initialized');
+        } catch (error) {
+          console.error('Error initializing time tracker:', error);
+        } finally {
+          setIsLoadingInitialData(false);
+        }
+      };
+      
+      initializeComponent();
     }
-  }, [user?.id, fetchAndSumLogs, loadTimeSession]);
+  }, [user?.id, refreshFromDatabase, loadTimeSession]);
 
-  // Multi-tab synchronization: Listen for localStorage changes from other tabs
+  // Periodic database sync to ensure consistency
+  useEffect(() => {
+    if (!user?.id || isLoadingInitialData) return;
+    
+    // Sync with database every 30 seconds to catch changes from other sources
+    syncInterval.current = setInterval(async () => {
+      console.log('🔄 Periodic database sync...');
+      await refreshFromDatabase();
+    }, 30000);
+    
+    return () => {
+      if (syncInterval.current) {
+        clearInterval(syncInterval.current);
+      }
+    };
+  }, [user?.id, isLoadingInitialData, refreshFromDatabase]);
+
+  // Simple multi-tab synchronization via localStorage events
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      // Only handle our specific time session storage key
-      if (e.key === STORAGE_KEY) {
+      // Handle real-time state updates from other tabs
+      if (e.key === SYNC_KEY) {
         try {
           if (e.newValue) {
-            // Another tab updated the session - sync our state to match
-            const sessionData: TimeSession = JSON.parse(e.newValue);
+            const syncData = JSON.parse(e.newValue);
             
-            console.log('Syncing state from another tab:', sessionData);
-            
-            // Sync all session state variables
-            setStatus(sessionData.status);
-            
-            // Only set startTime for working sessions, not lunch breaks
-            if (sessionData.status !== 'lunch' && sessionData.startTime) {
-              setStartTime(sessionData.startTime);
-            } else {
-              setStartTime(null);
+            // Only sync if it's from another tab and recent
+            if (syncData.tabId !== TAB_ID) {
+              const now = Date.now();
+              const timeDiff = now - syncData.timestamp;
+              
+              // Only sync if the update is recent (within 5 seconds)
+              if (timeDiff < 5000) {
+                console.log('🔄 Syncing state from another tab:', syncData.status, syncData.elapsedTime);
+                
+                setStatus(syncData.status);
+                setElapsedTime(syncData.elapsedTime);
+                setStartTime(syncData.startTime);
+                setLunchStartTime(syncData.lunchStartTime);
+                setActiveLogId(syncData.activeLogId);
+                setCurrentLunchTime(syncData.currentLunchTime || 0);
+                
+                // Update parent component callbacks
+                const isClockedIn = syncData.status === 'working' || syncData.status === 'overtime_pending';
+                const isOnLunch = syncData.status === 'lunch';
+                onClockInChange?.(isClockedIn);
+                onLunchChange?.(isOnLunch);
+              }
             }
-            
-            // Sync lunch break state
-            if (sessionData.status === 'lunch' && sessionData.lunchStartTime) {
-              setLunchStartTime(sessionData.lunchStartTime);
-              onLunchChange?.(true);
-            } else {
-              setLunchStartTime(null);
-              onLunchChange?.(false);
-            }
-            
-            // Sync accumulated lunch time
-            const accumulatedLunch = sessionData.totalLunchTime || 0;
-            setTotalLunchTime(accumulatedLunch);
-            totalLunchTimeRef.current = accumulatedLunch;
-            
-                         // Restore activeLogId if available (critical for clock out functionality)
-             if (sessionData.status === 'working' || sessionData.status === 'overtime_pending') {
-               // Try to get activeLogId from database to sync properly
-               if (user?.id) {
-                 (async () => {
-                   try {
-                     const today = getCurrentDate();
-                     const logs = await getTimeLogsForDay(user.id, today);
-                     const activeLogs = logs.filter(log => log.clock_in && !log.clock_out);
-                     
-                     if (activeLogs.length > 0) {
-                       // If multiple active logs (database corruption), use most recent
-                       const activeLog = activeLogs.length === 1 
-                         ? activeLogs[0] 
-                         : activeLogs.reduce((latest, current) => 
-                             new Date(current.clock_in) > new Date(latest.clock_in) ? current : latest
-                           );
-                       
-                       if (activeLogs.length > 1) {
-                         console.warn(`Multi-tab sync: Found ${activeLogs.length} active logs, using most recent:`, activeLog.id);
-                       }
-                       
-                       setActiveLogId(activeLog.id);
-                     }
-                   } catch (error) {
-                     console.error('Failed to restore activeLogId during sync:', error);
-                   }
-                 })();
-               }
-             } else {
-               // Clear activeLogId for non-working states
-               setActiveLogId(null);
-             }
-             
-             // Notify parent components about state change
-             const isClockedIn = sessionData.status === 'working' || sessionData.status === 'overtime_pending';
-             onClockInChange?.(isClockedIn);
-            
-          } else {
-            // Another tab cleared the session - reset our state
-            console.log('Resetting state - session cleared in another tab');
-            setStatus('idle');
-            setStartTime(null);
-            setLunchStartTime(null);
-            setTotalLunchTime(0);
-            totalLunchTimeRef.current = 0;
-            setCurrentLunchTime(0);
-            setActiveLogId(null);
-            
-            // Notify parent components
-            onClockInChange?.(false);
-            onLunchChange?.(false);
           }
         } catch (error) {
-          console.error('Failed to sync session from another tab:', error);
-          // If data is corrupted, ignore the change
+          console.error('Failed to sync state from another tab:', error);
+        }
+      }
+
+      // Handle session data changes (for backward compatibility)
+      if (e.key === STORAGE_KEY) {
+        try {
+          if (!e.newValue) {
+            // Session cleared in another tab - refresh from database
+            console.log('🔄 Session cleared in another tab - refreshing from database');
+            refreshFromDatabase();
+          }
+        } catch (error) {
+          console.error('Failed to handle session change:', error);
         }
       }
     };
 
-    // Listen for storage changes from other tabs
     window.addEventListener('storage', handleStorageChange);
     
-    // Cleanup event listener on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, [onClockInChange, onLunchChange]);
+  }, [onClockInChange, onLunchChange, user?.id, refreshFromDatabase]);
 
   // Load saved daily lunch seconds once on mount (per day)
   useEffect(() => {
@@ -406,6 +373,16 @@ export function TimeTracker({
         const totalWorkTime = Math.max(0, Math.floor(baseTimeRef.current + currentSessionGrossTime));
         setElapsedTime(totalWorkTime);
 
+        // Broadcast state to other tabs
+        broadcastStateChange({
+          status,
+          elapsedTime: totalWorkTime,
+          startTime,
+          lunchStartTime,
+          activeLogId,
+          currentLunchTime
+        });
+
         const hoursWorked = totalWorkTime / 3600;
         if (hoursWorked >= maxHoursBeforeOvertime && status === 'working' && !overtimeNotificationShown) {
           setStatus("overtime_pending");
@@ -420,7 +397,18 @@ export function TimeTracker({
       const updateLunchTimer = () => {
         const now = Date.now();
         const currentBreakDuration = (now - lunchStartTime) / 1000;
-        setCurrentLunchTime(Math.floor(currentBreakDuration));
+        const newLunchTime = Math.floor(currentBreakDuration);
+        setCurrentLunchTime(newLunchTime);
+        
+        // Broadcast lunch state to other tabs
+        broadcastStateChange({
+          status,
+          elapsedTime,
+          startTime,
+          lunchStartTime,
+          activeLogId,
+          currentLunchTime: newLunchTime
+        });
       };
       updateLunchTimer();
       intervalRef.current = setInterval(updateLunchTimer, 1000);
@@ -433,7 +421,7 @@ export function TimeTracker({
         clearInterval(intervalRef.current);
       }
     };
-  }, [status, startTime, lunchStartTime, saveTimeSession, maxHoursBeforeOvertime, overtimeNotificationShown]);
+  }, [status, startTime, lunchStartTime, saveTimeSession, maxHoursBeforeOvertime, overtimeNotificationShown, broadcastStateChange, elapsedTime, activeLogId, currentLunchTime]);
 
   useEffect(() => {
     onTimeUpdate?.(elapsedTime, status);
@@ -456,7 +444,7 @@ export function TimeTracker({
     setClockInConfirmOpen(false);
 
     try {
-      await fetchAndSumLogs(); // Get latest log data before clocking in
+      await refreshFromDatabase(); // Get latest database state
       resetLunchStates(); // clear any active break timers but keep daily total
       
       const now = new Date();
@@ -471,10 +459,21 @@ export function TimeTracker({
           throw new Error("Failed to create time log entry.");
       }
 
-      setStartTime(now.getTime());
+      const newStartTime = now.getTime();
+      setStartTime(newStartTime);
       setStatus("working");
       setActiveLogId(newLog.id);
       onClockInChange?.(true);
+
+      // Broadcast to other tabs immediately
+      broadcastStateChange({
+        status: "working",
+        elapsedTime: baseTimeRef.current,
+        startTime: newStartTime,
+        lunchStartTime: null,
+        activeLogId: newLog.id,
+        currentLunchTime: 0
+      });
 
       toast({
         title: "Clocked In",
@@ -559,11 +558,18 @@ export function TimeTracker({
       setElapsedTime(finalElapsedTime);
       baseTimeRef.current = finalElapsedTime;
       
-      // We still need to refresh the logs for other UI elements, but we do it manually
-      // without calling fetchAndSumLogs() to avoid its side-effects on elapsedTime.
-      const today = getCurrentDate();
-      const logs = await getTimeLogsForDay(user.id, today);
-      setLogsToday(logs);
+      // Broadcast idle state to other tabs immediately
+      broadcastStateChange({
+        status: "idle",
+        elapsedTime: finalElapsedTime,
+        startTime: null,
+        lunchStartTime: null,
+        activeLogId: null,
+        currentLunchTime: 0
+      });
+      
+      // Refresh logs from database
+      await refreshFromDatabase();
 
     } catch (error) {
       toast({
@@ -646,9 +652,20 @@ export function TimeTracker({
       setStartTime(null);
 
       // Start lunch timers
-      setLunchStartTime(Date.now());
+      const lunchStart = Date.now();
+      setLunchStartTime(lunchStart);
       setStatus("lunch");
       onLunchChange?.(true);
+
+      // Broadcast lunch state to other tabs immediately
+      broadcastStateChange({
+        status: "lunch",
+        elapsedTime,
+        startTime: null,
+        lunchStartTime: lunchStart,
+        activeLogId: null,
+        currentLunchTime: 0
+      });
 
       // Notify dashboard to refresh weekly summary
       dashboardEvents.emit('time_logged');
@@ -701,8 +718,9 @@ export function TimeTracker({
       const newLog = Array.isArray(data) ? data[0] : data;
       if (!newLog) throw new Error("No time log returned after lunch.");
 
+      const newStartTime = now.getTime();
       setActiveLogId(newLog.id);
-      setStartTime(now.getTime());
+      setStartTime(newStartTime);
 
       // Reset current break timers
       setLunchStartTime(null);
@@ -713,6 +731,16 @@ export function TimeTracker({
       const newStatus = hoursWorkedSoFar >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
       setStatus(newStatus);
       onLunchChange?.(false);
+
+      // Broadcast working state to other tabs immediately
+      broadcastStateChange({
+        status: newStatus,
+        elapsedTime: baseTimeRef.current,
+        startTime: newStartTime,
+        lunchStartTime: null,
+        activeLogId: newLog.id,
+        currentLunchTime: 0
+      });
 
       toast({
         title: "Back to Work!",
