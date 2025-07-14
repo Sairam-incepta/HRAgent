@@ -997,7 +997,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
                 saleBonus += baseBrokerBonus * 2;
               }
             }
-
+            ///// 🚨 ISSUE 🚨 /////
             // 3. If policy_type contains 'life' or 'life_insurance', add 10
             const policyTypeLower = policy_type.toLowerCase();
             if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
@@ -1096,7 +1096,7 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
     // Fetch the policy details
     const { data: policyData, error: policyError } = await supabase
       .from('policy_sales')
-      .select('id, broker_fee, is_cross_sold_policy, policy_type, amount, sale_date')
+      .select('id, broker_fee, is_cross_sold_policy, policy_type, amount, sale_date, policy_number')
       .eq('id', policyId)
       .single();
 
@@ -1119,7 +1119,7 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
       is_cross_sold_policy = false,
       policy_type = '',
       amount = 0,
-      sale_date
+      policy_number
     } = policyData;
 
     let totalBonus = 0;
@@ -1133,14 +1133,14 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
     const isHighValue = amount >= 5000;
 
     if (isHighValue) {
-      // For high-value policies (≥ $5000), ONLY use admin bonus
-      const saleDateStr = getLocalDateString(new Date(sale_date));
-      
+          // For high-value policies (≥ $5000), ONLY use admin bonus
+          
       const { data: highValueNotifications, error: hvError } = await supabase
         .from('high_value_policy_notifications')
-        .select('admin_bonus')
+        .select('admin_bonus, status, policy_number')
         .eq('employee_id', employeeId)
-        .eq('reviewed_at', saleDateStr); // Assuming reviewed_at matches sale_date
+        .eq('policy_number', policyData.policy_number)
+        .eq('status', 'reviewed'); // Only reviewed notifications have valid admin bonuses
       
       if (!hvError && highValueNotifications && highValueNotifications.length > 0) {
         const adminBonus = highValueNotifications.reduce((sum, notification) => {
@@ -1149,7 +1149,8 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
         breakdown.adminBonus = adminBonus;
         totalBonus = adminBonus;
       }
-    } else {
+    } 
+    else {
       // For regular policies (< $5000), calculate standard bonuses
       
       // 1. Broker fee bonus: 10% of (broker fee - 100) - only if broker_fee > 100
@@ -1160,7 +1161,7 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
         
         // 2. Cross-selling bonus: additional 2x broker fee bonus if cross-sold
         if (is_cross_sold_policy) {
-          const crossSellingBonus = baseBrokerBonus * 2;
+          const crossSellingBonus = baseBrokerBonus;
           breakdown.crossSellingBonus = crossSellingBonus;
           totalBonus += crossSellingBonus;
         }
