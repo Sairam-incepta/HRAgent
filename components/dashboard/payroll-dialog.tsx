@@ -92,20 +92,6 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
 
       setHighValuePolicies(highValueNotificationsForAlert || []);
       
-      // Debug: Log the alert data in detail
-      console.log('🚨 Alert Data Debug:', {
-        totalNotifications: (highValueNotificationsForAlert || []).length,
-        pendingPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'pending').length,
-        reviewedPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'reviewed').length,
-        resolvedPolicies: (highValueNotificationsForAlert || []).filter(p => p.status === 'resolved').length,
-        policies: (highValueNotificationsForAlert || []).map(p => ({
-          id: p.id,
-          policy_number: p.policy_number,
-          status: p.status,
-          employee_id: p.employee_id
-        }))
-      });
-      
       // Initialize additional bonuses for high-value policies (separate from base bonus)
       const initialAdditionalBonuses: {[key: string]: number | null} = {};
       (highValueNotificationsForAlert || []).forEach((policy: any) => {

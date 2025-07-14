@@ -7,8 +7,8 @@ import { getEmployeeRateForDate } from "./misc";
 
 // Enhanced Payroll Functions with Real Database Data
 export interface PayrollPeriod {
-  period: string;
-  employees: number;
+  period: string;  // ✅
+  employees: number;  // ✅
   total: number;
   status: 'current' | 'completed' | 'upcoming';
   startDate: string;
@@ -52,7 +52,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
 
     // Helper functions
     const isAdmin = (emp: any): boolean => 
-      emp.position === 'HR Manager' || emp.email === 'admin@letsinsure.hr';
+      emp.position === 'Administrator';
 
     const calculatePeriodDates = (periodOffset: number): { startDate: Date; endDate: Date } => {
       const startDate = new Date(REFERENCE_DATE);
@@ -63,16 +63,160 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     };
 
     const formatPeriodName = (startDate: Date, endDate: Date): string => 
-      `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+      `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
     const filterSalesForPeriod = (startDate: Date, endDate: Date) => 
       policySales.filter(sale => {
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
+    
+    // Updated calculateTotalBonuses function
+    const calculateTotalBonuses = async (sales: any[], startDate: Date, endDate: Date): Promise<number> => {
+      try {
+        if (!sales || sales.length === 0) return 0;
 
-    const calculateTotalBonuses = (sales: any[]): number => 
-      sales.reduce((sum, sale) => sum + (sale.bonus || 0), 0);
+        const startDateStr = getLocalDateString(startDate);
+        const endDateStr = getLocalDateString(endDate);
+        const saleIds = sales.map(sale => sale.id);
+        
+        // Get unique employee IDs from the sales
+        const employeeIds = Array.from(new Set(sales.map(sale => sale.employee_id)));
+
+        // Fetch additional data in parallel
+        const [
+          { data: policySalesData, error: policySalesError },
+          { data: highValueNotifications, error: highValueError },
+          { data: clientReviews, error: reviewsError }
+        ] = await Promise.all([
+          // Get policy sales data with date filtering
+          supabase
+            .from('policy_sales')
+            .select('id, broker_fee, is_cross_sold_policy, policy_type, amount')
+            .in('id', saleIds)
+            .gte('sale_date', startDateStr)
+            .lte('sale_date', endDateStr),
+          
+          // Get admin bonuses for high value policies by employee and date range
+          supabase
+            .from('high_value_policy_notifications')
+            .select('id, employee_id, admin_bonus')
+            .in('employee_id', employeeIds)
+            .gte('reviewed_at', startDateStr)
+            .lte('reviewed_at', endDateStr),
+          
+          // Get client reviews by employee for the time period
+          supabase
+            .from('client_reviews')
+            .select('employee_id, rating, review_date')
+            .in('employee_id', employeeIds)
+            .gte('review_date', startDateStr)
+            .lte('review_date', endDateStr)
+        ]);
+
+        // Handle errors
+        if (policySalesError) {
+          console.error('Error fetching policy sales data:', policySalesError);
+          return 0;
+        }
+        if (highValueError) {
+          console.error('Error fetching high value notifications:', highValueError);
+        }
+        if (reviewsError) {
+          console.error('Error fetching client reviews:', reviewsError);
+        }
+
+        // Create lookup maps for efficient data access
+        const policySalesMap = new Map(
+          (policySalesData || []).map(policy => [policy.id, policy])
+        );
+        
+        // Group high value notifications by employee_id (since there's no policy_sale_id)
+        const highValueByEmployee = new Map<string, any[]>();
+        (highValueNotifications || []).forEach(notification => {
+          if (!highValueByEmployee.has(notification.employee_id)) {
+            highValueByEmployee.set(notification.employee_id, []);
+          }
+          highValueByEmployee.get(notification.employee_id)!.push(notification);
+        });
+
+        // Calculate sale-based bonuses first
+        let totalBonuses = 0;
+        
+        // Detailed tracking for breakdown
+        let brokerFeeTotal = 0;
+        let crossSellTotal = 0;
+        let lifeInsuranceTotal = 0;
+        let adminBonusTotal = 0;
+
+        sales.forEach(sale => {
+          const policyData = policySalesMap.get(sale.id);
+
+          if (!policyData) return; // Skip if no policy data found
+
+          let saleBonus = 0;
+          const {
+            broker_fee = 0,
+            is_cross_sold_policy = false,
+            policy_type = '',
+            amount = 0
+          } = policyData;
+
+          // 1. 10% of (broker fee - 100)
+          const baseBrokerBonus = Math.max(0, (broker_fee - 100) * 0.1);
+          saleBonus += baseBrokerBonus;
+          brokerFeeTotal += baseBrokerBonus;
+
+          // 2. If cross-sold, add an additional 2x of 10% of broker fee
+          if (is_cross_sold_policy) {
+            const crossSellBonus = baseBrokerBonus * 2;
+            saleBonus += crossSellBonus;
+            crossSellTotal += crossSellBonus;
+          }
+
+          // 3. If policy_type contains 'life' or 'life_insurance', add 10
+          const policyTypeLower = policy_type.toLowerCase();
+          if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
+            saleBonus += 10;
+            lifeInsuranceTotal += 10;
+          }
+
+          // 4. If amount >= 5000, add admin bonus from employee's high value notifications
+          if (amount >= 5000) {
+            const employeeHighValueNotifications = highValueByEmployee.get(sale.employee_id) || [];
+            const totalAdminBonus = employeeHighValueNotifications.reduce((sum, notification) => {
+              return sum + (notification.admin_bonus || 0);
+            }, 0);
+            saleBonus += totalAdminBonus;
+            adminBonusTotal += totalAdminBonus;
+          }
+
+          totalBonuses += saleBonus;
+        });
+
+        // Add review bonuses for the period (separate from individual sales)
+        const fiveStarReviews = (clientReviews || []).filter(review => review.rating === 5);
+        const reviewBonuses = fiveStarReviews.length * 10; // $10 per 5-star review
+        totalBonuses += reviewBonuses;
+
+        // Log detailed breakdown
+        console.log('🔍 Detailed Bonus Breakdown for period:', startDateStr, 'to', endDateStr);
+        console.log('📈 Sales processed:', sales.length);
+        console.log('💰 Bonus Breakdown:', {
+          brokerFees: `$${brokerFeeTotal.toFixed(2)}`,
+          crossSelling: `$${crossSellTotal.toFixed(2)}`,
+          lifeInsurance: `$${lifeInsuranceTotal.toFixed(2)}`,
+          adminBonuses: `$${adminBonusTotal.toFixed(2)}`,
+          reviewBonuses: `$${reviewBonuses.toFixed(2)} (${fiveStarReviews.length} five-star reviews)`,
+          total: `$${totalBonuses.toFixed(2)}`
+        });
+
+        return Math.round(totalBonuses * 100) / 100; // Round to 2 decimal places
+      } catch (error) {
+        console.error('Error calculating total bonuses:', error);
+        return 0;
+      }
+    };
 
     const calculateHoursBreakdown = (totalHours: number, employeeCount: number) => {
       const maxRegularHours = employeeCount * HOURS_PER_EMPLOYEE_BIWEEKLY;
@@ -165,14 +309,14 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       };
     };
 
-    // Helper function to create a period object (only for periods with data)
-    const createPeriodObject = (
+    // Helper function to create a period object (now async)
+    const createPeriodObject = async (
       periodOffset: number, 
       status: 'completed' | 'current'
-    ): PayrollPeriod => {
+    ): Promise<PayrollPeriod> => {
       const { startDate, endDate } = calculatePeriodDates(periodOffset);
       const periodSales = filterSalesForPeriod(startDate, endDate);
-      const totalBonuses = calculateTotalBonuses(periodSales);
+      const totalBonuses = await calculateTotalBonuses(periodSales, startDate, endDate);
       const { totalHours, totalPay } = calculatePeriodPay(startDate, endDate);
       const finalTotalPay = totalPay + totalBonuses;
       const { regularHours, overtimeHours } = calculateHoursBreakdown(totalHours, activeEmployees.length);
@@ -200,8 +344,8 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       
       return {
         period: formatPeriodName(startDate, endDate),
-        employees: activeEmployees.length,
-        total: 0,
+        employees: activeEmployees.length,  
+        total: 0, 
         status: 'upcoming',
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
@@ -220,7 +364,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     console.log(`📅 Current period: ${currentStart.toISOString().split('T')[0]} to ${currentEnd.toISOString().split('T')[0]}`);
 
     const currentPeriodSales = filterSalesForPeriod(currentStart, currentEnd);
-    const currentTotalBonuses = calculateTotalBonuses(currentPeriodSales);
+    const currentTotalBonuses = await calculateTotalBonuses(currentPeriodSales, currentStart, currentEnd);
     const { totalHours: currentTotalHours, totalPay: currentBasePay } = calculatePeriodPay(currentStart, currentEnd);
 
     console.log(`💰 Current period sales: ${currentPeriodSales.length}`);
@@ -248,12 +392,12 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       
       // Only calculate full period data if there's any activity
       if (hasTimeLogs || periodSales.length > 0) {
-        periods.push(createPeriodObject(periodOffset, 'completed'));
+        periods.push(await createPeriodObject(periodOffset, 'completed'));
       }
     }
 
     // 2. Add current period (always included)
-    periods.push(createPeriodObject(currentPeriodOffset, 'current'));
+    periods.push(await createPeriodObject(currentPeriodOffset, 'current'));
 
     // 3. OPTIMIZATION: Add only next upcoming period (not 2) since future periods have limited value
     // This reduces computation and UI clutter while still showing the next pay period dates
@@ -261,7 +405,8 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
 
     console.log(`📊 Generated ${periods.length} payroll periods (optimized for actual usage)`);
     return periods;
-  } catch (error) {
+  } 
+  catch (error) {
     console.error('❌ Error getting payroll periods:', error);
     return [];
   }
@@ -323,7 +468,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
 
     // Helper functions - extracted and reusable
     const isAdmin = (emp: any): boolean => 
-      emp.position === 'HR Manager' || emp.email === 'admin@letsinsure.hr';
+      emp.position === 'Administrator'; // CHANGED: Match getPayrollPeriods logic
 
     const calculateHoursBreakdown = (totalHours: number) => {
       const regularHours = Math.min(totalHours, BIWEEKLY_REGULAR_HOURS);
@@ -341,7 +486,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     
     console.log(`📊 Found ${activeEmployees.length} active employees`);
 
-    // OPTIMIZATION: Fetch all data in parallel with optimized queries
+    // CHANGED: Updated data fetching to match getPayrollPeriods exactly
     const [
       policySales, 
       highValueNotificationsResult, 
@@ -349,21 +494,21 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       timeLogsResult
     ] = await Promise.all([
       getPolicySales(),
-      // OPTIMIZATION: More targeted high value policy query
+      // FIXED: Use correct table name and date field
       supabase
         .from('high_value_policy_notifications')
-        .select('*')
+        .select('id, employee_id, admin_bonus')
         .in('employee_id', activeEmployeeIds)
-        .lte('biweekly_period_start', endDate)
-        .gte('biweekly_period_end', startDate),
-      // OPTIMIZATION: Only get reviews for active employees
+        .gte('reviewed_at', getLocalDateString(start))
+        .lte('reviewed_at', getLocalDateString(end)),
+      // FIXED: Use correct table name and date field  
       supabase
         .from('client_reviews')
-        .select('*')
+        .select('employee_id, rating, review_date')
         .in('employee_id', activeEmployeeIds)
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString()),
-      // OPTIMIZATION: Only get time logs for active employees
+        .gte('review_date', getLocalDateString(start))
+        .lte('review_date', getLocalDateString(end)),
+      // Keep existing time logs query
       supabase
         .from('time_logs')
         .select('*')
@@ -383,6 +528,12 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     
     if (timeLogsResult?.error) {
       console.error('❌ Error fetching time logs:', timeLogsResult.error);
+    }
+    if (highValueNotificationsResult?.error) {
+      console.error('❌ Error fetching high value notifications:', highValueNotificationsResult.error);
+    }
+    if (clientReviewsResult?.error) {
+      console.error('❌ Error fetching client reviews:', clientReviewsResult.error);
     }
 
     // OPTIMIZATION: Filter sales once and create lookup maps
@@ -483,58 +634,56 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         highValuePolicyBonuses: { count: 0, amount: 0 }
       };
 
-      // FIXED: Process policy sales bonuses with correct cross-selling logic
+      // CHANGED: Updated bonus calculation to match getPayrollPeriods exactly
       empSales.forEach((sale: any) => {
-        // Broker fee bonus: 10% of (broker fee - 100)
-        if (sale.broker_fee > 100) {
-          const baseBonus = (sale.broker_fee - 100) * 0.1;
+        const {
+          broker_fee = 0,
+          is_cross_sold_policy = false,
+          policy_type = '',
+          amount = 0
+        } = sale;
+
+        // CHANGED: If amount >= 5000, ONLY use admin bonus
+        if (amount >= 5000) {
+          const totalAdminBonus = empHVNotifications.reduce((sum, notification) => {
+            return sum + (notification.admin_bonus || 0);
+          }, 0);
           
-          // FIXED: Cross-selling gets 2x the base bonus (total, not additional)
-          if (sale.cross_sold || sale.is_cross_sold_policy) {
-            empBonusBreakdown.crossSellingBonuses.count++;
-            empBonusBreakdown.crossSellingBonuses.amount += baseBonus * 2; // 2x total bonus for cross-selling
-          } else {
-            empBonusBreakdown.brokerFeeBonuses.count++;
-            empBonusBreakdown.brokerFeeBonuses.amount += baseBonus; // Regular 1x bonus
+          if (totalAdminBonus > 0) {
+            empBonusBreakdown.highValuePolicyBonuses.count = empHVNotifications.length;
+            empBonusBreakdown.highValuePolicyBonuses.amount += totalAdminBonus;
           }
-        }
-        
-        // Life insurance bonus: $10 for life insurance policies
-        if (sale.policy_type?.toLowerCase().includes('life') || 
-            (sale.cross_sold_type && sale.cross_sold_type.toLowerCase().includes('life'))) {
-          empBonusBreakdown.lifeInsuranceBonuses.count++;
-          empBonusBreakdown.lifeInsuranceBonuses.amount += 10.00;
+        } else {
+          // For sales < 5000, calculate regular bonuses
+          
+          // Broker fee bonus: 10% of (broker fee - 100) - only if broker_fee > 100
+          if (broker_fee > 100) {
+            const baseBonus = (broker_fee - 100) * 0.1;
+            
+            // Regular broker fee bonus
+            empBonusBreakdown.brokerFeeBonuses.count++;
+            empBonusBreakdown.brokerFeeBonuses.amount += baseBonus;
+            
+            // FIXED: If cross-sold, add additional 2x broker fee bonus
+            if (is_cross_sold_policy) {
+              empBonusBreakdown.crossSellingBonuses.count++;
+              empBonusBreakdown.crossSellingBonuses.amount += baseBonus * 2;
+            }
+          }
+          
+          // CHANGED: Updated life insurance bonus logic to match getPayrollPeriods
+          const policyTypeLower = (policy_type || '').toLowerCase();
+          if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
+            empBonusBreakdown.lifeInsuranceBonuses.count++;
+            empBonusBreakdown.lifeInsuranceBonuses.amount += 10.00;
+          }
         }
       });
 
-      // Review bonuses - 5-star reviews only
+      // CHANGED: Review bonuses now use employee-based approach like getPayrollPeriods
       const fiveStarReviews = empReviews.filter((review: any) => review.rating === 5);
       empBonusBreakdown.reviewBonuses.count = fiveStarReviews.length;
       empBonusBreakdown.reviewBonuses.amount = fiveStarReviews.length * 10;
-
-      // High value policy bonuses
-      const resolvedHVNotifications = empHVNotifications
-        .filter((hvn: any) => hvn.status === 'reviewed' || hvn.status === 'resolved');
-      
-      let empHighValueBonusAmount = 0;
-      let empHighValueBonusCount = 0;
-      
-      resolvedHVNotifications.forEach((hvn: any) => {
-        let bonusAmount = 0;
-        if (hvn.admin_bonus && hvn.admin_bonus > 0) {
-          bonusAmount += hvn.admin_bonus;
-        } else if (hvn.current_bonus && hvn.current_bonus > 0) {
-          bonusAmount += hvn.current_bonus;
-        }
-        
-        if (bonusAmount > 0) {
-          empHighValueBonusAmount += bonusAmount;
-          empHighValueBonusCount++;
-        }
-      });
-      
-      empBonusBreakdown.highValuePolicyBonuses.count = empHighValueBonusCount;
-      empBonusBreakdown.highValuePolicyBonuses.amount = empHighValueBonusAmount;
 
       // Calculate totals
       const totalBonuses = 
@@ -709,12 +858,12 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
     const newestEndDate = new Date(newestStartDate);
     newestEndDate.setDate(newestStartDate.getDate() + 13);
 
-    // OPTIMIZATION 1: Bulk fetch all time logs for the entire history range
+    // UPDATED: Bulk fetch all data needed for bonus calculations
     const allStartDateStr = getLocalDateString(oldestStartDate);
     const allEndDateStr = getLocalDateString(newestEndDate);
 
-    // OPTIMIZATION 2: Bulk fetch all high value notifications for the date range
-    const [timeLogsResult, highValueNotificationsResult] = await Promise.all([
+    // CHANGED: Updated data fetching to match other functions
+    const [timeLogsResult, highValueNotificationsResult, clientReviewsResult] = await Promise.all([
       supabase
         .from('time_logs')
         .select('*')
@@ -724,20 +873,35 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         .order('date', { ascending: true })
         .order('clock_in', { ascending: true }),
       
+      // FIXED: Use correct table name and date field
       supabase
         .from('high_value_policy_notifications')
-        .select('admin_bonus, current_bonus, status, biweekly_period_start, biweekly_period_end')
+        .select('id, employee_id, admin_bonus')
         .eq('employee_id', employeeId)
-        .lte('biweekly_period_start', allEndDateStr)
-        .gte('biweekly_period_end', allStartDateStr)
-        .in('status', ['reviewed', 'resolved'])
+        .gte('reviewed_at', allStartDateStr)
+        .lte('reviewed_at', allEndDateStr),
+      
+      // ADDED: Fetch client reviews for bonus calculations
+      supabase
+        .from('client_reviews')
+        .select('employee_id, rating, review_date')
+        .eq('employee_id', employeeId)
+        .gte('review_date', allStartDateStr)
+        .lte('review_date', allEndDateStr)
     ]);
 
     const allTimeLogs = timeLogsResult.data || [];
     const allHighValueNotifications = highValueNotificationsResult.data || [];
+    const allClientReviews = clientReviewsResult.data || [];
 
     if (timeLogsResult.error) {
       console.error('Error fetching time logs for payroll history:', timeLogsResult.error);
+    }
+    if (highValueNotificationsResult.error) {
+      console.error('Error fetching high value notifications for payroll history:', highValueNotificationsResult.error);
+    }
+    if (clientReviewsResult.error) {
+      console.error('Error fetching client reviews for payroll history:', clientReviewsResult.error);
     }
 
     // Helper function to calculate hours for a specific period using pre-fetched logs
@@ -766,27 +930,99 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       return Math.round(totalHours * 100) / 100;
     };
 
-    // Helper function to get high value bonuses for a specific period
-    const getHighValueBonusesForPeriod = (startDate: Date, endDate: Date): number => {
-      const startDateStr = startDate.toISOString().split('T')[0];
-      const endDateStr = endDate.toISOString().split('T')[0];
-      
-      const periodNotifications = allHighValueNotifications.filter(hvn => 
-        hvn.biweekly_period_start <= endDateStr && hvn.biweekly_period_end >= startDateStr
-      );
+    // COMPLETELY REWRITTEN: New bonus calculation function to match other functions
+    const calculateBonusesForPeriod = async (periodSales: any[], startDate: Date, endDate: Date): Promise<number> => {
+      try {
+        if (!periodSales || periodSales.length === 0) return 0;
 
-      return periodNotifications.reduce((sum, hvn) => {
-        let bonusAmount = 0;
-        // Include admin bonus if set
-        if (hvn.admin_bonus && hvn.admin_bonus > 0) {
-          bonusAmount += hvn.admin_bonus;
+        const startDateStr = getLocalDateString(startDate);
+        const endDateStr = getLocalDateString(endDate);
+        const saleIds = periodSales.map(sale => sale.id);
+
+        // Fetch policy sales data for bonus calculations
+        const { data: policySalesData, error: policySalesError } = await supabase
+          .from('policy_sales')
+          .select('id, broker_fee, is_cross_sold_policy, policy_type, amount')
+          .in('id', saleIds)
+          .gte('sale_date', startDateStr)
+          .lte('sale_date', endDateStr);
+
+        if (policySalesError) {
+          console.error('Error fetching policy sales data for bonus calculation:', policySalesError);
+          return 0;
         }
-        // Include current bonus (auto-calculated) if no admin bonus is set
-        if ((!hvn.admin_bonus || hvn.admin_bonus <= 0) && hvn.current_bonus && hvn.current_bonus > 0) {
-          bonusAmount += hvn.current_bonus;
-        }
-        return sum + bonusAmount;
-      }, 0);
+
+        // Create lookup map for policy data
+        const policySalesMap = new Map(
+          (policySalesData || []).map(policy => [policy.id, policy])
+        );
+
+        // Calculate sale-based bonuses
+        let totalBonuses = 0;
+
+        periodSales.forEach(sale => {
+          const policyData = policySalesMap.get(sale.id);
+          if (!policyData) return;
+
+          let saleBonus = 0;
+          const {
+            broker_fee = 0,
+            is_cross_sold_policy = false,
+            policy_type = '',
+            amount = 0
+          } = policyData;
+
+          // CHANGED: If amount >= 5000, ONLY use admin bonus
+          if (amount >= 5000) {
+            const periodHighValueNotifications = allHighValueNotifications.filter(hvn => {
+              // Check if notification falls within this period
+              const notificationDate = getLocalDateString(new Date(hvn.reviewed_at || hvn.created_at));
+              return notificationDate >= startDateStr && notificationDate <= endDateStr;
+            });
+            
+            const totalAdminBonus = periodHighValueNotifications.reduce((sum, notification) => {
+              return sum + (notification.admin_bonus || 0);
+            }, 0);
+            saleBonus = totalAdminBonus; // ONLY admin bonus
+          } else {
+            // For sales < 5000, calculate regular bonuses
+            
+            // 1. 10% of (broker fee - 100)
+            if (broker_fee > 100) {
+              const baseBrokerBonus = (broker_fee - 100) * 0.1;
+              saleBonus += baseBrokerBonus;
+
+              // 2. If cross-sold, add an additional 2x of base broker bonus
+              if (is_cross_sold_policy) {
+                saleBonus += baseBrokerBonus * 2;
+              }
+            }
+
+            // 3. If policy_type contains 'life' or 'life_insurance', add 10
+            const policyTypeLower = policy_type.toLowerCase();
+            if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
+              saleBonus += 10;
+            }
+          }
+
+          totalBonuses += saleBonus;
+        });
+
+        // 4. Add review bonuses for the period
+        const periodReviews = allClientReviews.filter(review => {
+          const reviewDate = getLocalDateString(new Date(review.review_date));
+          return reviewDate >= startDateStr && reviewDate <= endDateStr;
+        });
+        
+        const fiveStarReviews = periodReviews.filter(review => review.rating === 5);
+        const reviewBonuses = fiveStarReviews.length * 10;
+        totalBonuses += reviewBonuses;
+
+        return Math.round(totalBonuses * 100) / 100;
+      } catch (error) {
+        console.error('Error calculating bonuses for period:', error);
+        return 0;
+      }
     };
 
     // FIX: Generate periods in chronological order (oldest to newest)
@@ -808,12 +1044,9 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       
       // OPTIMIZED: Calculate actual hours worked using pre-fetched time logs
       const totalHours = calculateHoursForPeriod(startDate, endDate);
-      const baseBonuses = periodSales.reduce((sum, sale) => sum + sale.bonus, 0);
       
-      // OPTIMIZED: Get high value bonuses using pre-fetched data
-      const highValueBonuses = getHighValueBonusesForPeriod(startDate, endDate);
-      
-      const totalBonuses = baseBonuses + highValueBonuses;
+      // CHANGED: Use new bonus calculation system
+      const totalBonuses = await calculateBonusesForPeriod(periodSales, startDate, endDate);
       
       // Calculate overtime for biweekly period (80 regular hours)
       const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
@@ -846,5 +1079,122 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
   } catch (error) {
     console.error('Error getting employee payroll history:', error);
     return [];
+  }
+};
+
+export const calculateIndividualPolicyBonus = async (policyId: string, employeeId: string): Promise<{
+  totalBonus: number;
+  breakdown: {
+    brokerFeeBonus: number;
+    crossSellingBonus: number;
+    lifeInsuranceBonus: number;
+    adminBonus: number;
+  };
+  isHighValue: boolean;
+}> => {
+  try {
+    // Fetch the policy details
+    const { data: policyData, error: policyError } = await supabase
+      .from('policy_sales')
+      .select('id, broker_fee, is_cross_sold_policy, policy_type, amount, sale_date')
+      .eq('id', policyId)
+      .single();
+
+    if (policyError || !policyData) {
+      console.error('Error fetching policy data:', policyError);
+      return {
+        totalBonus: 0,
+        breakdown: {
+          brokerFeeBonus: 0,
+          crossSellingBonus: 0,
+          lifeInsuranceBonus: 0,
+          adminBonus: 0
+        },
+        isHighValue: false
+      };
+    }
+
+    const {
+      broker_fee = 0,
+      is_cross_sold_policy = false,
+      policy_type = '',
+      amount = 0,
+      sale_date
+    } = policyData;
+
+    let totalBonus = 0;
+    const breakdown = {
+      brokerFeeBonus: 0,
+      crossSellingBonus: 0,
+      lifeInsuranceBonus: 0,
+      adminBonus: 0
+    };
+
+    const isHighValue = amount >= 5000;
+
+    if (isHighValue) {
+      // For high-value policies (≥ $5000), ONLY use admin bonus
+      const saleDateStr = getLocalDateString(new Date(sale_date));
+      
+      const { data: highValueNotifications, error: hvError } = await supabase
+        .from('high_value_policy_notifications')
+        .select('admin_bonus')
+        .eq('employee_id', employeeId)
+        .eq('reviewed_at', saleDateStr); // Assuming reviewed_at matches sale_date
+      
+      if (!hvError && highValueNotifications && highValueNotifications.length > 0) {
+        const adminBonus = highValueNotifications.reduce((sum, notification) => {
+          return sum + (notification.admin_bonus || 0);
+        }, 0);
+        breakdown.adminBonus = adminBonus;
+        totalBonus = adminBonus;
+      }
+    } else {
+      // For regular policies (< $5000), calculate standard bonuses
+      
+      // 1. Broker fee bonus: 10% of (broker fee - 100) - only if broker_fee > 100
+      if (broker_fee > 100) {
+        const baseBrokerBonus = (broker_fee - 100) * 0.1;
+        breakdown.brokerFeeBonus = baseBrokerBonus;
+        totalBonus += baseBrokerBonus;
+        
+        // 2. Cross-selling bonus: additional 2x broker fee bonus if cross-sold
+        if (is_cross_sold_policy) {
+          const crossSellingBonus = baseBrokerBonus * 2;
+          breakdown.crossSellingBonus = crossSellingBonus;
+          totalBonus += crossSellingBonus;
+        }
+      }
+      
+      // 3. Life insurance bonus: $10 if policy type contains 'life'
+      const policyTypeLower = policy_type.toLowerCase();
+      if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
+        breakdown.lifeInsuranceBonus = 10;
+        totalBonus += 10;
+      }
+    }
+
+    return {
+      totalBonus: Math.round(totalBonus * 100) / 100,
+      breakdown: {
+        brokerFeeBonus: Math.round(breakdown.brokerFeeBonus * 100) / 100,
+        crossSellingBonus: Math.round(breakdown.crossSellingBonus * 100) / 100,
+        lifeInsuranceBonus: Math.round(breakdown.lifeInsuranceBonus * 100) / 100,
+        adminBonus: Math.round(breakdown.adminBonus * 100) / 100
+      },
+      isHighValue
+    };
+  } catch (error) {
+    console.error('Error calculating individual policy bonus:', error);
+    return {
+      totalBonus: 0,
+      breakdown: {
+        brokerFeeBonus: 0,
+        crossSellingBonus: 0,
+        lifeInsuranceBonus: 0,
+        adminBonus: 0
+      },
+      isHighValue: false
+    };
   }
 };

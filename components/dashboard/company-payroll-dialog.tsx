@@ -165,12 +165,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
               {(() => {
                 const hasPendingPolicies = highValuePolicies.some(policy => policy.status === 'pending');
                 const pendingCount = highValuePolicies.filter(policy => policy.status === 'pending').length;
-                console.log('🚨 Company Payroll Alert Condition Check:', {
-                  totalPolicies: highValuePolicies.length,
-                  hasPendingPolicies,
-                  pendingCount,
-                  policiesWithStatus: highValuePolicies.map(p => ({ id: p.id, policy_number: p.policy_number, status: p.status }))
-                });
+
                 return hasPendingPolicies;
               })() && (
                 <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">

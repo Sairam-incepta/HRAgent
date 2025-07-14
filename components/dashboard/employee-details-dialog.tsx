@@ -14,6 +14,7 @@ import { getEmployeeBonus } from "@/lib/util/employee-bonus";
 import { getWeeklySummary } from "@/lib/util/get";
 import { getTimeLogsForDay } from "@/lib/util/time-logs";
 import { getDailySummaries } from "@/lib/util/daily-summaries";
+import { calculateIndividualPolicyBonus } from "@/lib/util/payroll";
 import { PasswordResetDialog } from "./password-reset-dialog";
 import { dashboardEvents } from "@/lib/events";
 
@@ -54,6 +55,8 @@ export function EmployeeDetailsDialog({
   const [loading, setLoading] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
   const [clockTimes, setClockTimes] = useState<Record<string, { firstIn: string | null, lastOut: string | null }>>({});
+  const [policyBonuses, setPolicyBonuses] = useState<Record<string, number>>({});
+  const [bonusesLoading, setBonusesLoading] = useState(false);  
 
   // Calculate max daily hours once for consistent scaling across all progress bars
   const maxDailyHours = useMemo(() => {
@@ -115,6 +118,31 @@ export function EmployeeDetailsDialog({
     fetchClockTimes();
   }, [employee?.clerk_user_id, weeklyData]);
 
+  const calculateAllPolicyBonuses = async (policies: any[]) => {
+    if (!policies.length || !employee?.clerk_user_id) return;
+    
+    setBonusesLoading(true);
+    try {
+      const bonusPromises = policies.map(async (policy) => {
+        const bonusData = await calculateIndividualPolicyBonus(policy.id, employee.clerk_user_id);
+        return { policyId: policy.id, bonus: bonusData.totalBonus };
+      });
+
+      const bonusResults = await Promise.all(bonusPromises);
+      
+      const bonusMap = bonusResults.reduce((acc, { policyId, bonus }) => {
+        acc[policyId] = bonus;
+        return acc;
+      }, {} as Record<string, number>);
+
+      setPolicyBonuses(bonusMap);
+    } catch (error) {
+      console.error('Error calculating policy bonuses:', error);
+    } finally {
+      setBonusesLoading(false);
+    }
+  };
+
   const loadEmployeeData = async () => {
     if (!employee?.clerk_user_id) return;
     
@@ -129,16 +157,12 @@ export function EmployeeDetailsDialog({
         getDailySummaries(employee.clerk_user_id)
       ]);
       
-      console.log('📊 Daily summaries loaded:', summaries.length, summaries);
-      console.log('📋 Policies loaded:', policies.length);
-      console.log('⭐ Reviews loaded:', reviews.length);
-      console.log('📅 Weekly data loaded:', weekly.length);
-      
       setEmployeePolicies(policies);
       setClientReviews(reviews);
       setEmployeeBonus(bonus);
       setWeeklyData(weekly);
       setDailySummaries(summaries);
+      await calculateAllPolicyBonuses(policies);
     } catch (error) {
       console.error('Error loading employee data:', error);
     } finally {
@@ -147,9 +171,9 @@ export function EmployeeDetailsDialog({
   };
 
   const totalPolicies = employeePolicies.length;
+  const crossSoldCount = employeePolicies.filter(policy => policy.is_cross_sold_policy).length;
   const totalSales = employeePolicies.reduce((sum, policy) => sum + policy.amount, 0);
   const totalBonus = employeeBonus?.total_bonus || 0;
-          const crossSoldCount = employeePolicies.filter(policy => policy.is_cross_sold_policy).length;
 
   const formatDate = (dateString: string) => {
     // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
@@ -268,7 +292,7 @@ export function EmployeeDetailsDialog({
                       </div>
                     </div>
 
-                                         {/* Total Sales */}
+                    {/* Total Sales */}
                      <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
                        <div className="flex items-center justify-between h-full">
                          <div className="flex flex-col justify-center min-w-0 flex-1">
@@ -717,13 +741,20 @@ export function EmployeeDetailsDialog({
                                 <span className="ml-2 font-medium">${policy.broker_fee}</span>
                               </div>
                               <div>
+                                /* 🚨 ISSUE 🚨 */
                                 <span className="text-muted-foreground">Bonus:</span>
-                                <span className="ml-2 font-medium text-[#005cb3]">${policy.bonus}</span>
+                                <span className="ml-2 font-medium text-[#005cb3]">
+                                  {bonusesLoading ? (
+                                    <span className="animate-pulse">...</span>
+                                  ) : (
+                                    `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
+                                  )}
+                                </span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Cross-sold:</span>
                                 <span className="ml-2 font-medium">
-                                  {policy.is_cross_sold_policy ? `Yes - ${policy.cross_sold_type}` : "No"}
+                                  {policy.is_cross_sold_policy ? "Yes" : "No"}
                                 </span>
                               </div>
                             </div>

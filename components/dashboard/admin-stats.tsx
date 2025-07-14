@@ -134,17 +134,6 @@ export function AdminStats() {
       );
       
       const expenditure = payrollDetails.summary.totalPay;
-      
-      console.log("📊 AdminStats: Final stats:", {
-        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length },
-        totalHours: totalHours.toFixed(2),
-        totalPolicies,
-        totalPolicySalesAmount: totalPolicySalesAmount.toFixed(2),
-        overtimeHoursThisWeek: totalOvertimeThisWeek.toFixed(2),
-        regularHoursThisWeek: totalRegularHoursThisWeek.toFixed(2),
-        expenditure: expenditure.toFixed(2),
-        payrollDetailsRaw: payrollDetails.summary
-      });
 
       setStats({
         clockedInEmployees: { clockedIn: clockedInCount, total: employees.length },

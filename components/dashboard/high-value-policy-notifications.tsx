@@ -359,18 +359,6 @@ export function HighValuePolicyNotifications() {
   
   // Filter out resolved and reviewed policies from display count for alerts (only show pending)
   const pendingPolicies = highValuePolicies.filter(policy => policy.status === 'pending');
-  
-  // Add comprehensive debugging for alert persistence
-  console.log('🔍 High Value Policy Alert Debug:', {
-    totalPolicies: highValuePolicies.length,
-    alertCount: alertCount,
-    pendingCount: pendingPolicies.length,
-    allPoliciesStatus: highValuePolicies.map(p => ({
-      id: p.id,
-      policy_number: p.policy_number,
-      status: p.status
-    }))
-  });
 
   const handleUpdateThreshold = () => {
     setHighValuePolicyThreshold(tempThreshold);
@@ -564,16 +552,6 @@ export function HighValuePolicyNotifications() {
                 const daysUntilEnd = getDaysUntilPeriodEnd(policy.biweekly_period_end);
                 const isUrgent = daysUntilEnd !== null && daysUntilEnd <= 2;
                 const periodExpired = isPeriodExpired(policy.biweekly_period_end);
-                
-                console.log('🔍 Rendering policy:', {
-                  id: policy.id,
-                  policy_number: policy.policy_number,
-                  status: policy.status,
-                  periodExpired,
-                  biweekly_period_end: policy.biweekly_period_end,
-                  daysUntilEnd,
-                  shouldShowUnresolve: policy.status === 'resolved' && !periodExpired
-                });
                 
                 return (
                   <div 
