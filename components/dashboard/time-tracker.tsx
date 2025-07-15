@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, memo, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Play, Square, Coffee, Check, Clock } from "lucide-react";
@@ -20,7 +20,6 @@ interface TimeTrackerProps {
   onTimeUpdate?: (elapsedSeconds: number, status: TimeStatus) => void;
   onClockOut?: (hoursWorked: number) => void;
   maxHoursBeforeOvertime?: number;
-  hourlyRate?: number;
 }
 
 interface TimeSession {
@@ -28,9 +27,7 @@ interface TimeSession {
   status: TimeStatus;
   date: string; // YYYY-MM-DD format
   lunchStartTime?: number; // Use undefined instead of null
-  totalLunchTime?: number;
   tabId?: string; // Add unique tab identifier
-  lastUpdate?: number; // Add timestamp for sync validation
 }
 
 const STORAGE_KEY = 'letsinsure_time_session';
@@ -42,8 +39,7 @@ export function TimeTracker({
   onLunchChange,
   onTimeUpdate,
   onClockOut,
-  maxHoursBeforeOvertime = 8,
-  hourlyRate = 25
+  maxHoursBeforeOvertime = 8
 }: TimeTrackerProps) {
   const { user } = useUser();
   const [status, setStatus] = useState<TimeStatus>("idle");
@@ -54,7 +50,6 @@ export function TimeTracker({
 
   // Lunch break tracking
   const [lunchStartTime, setLunchStartTime] = useState<number | null>(null);
-  const [totalLunchTime, setTotalLunchTime] = useState(0);
   const [currentLunchTime, setCurrentLunchTime] = useState(0);
 
   // Multi-tab sync state
@@ -72,19 +67,13 @@ export function TimeTracker({
   const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
   const [lunchStartConfirmOpen, setLunchStartConfirmOpen] = useState(false);
   const [lunchEndConfirmOpen, setLunchEndConfirmOpen] = useState(false);
-  const [showOvertimeDialog, setShowOvertimeDialog] = useState(false);
-  const [showDailySummaryDialog, setShowDailySummaryDialog] = useState(false);
-  const [isUpdatingLogs, setIsUpdatingLogs] = useState(false);
   const [logsToday, setLogsToday] = useState<any[]>([]);
-  const [currentBonuses, setCurrentBonuses] = useState(0);
-  const [unreviewedPolicies, setUnreviewedPolicies] = useState(0);
 
   const { toast } = useToast();
 
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
 
   const baseTimeRef = useRef(0);
-  const totalLunchTimeRef = useRef(0);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -96,9 +85,7 @@ export function TimeTracker({
           status: status,
           date: getCurrentDate(),
           lunchStartTime: lunchStartTime || undefined,
-          totalLunchTime: totalLunchTimeRef.current,
-          tabId: TAB_ID,
-          lastUpdate: Date.now()
+          tabId: TAB_ID
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData));
       } else {
@@ -123,7 +110,6 @@ export function TimeTracker({
     try {
       const syncData = {
         ...newState,
-        totalLunchTime: totalLunchTimeRef.current, // Include accumulated lunch time
         timestamp: Date.now(),
         tabId: TAB_ID,
       };
@@ -225,12 +211,6 @@ export function TimeTracker({
           setStatus('lunch');
           setLunchStartTime(savedLunchData.lunchStartTime || null);
           onLunchChange?.(true);
-          
-          const accumulatedLunch = savedLunchData.totalLunchTime || 0;
-          setTotalLunchTime(accumulatedLunch);
-          totalLunchTimeRef.current = accumulatedLunch;
-          
-        } else {
         }
         
       } else {
@@ -301,10 +281,6 @@ export function TimeTracker({
           setLunchStartTime(savedSession.lunchStartTime);
           onLunchChange?.(true);
 
-          const accumulatedLunch = savedSession.totalLunchTime || 0;
-          setTotalLunchTime(accumulatedLunch);
-          totalLunchTimeRef.current = accumulatedLunch;
-
           // Broadcast restored lunch state to other tabs
           const currentBreakTime = Math.floor((Date.now() - savedSession.lunchStartTime) / 1000);
           broadcastStateChange({
@@ -337,7 +313,6 @@ export function TimeTracker({
         // Clear any stale session data that doesn't match database
         if (savedSession.date !== today) {
           localStorage.removeItem(STORAGE_KEY);
-        } else if (savedSession.status !== 'lunch') {
         }
       }
     } catch (error) {
@@ -377,10 +352,6 @@ export function TimeTracker({
                   setStartTime(null);
                   setActiveLogId(null);
                   onLunchChange?.(true);
-                  
-                  const accumulatedLunch = savedSession.totalLunchTime || 0;
-                  setTotalLunchTime(accumulatedLunch);
-                  totalLunchTimeRef.current = accumulatedLunch;
                   
                   console.log('🍽️ Lunch state restored during initialization');
                 }
@@ -452,9 +423,6 @@ export function TimeTracker({
                 
                 // Special handling for lunch break sync
                 if (syncData.status === 'lunch' && syncData.lunchStartTime) {
-                  const accumulatedLunch = syncData.totalLunchTime || totalLunchTimeRef.current;
-                  setTotalLunchTime(accumulatedLunch);
-                  totalLunchTimeRef.current = accumulatedLunch;
                   console.log('🍽️ Synced lunch break state from another tab');
                 }
                 
@@ -589,8 +557,7 @@ export function TimeTracker({
   const resetLunchStates = () => {
     setLunchStartTime(null);
     setCurrentLunchTime(0);
-    // totalLunchTimeRef / setTotalLunchTime persist the day’s accumulated lunch seconds;
-    // do NOT reset them here so multiple work sessions keep the correct lunch total.
+    // Break tracking is now handled in database via break_start/break_end timestamps
   };
 
   // Prevent rapid double-clicks & avoid hover-flicker
@@ -867,10 +834,6 @@ export function TimeTracker({
       // End the break in database first
       await endBreak(breakLogId);
 
-      // Accumulate lunch seconds for current session
-      totalLunchTimeRef.current += lunchDuration;
-      setTotalLunchTime(totalLunchTimeRef.current);
-
       // Start a new work session after lunch
       const now = new Date();
       const userId = user.id;
@@ -941,9 +904,6 @@ export function TimeTracker({
   };
 
   // JSX Rendering
-  const totalLunchDisplaySeconds = status === 'lunch'
-    ? totalLunchTimeRef.current + currentLunchTime
-    : totalLunchTime;
 
   const ClockInButton = () => (
     <Button
@@ -975,12 +935,7 @@ export function TimeTracker({
     <Button
       disabled={(processingLunch === 'start') || (status !== 'working' && status !== 'overtime_pending')}
       onClick={confirmStartLunch}
-      className={cn(
-        'w-full sm:w-auto h-10 px-4',
-        processingLunch === 'start'
-          ? 'bg-[#f7b97f]/60 cursor-wait text-black'
-          : 'bg-[#f7b97f] hover:bg-[#f7b97f]/90 text-black'
-      )}
+      className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#e6a366] text-black transition-none"
     >
       <Coffee className="mr-2 h-4 w-4" /> Start Break
     </Button>
@@ -990,12 +945,7 @@ export function TimeTracker({
     <Button
       disabled={(processingLunch === 'end') || status !== 'lunch'}
       onClick={confirmEndLunch}
-      className={cn(
-        'w-full sm:w-auto h-10 px-4',
-        processingLunch === 'end'
-          ? 'bg-[#005cb3]/60 cursor-wait'
-          : 'bg-[#005cb3] hover:bg-[#005cb3]/90'
-      )}
+      className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96] transition-none"
     >
       <Check className="mr-2 h-4 w-4" /> End Break
     </Button>
