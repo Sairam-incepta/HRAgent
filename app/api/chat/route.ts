@@ -33,9 +33,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (userRole === 'admin') {
-      const response = await handleAdminChatModule(message, userId);
-      return NextResponse.json({ response });
-    } else {
+      return await handleAdminChatModule(message, userId);
+    } 
+    else {
       const response = await handleEmployeeChatModule(message, userId);
       return NextResponse.json({ response });
     }
