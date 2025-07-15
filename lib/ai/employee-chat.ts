@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import openai from '@/lib/openai';
 import { addPolicySale } from '../util/policies';
 import { addClientReview } from '../util/client-reviews';
@@ -5,334 +6,302 @@ import { addDailySummary } from '../util/daily-summaries';
 import { createHighValuePolicyNotification } from '../util/high-value-policy-notifications';
 import { buildEmployeeSystemPrompt } from './system-prompts';
 import { appSettings } from '../config/app-settings';
+import { getChatMessages } from '../util/chat-messages';
+import { getTodayTimeTracking, getTodayPolicySales } from '@/lib/util/today';
+import { getEmployee } from '../util/employee';
 
-interface ConversationState {
-  type: 'policy_sale' | 'client_review' | 'daily_summary' | 'general';
-  startedAt: Date;
-  data: Record<string, any>;
-  step: number;
-  isComplete: boolean;
+// Clean up markdown formatting - avoid double formatting
+function cleanMarkdownResponse(response: string): string {
+  return response
+    // First, clean up any existing HTML tags to avoid conflicts
+    .replace(/<\/?strong>/g, '')
+    .replace(/<\/?em>/g, '')
+    // Convert markdown to HTML (only once)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // **bold** -> <strong>
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')              // *italic* -> <em>
+    .replace(/__(.*?)__/g, '<strong>$1</strong>')      // __bold__ -> <strong>
+    .replace(/_(.*?)_/g, '<em>$1</em>')                // _italic_ -> <em>
+    // Clean up bullet points
+    .replace(/^\s*-\s*/gm, '• ')
+    // Clean up excessive line breaks
+    .replace(/\n\n\n+/g, '\n\n')
+    // Fix any nested strong tags that might have been created
+    .replace(/<strong><strong>(.*?)<\/strong><\/strong>/g, '<strong>$1</strong>')
+    .replace(/<em><em>(.*?)<\/em><\/em>/g, '<em>$1</em>')
+    .trim();
 }
 
-// In-memory conversation states (in production, use Redis or database)
-const activeConversations = new Map<string, ConversationState>();
-
-function detectConversationType(message: string): 'policy_sale' | 'client_review' | 'daily_summary' | 'general' {
-  const lowerMessage = message.toLowerCase();
-  
-  // Policy sale triggers
-  if (lowerMessage.includes('sale') || lowerMessage.includes('sold') || lowerMessage.includes('policy')) {
-    return 'policy_sale';
-  }
-  
-  // Review triggers
-  if (lowerMessage.includes('review') || lowerMessage.includes('feedback')) {
-    return 'client_review';
-  }
-  
-  // Daily summary triggers
-  if (lowerMessage.includes('clock_out_prompt') || lowerMessage.includes('daily summary')) {
-    return 'daily_summary';
-  }
-  
-  return 'general';
-}
-
-function initializeConversationState(type: string, employeeId: string): ConversationState {
-  return {
-    type: type as any,
-    startedAt: new Date(),
-    data: {},
-    step: 0,
-    isComplete: false
-  };
-}
-
-function getConversationKey(employeeId: string): string {
-  return `conv_${employeeId}`;
-}
-
-function parseUserResponse(message: string, expectedFields: string[]): Record<string, any> {
-  const parsed: Record<string, any> = {};
-  
-  // Handle comma-separated responses like "John Smith, auto" or "POL-123, $2000"
-  const parts = message.split(',').map(s => s.trim());
-  
-  if (parts.length >= 2) {
-    // Multi-field response
-    expectedFields.forEach((field, index) => {
-      if (parts[index]) {
-        let value = parts[index];
-        
-        // Parse monetary values
-        if (field.includes('amount') || field.includes('fee')) {
-          value = value.replace(/[$,]/g, '');
-          parsed[field] = parseFloat(value) || 0;
-        } 
-        // Parse boolean values
-        else if (field.includes('cross')) {
-          const lowerValue = value.toLowerCase();
-          parsed[field] = ['yes', 'y', 'true', 'yep', 'sure', 'absolutely'].includes(lowerValue);
-        }
-        // Parse rating
-        else if (field === 'rating') {
-          const numberMatch = value.match(/\d+/);
-          if (numberMatch) {
-            parsed[field] = parseInt(numberMatch[0]);
-          } else if (value.toLowerCase().includes('five')) {
-            parsed[field] = 5;
-          } else if (value.toLowerCase().includes('four')) {
-            parsed[field] = 4;
-          } // etc.
-        }
-        else {
-          parsed[field] = value;
-        }
-      }
-    });
-  } else {
-    // Single field response
-    if (expectedFields.length === 1) {
-      const field = expectedFields[0];
-      let value = message;
-      
-      if (field.includes('amount') || field.includes('fee')) {
-        value = value.replace(/[$,]/g, '');
-        parsed[field] = parseFloat(value) || 0;
-      } else if (field.includes('cross')) {
-        const lowerValue = value.toLowerCase();
-        parsed[field] = ['yes', 'y', 'true', 'yep', 'sure', 'absolutely'].includes(lowerValue);
-      } else {
-        parsed[field] = value;
-      }
+// Parse JSON response from OpenAI and execute the appropriate action
+async function executeAction(response: string, employeeId: string): Promise<string> {
+  try {
+    // Look for JSON in the response
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return response; // No JSON found, return as-is
     }
+
+    const actionData = JSON.parse(jsonMatch[0]);
+    const { action, payload } = actionData;
+
+    switch (action) {
+      case 'add_policy_sale':
+        await addPolicySale({
+          employeeId,
+          clientName: payload.clientName,
+          policyNumber: payload.policyNumber,
+          policyType: payload.policyType,
+          amount: payload.amount,
+          brokerFee: payload.brokerFee,
+          crossSold: payload.crossSold,
+          saleDate: payload.saleDate ? new Date(payload.saleDate) : new Date(),
+        });
+
+        let highValueMessage = '';
+        if (payload.amount > appSettings.highValueThreshold) {
+          try {
+            await createHighValuePolicyNotification({
+              employeeId,
+              policyNumber: payload.policyNumber,
+              policyAmount: payload.amount,
+              brokerFee: payload.brokerFee,
+              currentBonus: 0,
+              isCrossSoldPolicy: payload.crossSold,
+            });
+            highValueMessage = ' This high-value policy has been flagged for potential bonus review by admin!';
+          } catch (hvpError) {
+            console.error('Error creating high-value policy notification:', hvpError);
+            highValueMessage = ' (Note: High-value policy notification could not be created)';
+          }
+        }
+
+        // Generate AI response for policy sale success
+        return await generateSuccessMessage('policy_sale', {
+          clientName: payload.clientName,
+          policyNumber: payload.policyNumber,
+          policyType: payload.policyType,
+          amount: payload.amount,
+          brokerFee: payload.brokerFee,
+          crossSold: payload.crossSold,
+          highValueMessage,
+          isHighValue: payload.amount > appSettings.highValueThreshold
+        });
+
+      case 'add_client_review':
+        await addClientReview({
+          employeeId,
+          clientName: payload.clientName,
+          policyNumber: payload.policyNumber || 'Unknown',
+          rating: payload.rating,
+          review: payload.review,
+          reviewDate: payload.reviewDate ? new Date(payload.reviewDate) : new Date(),
+        });
+
+        // Generate AI response for client review success
+        return await generateSuccessMessage('client_review', {
+          clientName: payload.clientName,
+          rating: payload.rating,
+          review: payload.review,
+          policyNumber: payload.policyNumber || 'Unknown'
+        });
+
+      case 'add_daily_summary':
+        // Get today's actual data from database
+        const [todayTimeTracking, todayPolicies] = await Promise.all([
+          getTodayTimeTracking(employeeId),
+          getTodayPolicySales(employeeId)
+        ]);
+
+        // Calculate real values from actual data
+        const hoursWorked = todayTimeTracking.totalHours || payload.hoursWorked || 8;
+        const policiesSold = todayPolicies.length;
+        const totalSalesAmount = todayPolicies.reduce((sum, policy) => sum + policy.amount, 0);
+        const totalBrokerFees = todayPolicies.reduce((sum, policy) => sum + policy.broker_fee, 0);
+
+        await addDailySummary({
+          employeeId,
+          date: payload.date ? new Date(payload.date) : new Date(),
+          hoursWorked,
+          policiesSold,
+          totalSalesAmount,
+          totalBrokerFees,
+          description: payload.description,
+          keyActivities: payload.keyActivities || payload.description.split(',').map(s => s.trim()),
+        });
+
+        // Generate AI response for daily summary success
+        return await generateSuccessMessage('daily_summary', {
+          hoursWorked,
+          policiesSold,
+          totalSalesAmount,
+          totalBrokerFees,
+          description: payload.description,
+          keyActivities: payload.keyActivities || payload.description.split(',').map(s => s.trim())
+        });
+
+      default:
+        return response; // Unknown action, return original response
+    }
+  } catch (error) {
+    console.error('Error executing action:', error);
+    return '⚠️ I tried to process that request but ran into a problem. Please try again later.';
   }
-  
-  return parsed;
 }
 
-async function handlePolicySaleConversation(
-  message: string, 
-  state: ConversationState, 
-  employeeId: string
-): Promise<string> {
-  const requiredSteps = [
-    { fields: ['clientName', 'policyType'], question: "Great! What's the client's name and what type of policy did they purchase?" },
-    { fields: ['policyNumber', 'amount'], question: "What's the policy number and policy amount?" },
-    { fields: ['brokerFee'], question: "What broker fee did you earn on this sale?" },
-    { fields: ['crossSold'], question: "Finally, is this a cross-sold policy?" }
-  ];
-  
-  const currentStep = requiredSteps[state.step];
-  
-  if (!currentStep) {
-    // All data collected, execute action
-    try {
-      await addPolicySale({
-        employeeId,
-        clientName: state.data.clientName,
-        policyNumber: state.data.policyNumber,
-        policyType: state.data.policyType,
-        amount: state.data.amount,
-        brokerFee: state.data.brokerFee,
-        crossSold: state.data.crossSold,
-        saleDate: new Date(),
-      });
-
-      let highValueMessage = '';
-              if (state.data.amount > appSettings.highValueThreshold) {
-        try {
-          await createHighValuePolicyNotification({
-            employeeId,
-            policyNumber: state.data.policyNumber,
-            policyAmount: state.data.amount,
-            brokerFee: state.data.brokerFee,
-            currentBonus: 0, // Default bonus, admin can adjust
-            isCrossSoldPolicy: state.data.crossSold,
-          });
-          highValueMessage = ' 🎉 This high-value policy has been flagged for potential bonus review by admin!';
-        } catch (hvpError) {
-          console.error('Error creating high-value policy notification:', hvpError);
-          // Don't fail the main transaction, just log the error
-          highValueMessage = ' (Note: High-value policy notification could not be created)';
-        }
-      }
-      
-      // Clear conversation state
-      activeConversations.delete(getConversationKey(employeeId));
-      
-      return `✅ Policy sale for ${state.data.clientName} (#${state.data.policyNumber}) recorded successfully.${highValueMessage}`;
-    } catch (error) {
-      console.error('Error saving policy sale:', error);
-      return '⚠️ I tried to save that data but ran into a problem. Please try again later.';
-    }
-  }
-  
-  // Parse user response for expected fields
-  const parsedData = parseUserResponse(message, currentStep.fields);
-  
-  // Update state with parsed data
-  Object.assign(state.data, parsedData);
-  
-  // Check if we got all required fields for this step
-  const hasAllFields = currentStep.fields.every(field => state.data[field] !== undefined);
-  
-  if (hasAllFields) {
-    // Move to next step
-    state.step++;
+// Generate contextual success messages using AI
+async function generateSuccessMessage(actionType: string, data: any): Promise<string> {
+  try {
+    let prompt = '';
     
-    // Check if we're done
-    const nextStep = requiredSteps[state.step];
-    if (!nextStep) {
-      // Execute the action (recursive call)
-      return handlePolicySaleConversation('', state, employeeId);
-    } else {
-      // Ask next question
-      return nextStep.question;
-    }
-  } else {
-    // Still missing fields, ask again
-    return currentStep.question;
-  }
-}
+    switch (actionType) {
+      case 'policy_sale':
+        prompt = `Generate a brief, supportive success message for recording a policy sale. ${data.isHighValue ? 'This was a high-value policy.' : ''} Keep it simple and encouraging. One sentence max.`;
+        break;
 
-async function handleClientReviewConversation(
-  message: string, 
-  state: ConversationState, 
-  employeeId: string
-): Promise<string> {
-  const requiredSteps = [
-    { fields: ['clientName', 'rating'], question: "What's the client's name and what rating did they give (1-5)?" },
-    { fields: ['review'], question: "What did they say in their review?" }
-  ];
-  
-  const currentStep = requiredSteps[state.step];
-  
-  if (!currentStep) {
-    // All data collected, execute action
-    try {
-      await addClientReview({
-        employeeId,
-        clientName: state.data.clientName,
-        policyNumber: 'Unknown',
-        rating: state.data.rating,
-        review: state.data.review,
-        reviewDate: new Date(),
-      });
-      
-      // Clear conversation state
-      activeConversations.delete(getConversationKey(employeeId));
-      
-      return `✅ Client review from ${state.data.clientName} saved — great job!`;
-    } catch (error) {
-      console.error('Error saving client review:', error);
-      return '⚠️ I tried to save that data but ran into a problem. Please try again later.';
-    }
-  }
-  
-  // Parse user response
-  const parsedData = parseUserResponse(message, currentStep.fields);
-  Object.assign(state.data, parsedData);
-  
-  // Check if we got all required fields for this step
-  const hasAllFields = currentStep.fields.every(field => state.data[field] !== undefined);
-  
-  if (hasAllFields) {
-    state.step++;
-    const nextStep = requiredSteps[state.step];
-    if (!nextStep) {
-      return handleClientReviewConversation('', state, employeeId);
-    } else {
-      return nextStep.question;
-    }
-  } else {
-    return currentStep.question;
-  }
-}
+      case 'client_review':
+        prompt = `Generate a brief, supportive success message for recording a client review. ${data.rating >= 4 ? 'It was a positive review.' : 'It was feedback from a client.'} Keep it simple and encouraging. One sentence max.`;
+        break;
 
-async function handleDailySummaryConversation(
-  message: string, 
-  state: ConversationState, 
-  employeeId: string
-): Promise<string> {
-  if (state.step === 0) {
-    // First interaction - ask about their day
-    state.step++;
-    return "How was your day today? Could you give me a brief summary of your key activities?";
-  } else {
-    // Save the summary
-    try {
-      const keyActivities = message.split(',').map(s => s.trim()).filter(s => s.length > 0);
-      
-      await addDailySummary({
-        employeeId,
-        date: new Date(),
-        hoursWorked: 8, // Default, could be calculated from time tracking
-        policiesSold: 0, // Default, could be calculated from today's sales
-        totalSalesAmount: 0,
-        totalBrokerFees: 0,
-        description: message,
-        keyActivities,
-      });
-      
-      // Clear conversation state
-      activeConversations.delete(getConversationKey(employeeId));
-      
-      return '✅ Daily summary submitted successfully. Have a great evening!';
-    } catch (error) {
-      console.error('Error saving daily summary:', error);
-      return '⚠️ I tried to save that data but ran into a problem. Please try again later.';
+      case 'daily_summary':
+        prompt = `Generate a brief, supportive end-of-day message for submitting a daily summary. Keep it simple and encouraging. One sentence max.`;
+        break;
+
+      default:
+        return '✅ Done!';
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: "You are a supportive workplace assistant. Generate very brief, simple success messages. Be encouraging but not overly enthusiastic. Keep it professional and concise."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 50,
+      temperature: 0.7,
+    });
+
+    let aiResponse = completion.choices[0]?.message?.content || '✅ Successfully recorded!';
+    
+    // Add high-value message if applicable
+    if (actionType === 'policy_sale' && data.highValueMessage) {
+      aiResponse += data.highValueMessage;
+    }
+    
+    return cleanMarkdownResponse(aiResponse);
+
+  } catch (error) {
+    console.error('Error generating success message:', error);
+    // Fallback to simple success messages if AI generation fails
+    switch (actionType) {
+      case 'policy_sale':
+        return `✅ Policy sale recorded successfully.${data.highValueMessage}`;
+      case 'client_review':
+        return `✅ Client review saved — great job!`;
+      case 'daily_summary':
+        return '✅ Daily summary submitted successfully.';
+      default:
+        return '✅ Done!';
     }
   }
 }
 
 export async function handleEmployeeChat(message: string, employeeId: string): Promise<string> {
-  const conversationKey = getConversationKey(employeeId);
-  let state = activeConversations.get(conversationKey);
-  
-  // If no active conversation or it's a new conversation starter, detect type and initialize
-  if (!state || detectConversationType(message) !== 'general') {
-    const conversationType = detectConversationType(message);
-    
-    if (conversationType !== 'general') {
-      // Start new conversation
-      state = initializeConversationState(conversationType, employeeId);
-      activeConversations.set(conversationKey, state);
-      
-      // Handle the conversation based on type
-      switch (conversationType) {
-        case 'policy_sale':
-          return handlePolicySaleConversation(message, state, employeeId);
-        case 'client_review':
-          return handleClientReviewConversation(message, state, employeeId);
-        case 'daily_summary':
-          return handleDailySummaryConversation(message, state, employeeId);
-      }
-    }
-  } else {
-    // Continue existing conversation
-    switch (state.type) {
-      case 'policy_sale':
-        return handlePolicySaleConversation(message, state, employeeId);
-      case 'client_review':
-        return handleClientReviewConversation(message, state, employeeId);
-      case 'daily_summary':
-        return handleDailySummaryConversation(message, state, employeeId);
-    }
+  // Handle employee welcome message with simple placeholder (no AI generation needed)
+  if (message === "EMPLOYEE_WELCOME_MESSAGE") {
+    return "Hey there! I'm your personal work assistant. I can help you log policy sales, client reviews, daily summaries, and answer any work-related questions. What can I help you with today?";
   }
-  
-  // General conversation - use OpenAI for non-structured responses
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    temperature: 0.7,
-    max_tokens: 200,
-    messages: [
-      { 
-        role: 'system', 
-        content: buildEmployeeSystemPrompt()},
-      { role: 'user', content: message }
-    ],
-  });
 
-  return completion.choices[0].message.content?.trim() || "I'm here to help! What can I assist you with today?";
+  // Handle clock out prompt
+  if (message === "CLOCK_OUT_PROMPT") {
+    return "How was your day today? Could you give me a brief summary of your key activities?";
+  }
+
+  try {
+    // Get employee data and today's context
+    const [employee, todayTimeTracking, todayPolicies, chatHistory] = await Promise.all([
+      getEmployee(employeeId),
+      getTodayTimeTracking(employeeId),
+      getTodayPolicySales(employeeId),
+      getChatMessages({ userId: employeeId, limit: 10 })
+    ]);
+
+    // Calculate today's stats for context
+    const todayStats = {
+      hoursWorked: todayTimeTracking.totalHours || 0,
+      policiesSold: todayPolicies.length,
+      totalSalesAmount: todayPolicies.reduce((sum, policy) => sum + policy.amount, 0),
+      totalBrokerFees: todayPolicies.reduce((sum, policy) => sum + policy.broker_fee, 0),
+    };
+
+    // Create enhanced system prompt with employee context
+    const systemPrompt = buildEmployeeSystemPrompt() + `
+
+EMPLOYEE CONTEXT:
+- Name: ${employee?.name || 'Employee'}
+- Department: ${employee?.department || 'Sales'}
+- Position: ${employee?.position || 'Insurance Agent'}
+- Today's Hours: ${todayStats.hoursWorked}
+- Today's Policies Sold: ${todayStats.policiesSold}
+- Today's Sales Amount: $${todayStats.totalSalesAmount.toLocaleString()}
+- Today's Broker Fees: $${todayStats.totalBrokerFees.toLocaleString()}
+
+TODAY'S POLICY SALES:
+${todayPolicies.map(sale => `- ${sale.policy_type} policy (${sale.policy_number}) for ${sale.client_name}: $${sale.amount.toLocaleString()}${sale.is_cross_sold_policy ? ' (Cross-sold)' : ''}`).join('\n')}
+
+Use this context to provide personalized responses and acknowledge the employee's work when appropriate.`;
+
+    // Build conversation history for OpenAI
+    const messages: any[] = [
+      {
+        role: "system",
+        content: systemPrompt
+      }
+    ];
+
+    // Add recent chat history (excluding the current message)
+    if (chatHistory && chatHistory.length > 0) {
+      chatHistory
+        .filter(msg => msg.content !== message)
+        .slice(-8)
+        .forEach(msg => {
+          messages.push({
+            role: msg.role === 'bot' ? 'assistant' : 'user',
+            content: msg.content
+          });
+        });
+    }
+
+    // Add current user message
+    messages.push({
+      role: "user",
+      content: message
+    });
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: messages,
+      max_tokens: 1000,
+      temperature: 0.7,
+      top_p: 0.9,
+    });
+
+    const rawResponse = completion.choices[0]?.message?.content || "I'm here to help! What can I assist you with today?";
+    
+    // Try to execute any actions in the response
+    const actionResult = await executeAction(rawResponse, employeeId);
+    
+    // Clean up markdown formatting
+    const cleanedResponse = cleanMarkdownResponse(actionResult);
+    
+    return cleanedResponse;
+
+  } catch (error) {
+    console.error('Employee chat error:', error);
+    return '⚠️ I encountered an issue processing your request. Please try again later.';
+  }
 }

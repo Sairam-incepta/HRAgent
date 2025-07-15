@@ -159,7 +159,7 @@ export function EmployeePayrollHistoryDialog({
                           <div>
                             <h4 className="font-medium">{period.period}</h4>
                             <p className="text-sm text-muted-foreground">
-                              {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
+                              {new Date(period.startDate + 'T00:00:00').toLocaleDateString()} - {new Date(period.endDate + 'T00:00:00').toLocaleDateString()}
                             </p>
                           </div>
                           <div className="text-right">

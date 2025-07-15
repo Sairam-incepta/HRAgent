@@ -801,7 +801,7 @@ export function EmployeeDetailsDialog({
                       </div>
                     ) : clientReviews.length > 0 ? (
                       <div className="space-y-4">
-                        {clientReviews.map((review, index) => (
+                        {clientReviews.slice().reverse().map((review, index) => (
                           <div key={index} className="border rounded-lg p-4 space-y-3">
                             <div className="flex justify-between items-start">
                               <div>

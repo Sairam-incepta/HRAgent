@@ -45,21 +45,27 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     const now = new Date();
 
     // Constants
-    const REFERENCE_DATE = new Date('2025-01-06');
-    const BIWEEKLY_DAYS = 14;
-    const PERIOD_LENGTH_DAYS = 13;
     const HOURS_PER_EMPLOYEE_BIWEEKLY = 80;
-    const MAX_PREVIOUS_PERIODS = 3; // Increased to show more history since it's actually useful
+    const MAX_PREVIOUS_PERIODS = 3;
 
     // Helper functions
     const isAdmin = (emp: any): boolean => 
       emp.position === 'Administrator';
 
+    // FIXED: Use the same period calculation as the working payroll dialog
     const calculatePeriodDates = (periodOffset: number): { startDate: Date; endDate: Date } => {
-      const startDate = new Date(REFERENCE_DATE);
-      startDate.setDate(REFERENCE_DATE.getDate() + (periodOffset * BIWEEKLY_DAYS));
+      const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
+      const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
+      const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
+      
+      const actualPeriodOffset = biweeklyPeriodsSinceReference + periodOffset;
+      
+      const startDate = new Date(referenceDate);
+      startDate.setDate(referenceDate.getDate() + (actualPeriodOffset * 14));
+      
       const endDate = new Date(startDate);
-      endDate.setDate(startDate.getDate() + PERIOD_LENGTH_DAYS);
+      endDate.setDate(startDate.getDate() + 13); // 14 days total (0-13)
+      
       return { startDate, endDate };
     };
 
@@ -129,7 +135,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
 
         let totalBonuses = 0;
 
-        // Calculate bonuses for regular policies (< $5000)
+        // Calculate bonuses for regular policies < threshold
         sales.forEach(sale => {
           const policyData = policySalesMap.get(sale.id);
           if (!policyData) return;
@@ -141,8 +147,8 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
             amount = 0
           } = policyData;
 
-                  // Only calculate individual bonuses for policies < threshold
-        if (amount < appSettings.highValueThreshold) {
+          // Only calculate individual bonuses for policies < threshold
+          if (amount < appSettings.highValueThreshold) {
             let saleBonus = 0;
 
             // 1. Broker fee bonus: 10% of (broker fee - 100)
@@ -150,7 +156,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
               const baseBrokerBonus = (broker_fee - 100) * 0.1;
               saleBonus += baseBrokerBonus;
 
-              // 2. Cross-selling bonus: additional 1x of base broker bonus
+              // 2. Cross-selling bonus: additional base broker bonus
               if (is_cross_sold_policy) {
                 saleBonus += baseBrokerBonus;
               }
@@ -191,16 +197,16 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       };
     };
 
-    // Calculate current period offset
-    const daysSinceReference = Math.floor((now.getTime() - REFERENCE_DATE.getTime()) / (24 * 60 * 60 * 1000));
-    const currentPeriodOffset = Math.floor(daysSinceReference / BIWEEKLY_DAYS);
+    // Calculate current period offset based on the working dialog logic
+    const referenceDate = new Date('2025-01-06');
+    const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
+    const currentPeriodOffset = Math.floor(daysSinceReference / 14);
 
-    console.log(`📅 Reference date: ${REFERENCE_DATE.toISOString()}, periods since: ${currentPeriodOffset}`);
+    console.log(`📅 Reference date: ${referenceDate.toISOString()}, periods since: ${currentPeriodOffset}`);
 
-    // OPTIMIZATION: Only fetch time logs for periods that will have meaningful data
-    // Get date range for current + previous periods only (no future periods need time logs)
-    const { startDate: allPeriodsStart } = calculatePeriodDates(currentPeriodOffset - MAX_PREVIOUS_PERIODS);
-    const { endDate: allPeriodsEnd } = calculatePeriodDates(currentPeriodOffset);
+    // Get date range for current + previous periods only
+    const { startDate: allPeriodsStart } = calculatePeriodDates(-MAX_PREVIOUS_PERIODS);
+    const { endDate: allPeriodsEnd } = calculatePeriodDates(0);
 
     // Fetch all time logs for the date range
     const startDateStr = getLocalDateString(allPeriodsStart);
@@ -298,12 +304,12 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
           overtimeHours,
           totalSales: periodSales.length,
           totalBonuses: Math.round(totalBonuses),
-          departmentBreakdown: [] // Could be populated if needed for department analysis
+          departmentBreakdown: []
         }
       };
     };
 
-    // OPTIMIZATION: Create lightweight upcoming period (just next period for scheduling)
+    // Create lightweight upcoming period
     const createUpcomingPeriod = (periodOffset: number): PayrollPeriod => {
       const { startDate, endDate } = calculatePeriodDates(periodOffset);
       
@@ -325,7 +331,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     };
 
     // Log current period info
-    const { startDate: currentStart, endDate: currentEnd } = calculatePeriodDates(currentPeriodOffset);
+    const { startDate: currentStart, endDate: currentEnd } = calculatePeriodDates(0);
     console.log(`📅 Current period: ${currentStart.toISOString().split('T')[0]} to ${currentEnd.toISOString().split('T')[0]}`);
 
     const currentPeriodSales = filterSalesForPeriod(currentStart, currentEnd);
@@ -341,11 +347,10 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       totalPay: currentBasePay + currentTotalBonuses
     });
 
-    // OPTIMIZED: Generate periods based on actual usage patterns
-    // 1. Add previous periods that have meaningful data (up to MAX_PREVIOUS_PERIODS)
-    for (let i = MAX_PREVIOUS_PERIODS; i >= 1; i--) {
-      const periodOffset = currentPeriodOffset - i;
-      const { startDate, endDate } = calculatePeriodDates(periodOffset);
+    // Generate periods
+    // 1. Add previous periods that have meaningful data
+    for (let i = -MAX_PREVIOUS_PERIODS; i < 0; i++) {
+      const { startDate, endDate } = calculatePeriodDates(i);
       
       // Quick check: Do we have any time logs or sales for this period?
       const periodSales = filterSalesForPeriod(startDate, endDate);
@@ -357,16 +362,15 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       
       // Only calculate full period data if there's any activity
       if (hasTimeLogs || periodSales.length > 0) {
-        periods.push(await createPeriodObject(periodOffset, 'completed'));
+        periods.push(await createPeriodObject(i, 'completed'));
       }
     }
 
     // 2. Add current period (always included)
-    periods.push(await createPeriodObject(currentPeriodOffset, 'current'));
+    periods.push(await createPeriodObject(0, 'current'));
 
-    // 3. OPTIMIZATION: Add only next upcoming period (not 2) since future periods have limited value
-    // This reduces computation and UI clutter while still showing the next pay period dates
-    periods.push(createUpcomingPeriod(currentPeriodOffset + 1));
+    // 3. Add next upcoming period
+    periods.push(createUpcomingPeriod(1));
 
     console.log(`📊 Generated ${periods.length} payroll periods (optimized for actual usage)`);
     return periods;

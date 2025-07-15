@@ -107,7 +107,8 @@ export async function handleAdminChat(message: string, userId: string) {
     const cleanedResponse = cleanMarkdownResponse(rawResponse);
     return NextResponse.json({ response: cleanedResponse });
 
-  } catch (error) {
+  } 
+  catch (error) {
     console.error('Admin chat error:', error);
     return NextResponse.json(
       { error: 'Failed to process admin chat request' },

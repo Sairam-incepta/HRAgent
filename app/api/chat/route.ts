@@ -25,13 +25,6 @@ export async function POST(request: NextRequest) {
     const { message, userRole: providedRole } = await request.json();
     const userRole = providedRole || getUserRole(userId);
 
-    // Handle daily summary submission directly
-    if (message.toLowerCase().includes('daily summary') && userRole === 'employee') {
-       // This is a simplified check. A more robust implementation might be needed.
-       // Assuming the summary content is in the message.
-      return await handleDailySummarySubmission(message, userId);
-    }
-
     if (userRole === 'admin') {
       return await handleAdminChatModule(message, userId);
     } 
@@ -53,6 +46,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Keep this function for backward compatibility if needed elsewhere
 async function handleDailySummarySubmission(description: string, employeeId: string) {
   try {
     // Get today's data automatically from the database
