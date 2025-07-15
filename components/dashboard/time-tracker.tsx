@@ -250,7 +250,7 @@ export function TimeTracker({
   const calculateTotalTimeWorked = (logs: any[]) => {
     let total = 0;
     logs.forEach(log => {
-      if (log.clock_in && log.clock_out) {
+      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
         total += (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
       }
     });
