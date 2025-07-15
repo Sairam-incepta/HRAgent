@@ -7,7 +7,7 @@ import { Play, Square, Coffee, Check, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getTimeLogsForDay, createTimeLog, updateTimeLog } from "@/lib/util/time-logs";
+import { getTimeLogsForDay, createTimeLog, updateTimeLog, startBreak, endBreak, getTotalBreakTimeToday } from "@/lib/util/time-logs";
 import { useUser } from '@clerk/nextjs';
 import { dashboardEvents } from "@/lib/events";
 import { OvertimeNotificationDialog } from "./overtime-notification-dialog";
@@ -63,11 +63,9 @@ export function TimeTracker({
   const hasInitialized = useRef(false);
   const isInitialMount = useRef(true);
 
-  // ===== Daily lunch accumulation across multiple sessions =====
-  const DAILY_LUNCH_KEY_PREFIX = 'letsinsure_daily_lunch_';
-  const [dailyLunchSeconds, setDailyLunchSeconds] = useState(0);
-  const dailyLunchSecondsRef = useRef(0);
-  const getDailyLunchKey = (date: string) => `${DAILY_LUNCH_KEY_PREFIX}${date}`;
+  // ===== Daily lunch tracking moved to database =====
+  const [totalBreakTimeToday, setTotalBreakTimeToday] = useState(0);
+  const [breakLogId, setBreakLogId] = useState<string | null>(null); // Track which log is on break
 
   // Confirmation dialog states
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
@@ -120,6 +118,7 @@ export function TimeTracker({
     lunchStartTime: number | null;
     activeLogId: string | null;
     currentLunchTime: number;
+    breakLogId?: string | null;
   }) => {
     try {
       const syncData = {
@@ -145,6 +144,7 @@ export function TimeTracker({
 
       const totalWorkedFromDB = calculateTotalTimeWorked(logs);
       const activeLog = logs.find(log => log.clock_in && !log.clock_out);
+      const breakLog = logs.find(log => log.break_start && !log.break_end); // Check for active break
       
       // Check for active lunch break from localStorage before overriding state
       let isOnValidLunchBreak = false;
@@ -166,7 +166,35 @@ export function TimeTracker({
         console.error('Error checking lunch break state:', error);
       }
       
-      if (activeLog) {
+      if (breakLog) {
+        // Active break session exists in database
+        const breakStart = new Date(breakLog.break_start).getTime();
+        const now = Date.now();
+        const currentBreakTime = Math.floor((now - breakStart) / 1000);
+        
+        setElapsedTime(totalWorkedFromDB);
+        setActiveLogId(null);
+        setStartTime(null);
+        setBreakLogId(breakLog.id);
+        setLunchStartTime(breakStart);
+        setCurrentLunchTime(currentBreakTime);
+        setStatus('lunch');
+        onLunchChange?.(true);
+        
+        // Broadcast database break state to other tabs
+        broadcastStateChange({
+          status: 'lunch',
+          elapsedTime: totalWorkedFromDB,
+          startTime: null,
+          lunchStartTime: breakStart,
+          activeLogId: null,
+          currentLunchTime: currentBreakTime,
+          breakLogId: breakLog.id
+        });
+        
+        console.log('🍽️ Active break found in database, restored break state');
+        
+      } else if (activeLog) {
         // Active work session exists - calculate current elapsed time
         const sessionStart = new Date(activeLog.clock_in).getTime();
         const now = Date.now();
@@ -177,6 +205,14 @@ export function TimeTracker({
         setActiveLogId(activeLog.id);
         setStartTime(sessionStart);
         setStatus('working'); // Will be updated by timer logic if overtime
+        
+        // Clear any stale break state if we're now in an active work session
+        if (lunchStartTime || breakLogId) {
+          setLunchStartTime(null);
+          setCurrentLunchTime(0);
+          setBreakLogId(null);
+          console.log('🔄 Cleared stale break state - now in active work session');
+        }
         
       } else if (isOnValidLunchBreak && savedLunchData) {
         // No active work session but valid lunch break - restore lunch state immediately
@@ -198,14 +234,18 @@ export function TimeTracker({
         }
         
       } else {
-        // No active session and no lunch break - set to idle only if not already on lunch
-        if (status !== 'lunch') {
-          setElapsedTime(totalWorkedFromDB);
-          setActiveLogId(null);
-          setStartTime(null);
-          setStatus('idle');
-          
-        } else {
+        // No active session and no lunch break - set to idle and clear break state
+        setElapsedTime(totalWorkedFromDB);
+        setActiveLogId(null);
+        setStartTime(null);
+        setStatus('idle');
+        
+        // Clear any stale break state
+        if (lunchStartTime || breakLogId) {
+          setLunchStartTime(null);
+          setCurrentLunchTime(0);
+          setBreakLogId(null);
+          console.log('🔄 Cleared stale break state - now idle');
         }
       }
       
@@ -375,11 +415,6 @@ export function TimeTracker({
     
     // Sync with database every 30 seconds to catch changes from other sources
     syncInterval.current = setInterval(async () => {
-      // Don't sync if we're currently on a lunch break to avoid interference
-      if (status === 'lunch') {
-        console.log('🔄 Skipping periodic database sync - currently on lunch break');
-        return;
-      }
       console.log('🔄 Periodic database sync...');
       await refreshFromDatabase();
     }, 30000);
@@ -413,6 +448,7 @@ export function TimeTracker({
                 setLunchStartTime(syncData.lunchStartTime);
                 setActiveLogId(syncData.activeLogId);
                 setCurrentLunchTime(syncData.currentLunchTime || 0);
+                setBreakLogId(syncData.breakLogId || null);
                 
                 // Special handling for lunch break sync
                 if (syncData.status === 'lunch' && syncData.lunchStartTime) {
@@ -456,19 +492,21 @@ export function TimeTracker({
   }, [onClockInChange, onLunchChange, user?.id, refreshFromDatabase]);
 
   // Load saved daily lunch seconds once on mount (per day)
+  // Load total break time from database
   useEffect(() => {
-    const today = getCurrentDate();
-    let savedSeconds = 0;
-    try {
-      const stored = localStorage.getItem(getDailyLunchKey(today));
-      savedSeconds = stored ? parseInt(stored, 10) : 0;
-    } catch (error) {
-      console.error('Failed to load daily lunch time from localStorage:', error);
-      // Component continues to work with 0 lunch time
-    }
-    setDailyLunchSeconds(savedSeconds);
-    dailyLunchSecondsRef.current = savedSeconds;
-  }, []);
+    const loadTotalBreakTime = async () => {
+      if (!user?.id) return;
+      try {
+        const today = getCurrentDate();
+        const totalSeconds = await getTotalBreakTimeToday(user.id, today);
+        setTotalBreakTimeToday(totalSeconds);
+      } catch (error) {
+        console.error('Failed to load total break time:', error);
+      }
+    };
+    
+    loadTotalBreakTime();
+  }, [user?.id]);
 
   useEffect(() => {
     if (intervalRef.current) {
@@ -761,9 +799,13 @@ export function TimeTracker({
     }
 
     try {
-      // Close the current work session at lunch start
-      if (!activeLogId) throw new Error("No active log ID");
-      await updateTimeLog({ logId: activeLogId, clockOut: new Date() });
+      // Save the current activeLogId before clearing it
+      const currentLogId = activeLogId;
+      if (!currentLogId) throw new Error("No active log ID");
+
+      // Close the current work session and start break in database
+      await updateTimeLog({ logId: currentLogId, clockOut: new Date() });
+      await startBreak(currentLogId);
 
       // Freeze elapsed time at break start
       baseTimeRef.current = elapsedTime;
@@ -772,13 +814,16 @@ export function TimeTracker({
       setActiveLogId(null);
       setStartTime(null);
 
+      // Track which log is on break
+      setBreakLogId(currentLogId);
+
       // Start lunch timers
       const lunchStart = Date.now();
       setLunchStartTime(lunchStart);
       setStatus("lunch");
       onLunchChange?.(true);
 
-      // IMMEDIATELY save lunch state to localStorage before React state updates
+      // Save to localStorage for multi-tab sync
       saveTimeSession();
 
       // Broadcast lunch state to other tabs immediately
@@ -787,8 +832,9 @@ export function TimeTracker({
         elapsedTime,
         startTime: null,
         lunchStartTime: lunchStart,
-        activeLogId: null,
-        currentLunchTime: 0
+        activeLogId: currentLogId, // Keep reference for ending break
+        currentLunchTime: 0,
+        breakLogId: currentLogId
       });
 
       // Notify dashboard to refresh weekly summary
@@ -810,7 +856,7 @@ export function TimeTracker({
   const confirmEndLunch = async () => {
     if (processingLunch) return;
     setProcessingLunch('end');
-    if (!lunchStartTime || !user?.id) { 
+    if (!lunchStartTime || !user?.id || !breakLogId) { 
       setProcessingLunch(null); 
       return; 
     }
@@ -818,18 +864,12 @@ export function TimeTracker({
     const lunchDuration = (Date.now() - lunchStartTime) / 1000;
 
     try {
-      // Accumulate lunch seconds for the day
+      // End the break in database first
+      await endBreak(breakLogId);
+
+      // Accumulate lunch seconds for current session
       totalLunchTimeRef.current += lunchDuration;
       setTotalLunchTime(totalLunchTimeRef.current);
-
-      dailyLunchSecondsRef.current += lunchDuration;
-      setDailyLunchSeconds(dailyLunchSecondsRef.current);
-      try {
-        localStorage.setItem(getDailyLunchKey(getCurrentDate()), dailyLunchSecondsRef.current.toString());
-      } catch (error) {
-        console.error('Failed to save daily lunch time to localStorage:', error);
-        // Component continues to work without localStorage persistence
-      }
 
       // Start a new work session after lunch
       const now = new Date();
@@ -846,15 +886,21 @@ export function TimeTracker({
       setActiveLogId(newLog.id);
       setStartTime(newStartTime);
 
-      // Reset current break timers
+      // Reset current break timers and clear break log ID
       setLunchStartTime(null);
       setCurrentLunchTime(0);
+      setBreakLogId(null);
 
       // Resume working status (check overtime threshold)
       const hoursWorkedSoFar = baseTimeRef.current / 3600;
       const newStatus = hoursWorkedSoFar >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
       setStatus(newStatus);
       onLunchChange?.(false);
+
+      // Refresh total break time from database
+      const today = getCurrentDate();
+      const totalSeconds = await getTotalBreakTimeToday(userId, today);
+      setTotalBreakTimeToday(totalSeconds);
 
       // Broadcast working state to other tabs immediately
       broadcastStateChange({
@@ -863,7 +909,8 @@ export function TimeTracker({
         startTime: newStartTime,
         lunchStartTime: null,
         activeLogId: newLog.id,
-        currentLunchTime: 0
+        currentLunchTime: 0,
+        breakLogId: null
       });
 
       toast({
@@ -965,7 +1012,7 @@ export function TimeTracker({
       {status === "lunch" ? (
         <>
           <Clock className="h-4 w-4" />
-          <span>Current break: {formatTime(currentLunchTime)} | Total today: {formatTime(dailyLunchSeconds + currentLunchTime)}</span>
+          <span>Current break: {formatTime(currentLunchTime)} | Total today: {formatTime(totalBreakTimeToday + currentLunchTime)}</span>
         </>
       ) : (
         "Not on Break"
@@ -975,7 +1022,7 @@ export function TimeTracker({
   
   const TotalLunchDisplay = () => (
     <div className="text-xs text-muted-foreground">
-      Total today: {formatTime(Math.floor(dailyLunchSeconds))}
+      Total today: {formatTime(Math.floor(totalBreakTimeToday))}
     </div>
   );
 
@@ -1044,7 +1091,7 @@ export function TimeTracker({
               <div className="flex items-center gap-3">
                 {status !== "lunch" ? <LunchBreakButton /> : <EndLunchBreakButton />}
                 <LunchBreakDisplay />
-                {dailyLunchSeconds > 0 && status !== "lunch" && <TotalLunchDisplay />}
+                {totalBreakTimeToday > 0 && status !== "lunch" && <TotalLunchDisplay />}
               </div>
             </CardContent>
           </Card>

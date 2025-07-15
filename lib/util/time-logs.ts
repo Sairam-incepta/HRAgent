@@ -61,6 +61,92 @@ export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockO
   }
 };
 
+// ===== NEW BREAK TRACKING FUNCTIONS =====
+
+export const startBreak = async (logId: string): Promise<{ data: any; error: any }> => {
+  try {
+    const { data, error } = await supabase
+      .from('time_logs')
+      .update({
+        break_start: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', logId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error starting break:', error);
+      return { data: null, error };
+    }
+
+    // Notify dashboard to refresh
+    notifyTimeLogged();
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Exception in startBreak:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error : new Error('Unknown error occurred')
+    };
+  }
+};
+
+export const endBreak = async (logId: string): Promise<{ data: any; error: any }> => {
+  try {
+    const { data, error } = await supabase
+      .from('time_logs')
+      .update({
+        break_end: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', logId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error ending break:', error);
+      return { data: null, error };
+    }
+
+    // Notify dashboard to refresh
+    notifyTimeLogged();
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Exception in endBreak:', error);
+    return { 
+      data: null, 
+      error: error instanceof Error ? error : new Error('Unknown error occurred')
+    };
+  }
+};
+
+export const getTotalBreakTimeToday = async (employeeId: string, date: string): Promise<number> => {
+  try {
+    const logs = await getTimeLogsForDay(employeeId, date);
+    
+    let totalSeconds = 0;
+    logs.forEach(log => {
+      if (log.break_start && log.break_end) {
+        // Completed break: calculate duration
+        const duration = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / 1000;
+        totalSeconds += duration;
+      } else if (log.break_start && !log.break_end) {
+        // Currently on break: calculate current duration
+        const currentDuration = (Date.now() - new Date(log.break_start).getTime()) / 1000;
+        totalSeconds += currentDuration;
+      }
+    });
+    
+    return Math.floor(totalSeconds);
+  } catch (error) {
+    console.error('Error calculating total break time:', error);
+    return 0;
+  }
+};
+
 export const getTimeLogsForDay = async (employeeId: string, date: string) => {
   try {
     const { data, error } = await supabase
