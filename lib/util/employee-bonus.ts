@@ -1,6 +1,7 @@
 import { supabase } from "../supabase";
 import { EmployeeBonus } from "../supabase";
 import { getEmployee } from "./employee";
+import { appSettings } from "../config/app-settings";
 
 // Employee Bonus Functions
 export const updateEmployeeBonus = async (employeeId: string, bonusToAdd: number): Promise<void> => {
@@ -111,8 +112,8 @@ export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonu
         amount = 0
       } = sale;
 
-      // EXACT SAME LOGIC: If amount >= 5000, ONLY use admin bonus
-      if (amount >= 5000) {
+      // EXACT SAME LOGIC: If amount >= threshold, ONLY use admin bonus
+      if (amount >= appSettings.highValueThreshold) {
         const totalAdminBonus = highValueNotifications.reduce((sum, notification) => {
           return sum + (notification.admin_bonus || 0);
         }, 0);

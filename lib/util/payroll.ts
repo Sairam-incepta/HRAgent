@@ -4,6 +4,7 @@ import { getPolicySales } from "./policies";
 import { getLocalDateString } from "./timezone";
 import { calculateWorkHoursWithLunchDeduction, calculateActualHoursForPeriod } from "./misc";
 import { getEmployeeRateForDate } from "./misc";
+import { appSettings } from "../config/app-settings";
 
 // Enhanced Payroll Functions with Real Database Data
 export interface PayrollPeriod {
@@ -140,8 +141,8 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
             amount = 0
           } = policyData;
 
-          // Only calculate individual bonuses for policies < $5000
-          if (amount < 5000) {
+                  // Only calculate individual bonuses for policies < threshold
+        if (amount < appSettings.highValueThreshold) {
             let saleBonus = 0;
 
             // 1. Broker fee bonus: 10% of (broker fee - 100)
@@ -602,8 +603,8 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
           amount = 0
         } = sale;
 
-        // Only calculate individual bonuses for policies < $5000
-        if (amount < 5000) {
+        // Only calculate individual bonuses for policies < threshold
+        if (amount < appSettings.highValueThreshold) {
           // Broker fee bonus: 10% of (broker fee - 100)
           if (broker_fee > 100) {
             const baseBonus = (broker_fee - 100) * 0.1;
@@ -924,8 +925,8 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
             amount = 0
           } = policyData;
 
-          // ONLY calculate bonuses for regular policies (< $5000)
-          if (amount < 5000) {
+                  // ONLY calculate bonuses for regular policies (< threshold)
+        if (amount < appSettings.highValueThreshold) {
             let saleBonus = 0;
             
             // 1. Broker fee bonus: 10% of (broker fee - 100)
@@ -1083,7 +1084,7 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
       adminBonus: 0
     };
 
-    const isHighValue = amount >= 5000;
+    const isHighValue = amount >= appSettings.highValueThreshold;
 
     if (isHighValue) {
     // For high-value policies (≥ $5000), ONLY use admin bonus

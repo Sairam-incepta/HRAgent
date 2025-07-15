@@ -10,6 +10,7 @@ import { MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getEmployee } from "@/lib/util/employee";
 import { Skeleton } from "@/components/ui/skeleton";
+import { appSettings } from "@/lib/config/app-settings";
 
 interface CustomPublicMetadata {
   role?: "admin" | "employee";
@@ -35,6 +36,9 @@ export default function ClerkWrapper() {
   });
 
   useEffect(() => {
+    // Initialize app settings
+    appSettings.loadSettings();
+    
     if (isLoaded && user) {
       // Get role from Clerk metadata on client side
       const publicMetadata = user.publicMetadata as CustomPublicMetadata;

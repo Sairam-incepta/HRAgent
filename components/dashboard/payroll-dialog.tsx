@@ -12,6 +12,7 @@ import { calculateActualHoursForPeriod } from "@/lib/util/misc";
 import { getClientReviews } from "@/lib/util/client-reviews";
 import { supabase } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
+import { appSettings } from "@/lib/config/app-settings";
 
 interface PayrollDialogProps {
   open: boolean;
@@ -123,7 +124,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
         // Track total broker fees
         totalBrokerFees += sale.broker_fee || 0;
         
-        if (sale.amount >= 5000) {
+        if (sale.amount >= appSettings.highValueThreshold) {
           // For high-value policies (≥$5000), ONLY use admin bonuses
           // These are handled separately from high_value_policy_notifications table
         } else {

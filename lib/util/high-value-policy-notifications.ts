@@ -1,11 +1,12 @@
 import { supabase } from "../supabase";
 import { PolicySale, HighValuePolicyNotification } from "../supabase";
+import { appSettings } from "../config/app-settings";
 
 export const getHighValuePolicyNotifications = async (): Promise<PolicySale[]> => {
   const { data, error } = await supabase
     .from('policy_sales')
     .select('*')
-    .gt('amount', 5000)
+    .gt('amount', appSettings.highValueThreshold)
     .order('amount', { ascending: false })
     .limit(10);
 
@@ -63,6 +64,7 @@ export const getHighValuePolicyNotificationsList = async (): Promise<HighValuePo
     const { data, error } = await supabase
       .from('high_value_policy_notifications')
       .select('*')
+      .gte('policy_amount', appSettings.highValueThreshold) // Filter by current threshold
       .order('created_at', { ascending: false });
 
     if (error) {

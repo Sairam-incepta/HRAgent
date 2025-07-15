@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
 import { Label } from "@/components/ui/label";
+import { appSettings } from "@/lib/config/app-settings";
 
 // Simplified - no need for employee names anymore
 
@@ -45,6 +46,12 @@ export function HighValuePolicyNotifications() {
   const [processingActions, setProcessingActions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // Load settings from appSettings
+    appSettings.loadSettings();
+    const threshold = appSettings.highValueThreshold;
+    setHighValuePolicyThreshold(threshold);
+    setTempThreshold(threshold);
+    
     loadHighValuePolicies();
     checkUrgentReviews();
   }, []);
@@ -361,8 +368,14 @@ export function HighValuePolicyNotifications() {
   const pendingPolicies = highValuePolicies.filter(policy => policy.status === 'pending');
 
   const handleUpdateThreshold = () => {
+    // Update global settings
+    appSettings.setHighValueThreshold(tempThreshold);
     setHighValuePolicyThreshold(tempThreshold);
     setSettingsDialogOpen(false);
+    
+    // Refresh components that use this value
+    loadHighValuePolicies();
+    
     toast({
       title: "Threshold Updated",
       description: `High-value policy threshold updated to $${tempThreshold.toLocaleString()}`,

@@ -4,6 +4,7 @@ import { addClientReview } from '../util/client-reviews';
 import { addDailySummary } from '../util/daily-summaries';
 import { createHighValuePolicyNotification } from '../util/high-value-policy-notifications';
 import { buildEmployeeSystemPrompt } from './system-prompts';
+import { appSettings } from '../config/app-settings';
 
 interface ConversationState {
   type: 'policy_sale' | 'client_review' | 'daily_summary' | 'general';
@@ -139,7 +140,7 @@ async function handlePolicySaleConversation(
       });
 
       let highValueMessage = '';
-      if (state.data.amount > 5000) {
+              if (state.data.amount > appSettings.highValueThreshold) {
         try {
           await createHighValuePolicyNotification({
             employeeId,
