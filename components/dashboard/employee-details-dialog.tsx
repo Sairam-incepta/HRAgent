@@ -173,7 +173,15 @@ export function EmployeeDetailsDialog({
   const totalPolicies = employeePolicies.length;
   const crossSoldCount = employeePolicies.filter(policy => policy.is_cross_sold_policy).length;
   const totalSales = employeePolicies.reduce((sum, policy) => sum + policy.amount, 0);
-  const totalBonus = employeeBonus?.total_bonus || 0;
+  // Calculate total policy bonuses
+  const totalPolicyBonuses = Object.values(policyBonuses).reduce((sum, bonus) => sum + bonus, 0);
+
+  // Calculate review bonuses for this employee
+  const fiveStarReviews = clientReviews.filter(review => review.rating === 5);
+  const reviewBonuses = fiveStarReviews.length * 10;
+
+  // Total bonuses = policy bonuses + review bonuses
+  const totalBonus = totalPolicyBonuses + reviewBonuses;
 
   const formatDate = (dateString: string) => {
     // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
@@ -741,7 +749,6 @@ export function EmployeeDetailsDialog({
                                 <span className="ml-2 font-medium">${policy.broker_fee}</span>
                               </div>
                               <div>
-                                /* 🚨 ISSUE 🚨 */
                                 <span className="text-muted-foreground">Bonus:</span>
                                 <span className="ml-2 font-medium text-[#005cb3]">
                                   {bonusesLoading ? (

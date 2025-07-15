@@ -289,7 +289,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
                         <div className="flex justify-between items-center">
                           <span className="text-sm text-muted-foreground">Cross-Selling Bonuses:</span>
                           <span className="text-sm font-medium text-blue-600">
-                            {payrollData.summary.bonusBreakdown.crossSellingBonuses.count} x ${(payrollData.summary.bonusBreakdown.crossSellingBonuses.amount / payrollData.summary.bonusBreakdown.crossSellingBonuses.count).toFixed(2)} = ${payrollData.summary.bonusBreakdown.crossSellingBonuses.amount.toFixed(2)}
+                            ${payrollData.summary.bonusBreakdown.crossSellingBonuses.amount.toFixed(2)}
                           </span>
                         </div>
                       )}
