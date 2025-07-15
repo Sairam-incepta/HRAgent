@@ -62,12 +62,12 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
     
     // Calculate total hours worked and check if currently clocked in
     timeLogs.forEach(log => {
-      if (log.clock_in && log.clock_out) {
+      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
         // Completed session with lunch deduction
         const clockInTime = new Date(log.clock_in);
         const clockOutTime = new Date(log.clock_out);
         totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-      } else if (log.clock_in && !log.clock_out) {
+      } else if (log.clock_in && !log.clock_out && !log.break_start && !log.break_end) {
         // Currently clocked in - calculate up to now with lunch deduction
         const clockInTime = new Date(log.clock_in);
         const now = new Date();

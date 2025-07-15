@@ -141,11 +141,11 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
       let employeeWeekHours = 0;
 
       employeeLogs.forEach(log => {
-        if (log.clock_in && log.clock_out) {
+        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
           employeeWeekHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today) {
+        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
           // If currently clocked in, calculate up to now
           const clockInTime = new Date(log.clock_in);
           const now = new Date();

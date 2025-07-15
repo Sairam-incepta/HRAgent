@@ -209,11 +209,11 @@ export const getThisWeekHours = async (employeeId: string): Promise<number> => {
     let totalHours = 0;
 
     (timeLogs || []).forEach(log => {
-      if (log.clock_in && log.clock_out) {
+      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
         const clockInTime = new Date(log.clock_in);
         const clockOutTime = new Date(log.clock_out);
         totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-      } else if (log.clock_in && !log.clock_out && log.date === today) {
+      } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
         // If currently clocked in, calculate up to now with lunch deduction
         const clockInTime = new Date(log.clock_in);
         const now = new Date();

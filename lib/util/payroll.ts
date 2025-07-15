@@ -247,11 +247,11 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
 
       let totalHours = 0;
       periodLogs.forEach(log => {
-        if (log.clock_in && log.clock_out) {
+        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today) {
+        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
@@ -554,11 +554,11 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       let totalHours = 0;
 
       employeeLogs.forEach(log => {
-        if (log.clock_in && log.clock_out) {
+        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today) {
+        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
@@ -874,11 +874,11 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
 
       let totalHours = 0;
       periodLogs.forEach(log => {
-        if (log.clock_in && log.clock_out) {
+        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today) {
+        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);

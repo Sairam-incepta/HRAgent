@@ -78,13 +78,13 @@ export const calculateActualHoursForPeriod = async (employeeId: string, startDat
     const today = getLocalDateString();
 
     (timeLogs || []).forEach(log => {
-      if (log.clock_in && log.clock_out) {
+      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
         const clockInTime = new Date(log.clock_in);
         const clockOutTime = new Date(log.clock_out);
         totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
       } else if (log.clock_in && !log.clock_out) {
         // If currently clocked in, calculate up to now (only if it's today)
-        if (log.date === today) {
+        if (log.date === today && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
           totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
