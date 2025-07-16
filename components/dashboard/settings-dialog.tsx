@@ -41,7 +41,7 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
 
     if (newPassword !== confirmPassword) {
       toast({
-        title: "Error",
+        title: "Error", 
         description: "New passwords do not match",
         variant: "destructive",
       });
@@ -60,16 +60,13 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
     setIsUpdatingPassword(true);
 
     try {
-      // Use the admin API route to reset the password (bypasses verification)
       const response = await fetch('/api/admin/reset-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          userId: user?.id,
           newPassword: newPassword,
-          bypassVerification: true // Flag to indicate this is a self-service reset
         }),
       });
 
@@ -90,14 +87,11 @@ export function SettingsDialog({ open, onOpenChange, employeeName, employeeEmail
         setTimeout(async () => {
           onOpenChange(false);
           
-          // Sign out the user to force them to log in with the new password
           try {
             await signOut();
-            // Redirect to sign-in page
             window.location.href = '/sign-in';
           } catch (signOutError) {
             console.error('Sign out error:', signOutError);
-            // Fallback: reload the page to clear session
             window.location.reload();
           }
         }, 1500);

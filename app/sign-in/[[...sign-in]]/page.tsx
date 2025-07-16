@@ -11,8 +11,9 @@ export default function SignInPage() {
         <SignIn 
           appearance={{
             elements: {
-                             // Main card styling
-               card: 'bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-600 p-8 w-full',
+
+              // Main card styling
+              card: 'bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-600 p-8 w-full',
               rootBox: 'w-full',
               
               // Hide default headers since we have custom ones

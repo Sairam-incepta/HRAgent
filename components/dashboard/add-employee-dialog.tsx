@@ -193,14 +193,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="password">Password *</Label>
             <div className="relative">
-              <Input
-                id="password"
+            <Input
+              id="password"
                 type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter initial password"
-                required
-              />
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter initial password"
+              required
+            />
               <Button
                 type="button"
                 variant="ghost"
@@ -220,14 +220,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm Password *</Label>
             <div className="relative">
-              <Input
-                id="confirmPassword"
+            <Input
+              id="confirmPassword"
                 type={showConfirmPassword ? "text" : "password"}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                required
-              />
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
+              required
+            />
               <Button
                 type="button"
                 variant="ghost"
@@ -279,26 +279,32 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
               <Label htmlFor="hourlyRate">Hourly Rate ($) *</Label>
               <Input
                 id="hourlyRate"
-                type="number"
-                min="1"
-                step="0.01"
-                value={hourlyRate}
-                onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
-                placeholder="25.00"
+                type="text"
+                value={hourlyRate || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                    setHourlyRate(Number(value));
+                  }
+                }}
+                placeholder="e.g. 25.50"
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="maxHours">Max Hours Before OT *</Label>
+              <Label htmlFor="maxHours">Max Hours Before Overtime *</Label>
               <Input
                 id="maxHours"
-                type="number"
-                min="1"
-                max="24"
-                value={maxHoursBeforeOvertime}
-                onChange={(e) => setMaxHoursBeforeOvertime(parseInt(e.target.value) || 8)}
-                placeholder="8"
+                type="text"
+                value={maxHoursBeforeOvertime || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || /^\d*$/.test(value)) {
+                    setMaxHoursBeforeOvertime(Number(value));
+                  }
+                }}
+                placeholder="e.g. 40"
                 required
               />
             </div>

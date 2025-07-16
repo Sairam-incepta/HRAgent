@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { updateEmployee } from "@/lib/database";
+import { updateEmployee } from "@/lib/util/employee";
 import type { Employee } from "@/lib/supabase";
 
 interface EditEmployeeDialogProps {
@@ -179,12 +179,15 @@ export function EditEmployeeDialog({
               <Label htmlFor="hourlyRate">Hourly Rate ($) *</Label>
               <Input
                 id="hourlyRate"
-                type="number"
-                min="1"
-                step="0.01"
-                value={hourlyRate}
-                onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
-                placeholder="25.00"
+                type="text"
+                value={hourlyRate || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                    setHourlyRate(Number(value));
+                  }
+                }}
+                placeholder="e.g. 25.50"
                 required
               />
             </div>
@@ -193,12 +196,15 @@ export function EditEmployeeDialog({
               <Label htmlFor="maxHours">Max Hours Before OT *</Label>
               <Input
                 id="maxHours"
-                type="number"
-                min="1"
-                max="24"
-                value={maxHoursBeforeOvertime}
-                onChange={(e) => setMaxHoursBeforeOvertime(parseInt(e.target.value) || 8)}
-                placeholder="8"
+                type="text"
+                value={maxHoursBeforeOvertime || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || /^\d*$/.test(value)) {
+                    setMaxHoursBeforeOvertime(Number(value));
+                  }
+                }}
+                placeholder="e.g. 40"
                 required
               />
             </div>

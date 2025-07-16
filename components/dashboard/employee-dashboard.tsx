@@ -30,7 +30,7 @@ import {
   User
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import TimeTracker from "@/components/dashboard/time-tracker";
+import { TimeTracker } from "@/components/dashboard/time-tracker";
 import { RequestDialog } from "@/components/dashboard/request-dialog";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { Input } from "@/components/ui/input";
@@ -47,20 +47,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  getEmployeeRequests, 
-  getPolicySales, 
-  getClientReviews, 
-  getDailySummaries,
-  getWeeklySummary,
-  getTodayHours,
-  getThisWeekHours,
-  getEmployee,
-  logTimezoneInfo,
-  type Request 
-} from "@/lib/database";
+import { getEmployeeRequests } from "@/lib/util/employee-requests";
+import { getPolicySales } from "@/lib/util/policies";
+import { getClientReviews } from "@/lib/util/client-reviews";
+import { getWeeklySummary, getTodayHours, getThisWeekHours } from "@/lib/util/get";
+import { getEmployee } from "@/lib/util/employee";
+import { type Request } from "@/lib/util/employee-requests";
+
 import { dashboardEvents } from "@/lib/events";
-import { ChatInterface } from "./chat-interface";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -191,7 +185,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       const lastKnownDate = localStorage.getItem('last_known_date');
       
       if (lastKnownDate && lastKnownDate !== currentDate) {
-        logTimezoneInfo(); // Log timezone info for debugging
         loadWeeklyData();
         loadPerformanceData();
         loadRequests();
@@ -277,7 +270,37 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const handleTimeUpdate = useCallback((elapsedSeconds: number, status: string) => {
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
+
+    // Live-update today’s entry in the bar graph so users see progress instantly
+    setWeeklyData((prev) => {
+      if (!prev?.length) return prev;
+      const todayIdx = prev.findIndex((d) => d.isToday);
+      if (todayIdx === -1) return prev;
+      const updated = [...prev];
+      updated[todayIdx] = {
+        ...updated[todayIdx],
+        hoursWorked: parseFloat((elapsedSeconds / 3600).toFixed(2)),
+      };
+      return updated;
+    });
   }, []);
+
+  // Keep bar graph and progress bar accurate even after refresh when user is not clocked in
+  useEffect(() => {
+    if (currentElapsedTime === 0) return;
+    setWeeklyData((prev) => {
+      if (!prev?.length) return prev;
+      const idx = prev.findIndex((d) => d.isToday);
+      if (idx === -1) return prev;
+      const clone = [...prev];
+      const newHours = +(currentElapsedTime / 3600).toFixed(2);
+      if (clone[idx].hoursWorked === newHours) return prev;
+      clone[idx] = { ...clone[idx], hoursWorked: newHours };
+      return clone;
+    });
+  }, [currentElapsedTime]);
+
+  // (moved further down to ensure liveHours is defined)
 
   const handleClockInChange = useCallback((clockedIn: boolean) => {
     setIsClockedIn(clockedIn);
@@ -433,20 +456,47 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
+  // Helper derived value to ensure we always display the larger of live session hours or saved DB hours
+  const liveHours = Math.max(currentElapsedTime / 3600, todayHours);
+
+  // If todayHours fetched from DB exceeds current live timer, sync it so that UI updates before any clock-in
+  useEffect(() => {
+    const seconds = todayHours * 3600;
+    if (todayHours > 0 && seconds > currentElapsedTime) {
+      setCurrentElapsedTime(seconds);
+    }
+  }, [todayHours]);
+
+  // Once weeklyData is loaded from the DB, ensure today's entry shows liveHours
+  useEffect(() => {
+    if (!weeklyData || weeklyData.length === 0) return;
+    const idx = weeklyData.findIndex(d => d.isToday);
+    if (idx === -1) return;
+    const newHours = +liveHours.toFixed(2);
+    if (weeklyData[idx].hoursWorked === newHours) return;
+    setWeeklyData(prev => {
+      if (!prev) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], hoursWorked: newHours };
+      return copy;
+    });
+  }, [weeklyData, liveHours]);
+
   const getProgressPercentage = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    return Math.min((currentHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
+    return Math.min((liveHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
   };
 
   const getProgressColor = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    if (currentHours >= employeeSettings.maxHoursBeforeOvertime) {
+    if (liveHours >= employeeSettings.maxHoursBeforeOvertime) {
       return 'bg-amber-500';
-    } else if (currentHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
+    } else if (liveHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
       return 'bg-orange-500';
     }
     return 'bg-[#005cb3]';
   };
+
+  // Replace inline ternaries where we previously used todayHours or currentElapsedTime
+  const displayCurrentHours = liveHours;
 
   const loadRequests = async () => {
     if (!user?.id) return;
@@ -619,7 +669,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
             onLunchChange={handleLunchChange}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
-            hourlyRate={employeeSettings.hourlyRate}
             onClockOut={handleTimeTrackerClockOut}
           />
         </div>
@@ -635,10 +684,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
                 <span className="text-sm">
-                  {isClockedIn
-                    ? formatTimeDisplay(currentElapsedTime / 3600)
-                    : formatTimeDisplay(todayHours)
-                  } / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                  {formatTimeDisplay(liveHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
               <Progress 
@@ -653,9 +699,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                     ? "On lunch break - timer paused"
                     : timeStatus === "overtime_pending"
                     ? "Overtime approval pending"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime
+                    : displayCurrentHours > employeeSettings.maxHoursBeforeOvertime
                     ? "Tracking your extended hours"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime * 0.8
+                    : displayCurrentHours > employeeSettings.maxHoursBeforeOvertime * 0.8
                     ? "Approaching your daily target hours"
                     : "Tracking your work hours"
                   }
@@ -764,12 +810,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       </Card>
 
       <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-[#005cb3]" />
-              <CardTitle>This Week&apos;s Performance</CardTitle>
-            </div>
-          </CardHeader>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-[#005cb3]" />
+            <CardTitle>This Week&apos;s Performance</CardTitle>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
@@ -784,62 +830,62 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
           {/* Vertical Bar Chart Container */}
           <div className="bg-muted/10 rounded-lg p-4">
             <div className="flex items-end justify-between gap-2 pt-8" style={{ height: '140px' }}>
-              {weeklyData.map((day) => {
-                const maxHours = getMaxHours();
+            {weeklyData.map((day) => {
+              const maxHours = getMaxHours();
                 // Calculate bar height in pixels (max 100px for the chart area)
                 const barHeight = maxHours > 0 ? Math.max((day.hoursWorked / maxHours) * 100, day.hoursWorked > 0 ? 3 : 1) : 1;
-                const isToday = day.isToday;
-                
-                // Format hours and minutes for display
-                const timeDisplay = formatTimeDisplay(day.hoursWorked);
-                
-                return (
-                  <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
-                    {/* Sales indicator */}
-                    {day.policiesSold > 0 && (
-                      <div className="text-xs text-[#005cb3] font-medium mb-1">
-                        {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
-                      </div>
-                    )}
-                    
-                    {/* Time label above bar */}
-                    <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
-                      {timeDisplay}
+              const isToday = day.isToday;
+              
+              // Format hours and minutes for display
+              const timeDisplay = formatTimeDisplay(day.hoursWorked);
+              
+              return (
+                <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
+                  {/* Sales indicator */}
+                  {day.policiesSold > 0 && (
+                    <div className="text-xs text-[#005cb3] font-medium mb-1">
+                      {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
                     </div>
-                    
+                  )}
+                  
+                  {/* Time label above bar */}
+                    <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
+                    {timeDisplay}
+                  </div>
+                  
                     {/* Vertical Bar with fixed pixel height */}
                     <div className="relative w-8 flex flex-col justify-end" style={{ height: '100px' }}>
-                      <div 
-                        className={`w-full rounded-t-sm transition-all duration-500 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/70' 
-                              : 'bg-muted-foreground/30'
-                        }`}
-                        style={{ 
+                    <div 
+                      className={`w-full rounded-t-sm transition-all duration-500 ${
+                        isToday 
+                          ? 'bg-[#005cb3]' 
+                          : day.hoursWorked > 0 
+                            ? 'bg-[#005cb3]/70' 
+                            : 'bg-muted-foreground/30'
+                      }`}
+                      style={{ 
                           height: `${barHeight}px`
-                        }}
-                      />
-                    </div>
-                    
-                    {/* Day label and date (X-axis) */}
-                    <div className="text-center">
-                      <div className="text-xs text-muted-foreground font-medium">
-                        {day.dayName.slice(0, 3).toUpperCase()}
-                      </div>
-                      <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
-                        {formatDate(day.date)}
-                      </div>
-                    </div>
-                    
-                    {/* Today indicator */}
-                    {isToday && (
-                      <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
-                    )}
+                      }}
+                    />
                   </div>
-                );
-              })}
+                  
+                  {/* Day label and date (X-axis) */}
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground font-medium">
+                      {day.dayName.slice(0, 3).toUpperCase()}
+                    </div>
+                    <div className="text-xs text-muted-foreground/70" style={{ fontSize: '10px' }}>
+                      {formatDate(day.date)}
+                    </div>
+                  </div>
+                  
+                  {/* Today indicator */}
+                  {isToday && (
+                    <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
+                  )}
+                </div>
+              );
+            })}
             </div>
           </div>
         </CardContent>

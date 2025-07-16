@@ -13,7 +13,7 @@ import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { addRequest } from "@/lib/database";
+import { addRequest } from "@/lib/util/requests";
 import { useUser } from "@clerk/nextjs";
 
 interface RequestDialogProps {
@@ -34,17 +34,7 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    console.log('📝 Submitting request:', {
-      requestType,
-      startDate,
-      endDate,
-      reason,
-      hours,
-      userId: user?.id
-    });
-    
     if (!requestType || !startDate || !reason || !user?.id) {
-      console.log('❌ Validation failed:', { requestType, startDate, reason, userId: user?.id });
       toast({
         title: "Error",
         description: "Please fill in all required fields",
@@ -55,7 +45,6 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
     
     // Additional validation for overtime requests
     if (requestType === "overtime" && (!hours || hours <= 0)) {
-      console.log('❌ Overtime validation failed:', { hours });
       toast({
         title: "Error",
         description: "Please enter a valid number of hours for overtime requests",
@@ -66,7 +55,6 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
     
     // Additional validation for vacation requests
     if (requestType === "vacation" && !endDate) {
-      console.log('❌ Vacation validation failed:', { endDate });
       toast({
         title: "Error",
         description: "Please select an end date for vacation requests",
@@ -86,13 +74,10 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
       startDate: startDate.toISOString().split('T')[0],
       endDate: endDate ? endDate.toISOString().split('T')[0] : undefined,
     };
-    
-    console.log('📝 Sending request data:', requestData);
-    
+        
     try {
       const result = await addRequest(requestData);
       if (result) {
-        console.log('✅ Request submitted successfully:', result);
         toast({
           title: "Request Submitted",
           description: "Your request has been submitted for approval",
@@ -107,7 +92,6 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
           onRequestSubmitted();
         }
       } else {
-        console.log('❌ Request submission failed - no result returned');
         toast({
           title: "Error",
           description: "Failed to submit request. Please try again.",

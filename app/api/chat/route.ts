@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { 
-  getTodayTimeTracking,
-  getTodayPolicySales,
-  addDailySummary
-} from '@/lib/database';
+import { getTodayTimeTracking, getTodayPolicySales } from '@/lib/util/today';
+import { addDailySummary } from '@/lib/util/daily-summaries';
 import { handleAdminChat as handleAdminChatModule } from '@/lib/ai/admin-chat';
 import { handleEmployeeChat as handleEmployeeChatModule } from '@/lib/ai/employee-chat';
 
@@ -25,24 +22,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, userRole, isDailySummarySubmission } = await request.json();
+    const { message, userRole: providedRole } = await request.json();
+    const userRole = providedRole || getUserRole(userId);
 
-    // Determine actual user role if not provided
-    const actualUserRole = userRole || getUserRole(userId);
-
-    // Handle daily summary submission directly
-    if (isDailySummarySubmission) {
-      return await handleDailySummarySubmission(message, userId);
-    }
-
-    // Handle admin vs employee differently using proper modules
-    if (actualUserRole === 'admin') {
-      return await handleAdminChat(message, userId);
-    } else {
-      return await handleEmployeeChatModule(message, userId);
+    if (userRole === 'admin') {
+      return await handleAdminChatModule(message, userId);
+    } 
+    else {
+      const response = await handleEmployeeChatModule(message, userId);
+      return NextResponse.json({ response });
     }
 
   } catch (error) {
+    if (error instanceof Error) {
+      console.error('Chat API error:', error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
     console.error('Chat API error:', error);
     return NextResponse.json(
       { error: 'Failed to process chat request' },
@@ -51,6 +46,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Keep this function for backward compatibility if needed elsewhere
 async function handleDailySummarySubmission(description: string, employeeId: string) {
   try {
     // Get today's data automatically from the database
