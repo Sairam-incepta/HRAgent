@@ -53,7 +53,7 @@ async function executeAction(response: string, employeeId: string): Promise<stri
           amount: payload.amount,
           brokerFee: payload.brokerFee,
           crossSold: payload.crossSold,
-          saleDate: payload.saleDate ? new Date(payload.saleDate) : new Date(),
+          saleDate: new Date(),
         });
 
         let highValueMessage = '';
@@ -93,7 +93,7 @@ async function executeAction(response: string, employeeId: string): Promise<stri
           policyNumber: payload.policyNumber || 'Unknown',
           rating: payload.rating,
           review: payload.review,
-          reviewDate: payload.reviewDate ? new Date(payload.reviewDate) : new Date(),
+          reviewDate: new Date(),
         });
 
         // Generate AI response for client review success
@@ -119,7 +119,7 @@ async function executeAction(response: string, employeeId: string): Promise<stri
 
         await addDailySummary({
           employeeId,
-          date: payload.date ? new Date(payload.date) : new Date(),
+          date: new Date(),
           hoursWorked,
           policiesSold,
           totalSalesAmount,
