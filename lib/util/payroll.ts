@@ -28,6 +28,29 @@ export interface PayrollPeriod {
   };
 }
 
+interface EmployeeDetail {
+  id: string;
+  name: string;
+  department: string;
+  position: string;
+  hourlyRate: number;
+  regularHours: number;
+  overtimeHours: number;
+  regularPay: number;
+  overtimePay: number;
+  bonuses: number;
+  totalPay: number;
+  salesCount: number;
+  salesAmount: number;
+  bonusBreakdown: {
+    brokerFeeBonuses: { count: number; amount: number };
+    crossSellingBonuses: { count: number; amount: number };
+    lifeInsuranceBonuses: { count: number; amount: number };
+    reviewBonuses: { count: number; amount: number };
+    highValuePolicyBonuses: { count: number; amount: number };
+  };
+}
+
 export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
   try {
     console.log('📊 Getting payroll periods...');
@@ -569,7 +592,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     };
 
     // Process all employees at once
-    const employeeDetails = [];
+    const employeeDetails: EmployeeDetail[] = [];
     let summaryBonusBreakdown = {
       brokerFeeBonuses: { count: 0, amount: 0 },
       crossSellingBonuses: { count: 0, amount: 0 },
@@ -661,7 +684,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const salesAmount = empSales.reduce((sum: number, s: any) => sum + s.amount, 0);
 
       // Add to summary breakdown
-      Object.keys(summaryBonusBreakdown).forEach(key => {
+      (Object.keys(summaryBonusBreakdown) as Array<keyof typeof summaryBonusBreakdown>).forEach(key => {
         summaryBonusBreakdown[key].count += empBonusBreakdown[key].count;
         summaryBonusBreakdown[key].amount += empBonusBreakdown[key].amount;
       });

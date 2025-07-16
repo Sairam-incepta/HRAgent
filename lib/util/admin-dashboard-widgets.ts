@@ -35,7 +35,7 @@ export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number;
 
     // Group logs by employee and check who's currently clocked in
     const employeeLogMap = new Map();
-    (todayTimeLogs || []).forEach(log => {
+    (todayTimeLogs || []).forEach((log: any) => {
       if (!employeeLogMap.has(log.employee_id)) {
         employeeLogMap.set(log.employee_id, []);
       }
@@ -48,7 +48,7 @@ export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number;
       const employeeLogs = employeeLogMap.get(employee.clerk_user_id) || [];
       
       // Check if any log has clock_in but no clock_out (currently clocked in)
-      const isClockedIn = employeeLogs.some(log => log.clock_in && !log.clock_out);
+      const isClockedIn = employeeLogs.some((log: any) => log.clock_in && !log.clock_out);
       
       if (isClockedIn) {
         clockedInCount++;
@@ -125,7 +125,7 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
 
     // Group time logs by employee
     const timeLogsByEmployee = new Map();
-    (weekTimeLogs || []).forEach(log => {
+    (weekTimeLogs || []).forEach((log: any) => {
       if (!timeLogsByEmployee.has(log.employee_id)) {
         timeLogsByEmployee.set(log.employee_id, []);
       }
@@ -140,7 +140,7 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
       const employeeLogs = timeLogsByEmployee.get(employee.clerk_user_id) || [];
       let employeeWeekHours = 0;
 
-      employeeLogs.forEach(log => {
+      employeeLogs.forEach((log: any) => {
         if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);

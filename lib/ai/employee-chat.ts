@@ -125,7 +125,7 @@ async function executeAction(response: string, employeeId: string): Promise<stri
           totalSalesAmount,
           totalBrokerFees,
           description: payload.description,
-          keyActivities: payload.keyActivities || payload.description.split(',').map(s => s.trim()),
+          keyActivities: payload.keyActivities || payload.description.split(',').map((s: string) => s.trim()),
         });
 
         // Generate AI response for daily summary success
@@ -135,7 +135,7 @@ async function executeAction(response: string, employeeId: string): Promise<stri
           totalSalesAmount,
           totalBrokerFees,
           description: payload.description,
-          keyActivities: payload.keyActivities || payload.description.split(',').map(s => s.trim())
+          keyActivities: payload.keyActivities || payload.description.split(',').map((s: string) => s.trim())
         });
 
       default:

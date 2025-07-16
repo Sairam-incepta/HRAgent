@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { DatabaseRequest } from "../supabase";
 import { notifyRequestSubmitted } from "../events";
 
 // Add a generic request to the database
@@ -13,7 +14,7 @@ export const addRequest = async (request: {
   reason?: string;
   startDate?: string;
   endDate?: string;
-}): Promise<Request | null> => {
+}): Promise<DatabaseRequest | null> => {
   try {
     const { data, error } = await supabase
       .from('requests')
@@ -48,7 +49,7 @@ export const addRequest = async (request: {
 };
 
 // Get all requests (for admin)
-export const getAllRequests = async (): Promise<Request[]> => {
+export const getAllRequests = async (): Promise<DatabaseRequest[]> => {
   try {
   const { data, error } = await supabase
     .from('requests')

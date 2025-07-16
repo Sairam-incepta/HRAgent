@@ -32,32 +32,20 @@ import {
 import { getAllRequests, updateRequestStatus } from "@/lib/util/requests";
 import { getEmployees } from "@/lib/util/employee";
 import { dashboardEvents } from "@/lib/events";
-
-interface Request {
-  id: string;
-  employee_id: string;
-  employeeName: string;
-  type: "overtime" | "vacation" | "sick" | "other";
-  title: string;
-  description: string;
-  request_date: string;
-  hours_requested?: number;
-  status: "pending" | "approved" | "rejected";
-  reason?: string;
-}
+import { DatabaseRequest } from "@/lib/supabase";
 
 interface AdminRequestsProps {
   pendingCount?: number;
 }
 
 export function AdminRequests({ pendingCount }: AdminRequestsProps) {
-  const [requests, setRequests] = useState<Request[]>([]);
+  const [requests, setRequests] = useState<DatabaseRequest[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<DatabaseRequest | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const { toast } = useToast();
 
@@ -90,7 +78,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
         getEmployees()
       ]);
       // Transform requests to match the interface
-      const transformedRequests: Request[] = allRequests.map(req => {
+      const transformedRequests: DatabaseRequest[] = allRequests.map(req => {
         const employee = employeeData.find(emp => emp.clerk_user_id === req.employee_id);
         return {
           ...req,
@@ -207,7 +195,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     }
   };
 
-  const handleViewDetails = (request: Request) => {
+  const handleViewDetails = (request: DatabaseRequest) => {
     setSelectedRequest(request);
     setDetailsOpen(true);
   };

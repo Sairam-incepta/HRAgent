@@ -130,3 +130,16 @@ export interface OvertimeRequest {
   current_overtime_hours: number;
   created_at: string;
 }
+
+export interface DatabaseRequest {
+  id: string;
+  employee_id: string;
+  employeeName: string;
+  type: "overtime" | "vacation" | "sick" | "other";
+  title: string;
+  description: string;
+  request_date: string;
+  hours_requested?: number;
+  status: "pending" | "approved" | "rejected";
+  reason?: string;
+}
