@@ -669,7 +669,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
             onLunchChange={handleLunchChange}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
-            hourlyRate={employeeSettings.hourlyRate}
             onClockOut={handleTimeTrackerClockOut}
           />
         </div>
