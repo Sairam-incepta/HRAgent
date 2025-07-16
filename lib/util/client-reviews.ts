@@ -13,9 +13,7 @@ export const addClientReview = async (review: {
   reviewDate: Date;
   employeeId: string;
 }): Promise<ClientReview | null> => {
-  try {
-    console.log('📝 Adding client review:', review);
-    
+  try {    
     const bonus = calculateReviewBonus(review.rating);
     
     const { data, error } = await supabase

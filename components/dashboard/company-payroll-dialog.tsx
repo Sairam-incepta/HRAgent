@@ -76,12 +76,6 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
       // ONLY UPDATE STATE IF THIS IS STILL THE CURRENT REQUEST
       if (requestId === currentRequestRef.current) {
         setHighValuePolicies(notifications);
-        
-        console.log('🔍 Company Payroll - High Value Policies:', {
-          totalPolicies: notifications.length,
-          pendingPolicies: notifications.filter(policy => policy.status === 'pending').length,
-          policiesWithStatus: notifications.map(p => ({ id: p.id, policy_number: p.policy_number, status: p.status }))
-        });
 
         // Group employees by department
         const departmentMap = new Map();

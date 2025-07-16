@@ -177,9 +177,7 @@ export function TimeTracker({
           currentLunchTime: currentBreakTime,
           breakLogId: breakLog.id
         });
-        
-        console.log('🍽️ Active break found in database, restored break state');
-        
+                
       } else if (activeLog) {
         // Active work session exists - calculate current elapsed time
         const sessionStart = new Date(activeLog.clock_in).getTime();
@@ -197,7 +195,6 @@ export function TimeTracker({
           setLunchStartTime(null);
           setCurrentLunchTime(0);
           setBreakLogId(null);
-          console.log('🔄 Cleared stale break state - now in active work session');
         }
         
       } else if (isOnValidLunchBreak && savedLunchData) {
@@ -225,7 +222,6 @@ export function TimeTracker({
           setLunchStartTime(null);
           setCurrentLunchTime(0);
           setBreakLogId(null);
-          console.log('🔄 Cleared stale break state - now idle');
         }
       }
       
@@ -331,9 +327,7 @@ export function TimeTracker({
       
       const initializeComponent = async () => {
         try {
-          setIsLoadingInitialData(true);
-          console.log('🚀 Initializing time tracker...');
-          
+          setIsLoadingInitialData(true);          
           // Check for lunch break state first and restore it immediately
           let hasLunchBreak = false;
           try {
@@ -352,9 +346,7 @@ export function TimeTracker({
                   setStartTime(null);
                   setActiveLogId(null);
                   onLunchChange?.(true);
-                  
-                  console.log('🍽️ Lunch state restored during initialization');
-                }
+                  }
               }
             }
           } catch (error) {
@@ -366,8 +358,6 @@ export function TimeTracker({
           
           // Load session data and restore UI state
           await loadTimeSession();
-          
-          console.log('✅ Time tracker initialized');
         } catch (error) {
           console.error('Error initializing time tracker:', error);
         } finally {
@@ -386,7 +376,6 @@ export function TimeTracker({
     
     // Sync with database every 30 seconds to catch changes from other sources
     syncInterval.current = setInterval(async () => {
-      console.log('🔄 Periodic database sync...');
       await refreshFromDatabase();
     }, 30000);
     
@@ -420,11 +409,6 @@ export function TimeTracker({
                 setActiveLogId(syncData.activeLogId);
                 setCurrentLunchTime(syncData.currentLunchTime || 0);
                 setBreakLogId(syncData.breakLogId || null);
-                
-                // Special handling for lunch break sync
-                if (syncData.status === 'lunch' && syncData.lunchStartTime) {
-                  console.log('🍽️ Synced lunch break state from another tab');
-                }
                 
                 // Update parent component callbacks
                 const isClockedIn = syncData.status === 'working' || syncData.status === 'overtime_pending';

@@ -35,9 +35,7 @@ export const addDailySummary = async (summary: {
       console.error('Error adding daily summary:', error);
       throw new Error('Failed to add daily summary');
     }
-    
-    console.log('✅ Daily summary added successfully:', data);
-    
+        
     // Notify dashboard to refresh
     notifyDailySummary();
     

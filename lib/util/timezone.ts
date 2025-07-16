@@ -52,18 +52,3 @@ export const getLocalEndOfWeek = (date: Date = new Date()): Date => {
   localDate.setHours(23, 59, 59, 999);
   return localDate;
 };
-
-// Debug utility to log timezone information
-export const logTimezoneInfo = () => {
-  const now = new Date();
-  const localDate = getLocalTimezoneDate(now);
-  const userTimezone = getUserTimezone();
-  console.log('🌍 Timezone Debug Info:');
-  console.log('  Server time:', now.toString());
-  console.log('  UTC time:', now.toISOString());
-  console.log('  Local time:', localDate.toString());
-  console.log('  Local date string:', getLocalDateString(now));
-  console.log('  UTC date string:', now.toISOString().split('T')[0]);
-  console.log('  Server timezone offset:', now.getTimezoneOffset(), 'minutes');
-  console.log('  Detected user timezone:', userTimezone);
-};

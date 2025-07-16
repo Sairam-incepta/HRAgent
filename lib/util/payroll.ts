@@ -53,14 +53,10 @@ interface EmployeeDetail {
 
 export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
   try {
-    console.log('📊 Getting payroll periods...');
-
     const [employees, policySales] = await Promise.all([
       getEmployees(),
       getPolicySales()
     ]);
-
-    console.log(`👥 Found ${employees.length} employees, ${policySales.length} policy sales`);
 
     const activeEmployees = employees.filter(emp => emp.status === 'active');
     const activeEmployeeIds = activeEmployees.map(emp => emp.clerk_user_id);
@@ -225,8 +221,6 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
     const currentPeriodOffset = Math.floor(daysSinceReference / 14);
 
-    console.log(`📅 Reference date: ${referenceDate.toISOString()}, periods since: ${currentPeriodOffset}`);
-
     // Get date range for current + previous periods only
     const { startDate: allPeriodsStart } = calculatePeriodDates(-MAX_PREVIOUS_PERIODS);
     const { endDate: allPeriodsEnd } = calculatePeriodDates(0);
@@ -353,23 +347,6 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       };
     };
 
-    // Log current period info
-    const { startDate: currentStart, endDate: currentEnd } = calculatePeriodDates(0);
-    console.log(`📅 Current period: ${currentStart.toISOString().split('T')[0]} to ${currentEnd.toISOString().split('T')[0]}`);
-
-    const currentPeriodSales = filterSalesForPeriod(currentStart, currentEnd);
-    const currentTotalBonuses = await calculateTotalBonuses(currentPeriodSales, currentStart, currentEnd);
-    const { totalHours: currentTotalHours, totalPay: currentBasePay } = calculatePeriodPay(currentStart, currentEnd);
-
-    console.log(`💰 Current period sales: ${currentPeriodSales.length}`);
-    console.log(`💵 Current period calculation:`, {
-      employees: activeEmployees.length,
-      actualHours: currentTotalHours,
-      basePay: currentBasePay,
-      bonuses: currentTotalBonuses,
-      totalPay: currentBasePay + currentTotalBonuses
-    });
-
     // Generate periods
     // 1. Add previous periods that have meaningful data
     for (let i = -MAX_PREVIOUS_PERIODS; i < 0; i++) {
@@ -395,7 +372,6 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     // 3. Add next upcoming period
     periods.push(createUpcomingPeriod(1));
 
-    console.log(`📊 Generated ${periods.length} payroll periods (optimized for actual usage)`);
     return periods;
   } 
   catch (error) {
@@ -449,7 +425,6 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
   };
 }> => {
   try {
-    console.log(`🔍 Getting payroll details for period: ${startDate} to ${endDate}`);
     
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -476,8 +451,6 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const activeEmployees = employees.filter(emp => emp.status === 'active');
     const activeEmployeeIds = activeEmployees.map(emp => emp.clerk_user_id);
     
-    console.log(`📊 Found ${activeEmployees.length} active employees`);
-
     const [
       policySales, 
       highValueNotificationsResult, 
@@ -511,8 +484,6 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const highValueNotifications = highValueNotificationsResult?.data || [];
     const clientReviews = clientReviewsResult?.data || [];
     const allTimeLogs = timeLogsResult?.data || [];
-
-    console.log(`📊 Data fetched: ${allTimeLogs.length} time logs, ${highValueNotifications.length} HV notifications, ${clientReviews.length} reviews`);
     
     if (timeLogsResult?.error) {
       console.error('❌ Error fetching time logs:', timeLogsResult.error);
@@ -529,8 +500,6 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const saleDate = new Date(sale.sale_date);
       return saleDate >= start && saleDate <= end;
     });
-
-    console.log(`📈 Found ${periodSales.length} sales in period`);
 
     // Create lookup maps for O(1) access
     const timeLogsByEmployee = new Map<string, any[]>();
@@ -765,13 +734,6 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         }
       }
     };
-
-    console.log('📊 Final payroll summary (optimized):', {
-      employees: summary.totalEmployees,
-      totalPay: summary.totalPay,
-      totalHours: summary.totalRegularHours + summary.totalOvertimeHours,
-      totalBonuses: summary.totalBonuses
-    });
 
     return { employees: employeeDetails, summary };
   } catch (error) {

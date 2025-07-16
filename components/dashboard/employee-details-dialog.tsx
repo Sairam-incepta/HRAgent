@@ -148,7 +148,6 @@ export function EmployeeDetailsDialog({
     
     setLoading(true);
     try {
-      console.log('🔍 Loading employee data for:', employee.clerk_user_id);
       const [policies, reviews, bonus, weekly, summaries] = await Promise.all([
         getPolicySales(employee.clerk_user_id),
         getClientReviews(employee.clerk_user_id),

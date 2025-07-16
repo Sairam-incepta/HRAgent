@@ -474,11 +474,6 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
             {/* High Value Policy Warning - Only show for pending policies */}
             {(() => {
               const hasPendingPolicies = highValuePolicies.some(policy => (policy as any).status === 'pending');
-              console.log('🚨 Alert Condition Check:', {
-                totalPolicies: highValuePolicies.length,
-                hasPendingPolicies,
-                policiesWithStatus: highValuePolicies.map(p => ({ id: p.id, status: (p as any).status }))
-              });
               return hasPendingPolicies;
             })() && (
               <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">

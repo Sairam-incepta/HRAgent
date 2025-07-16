@@ -91,7 +91,6 @@ export function AdminDashboard() {
     };
 
     const handleHighValuePolicyUpdate = () => {
-      console.log('🔔 AdminDashboard: Received high_value_policy_updated event, refreshing data...');
       loadData(true); // Silent refresh when high-value policies are updated (resolved/unresolved)
     };
 
@@ -114,9 +113,7 @@ export function AdminDashboard() {
     if (!silentUpdate) {
       setLoading(true);
     }
-    
-    console.log('🔄 AdminDashboard: Loading data...', { silentUpdate });
-    
+        
     try {
 
       // Light-weight refresh when called in background
@@ -137,12 +134,6 @@ export function AdminDashboard() {
         getHighValuePolicyNotificationsList(),
         getAllRequests()
       ]);
-      
-      console.log('🔄 AdminDashboard: Loaded notifications:', notificationsData.length, notificationsData.map(n => ({
-        id: n.id,
-        policy_number: n.policy_number,
-        status: n.status
-      })));
       
       if (!silentUpdate) {
         setEmployees(employeesData);
@@ -168,7 +159,6 @@ export function AdminDashboard() {
       
       // Update stable count for high-value policies (only pending ones)
       const pendingHighValueCount = notificationsData.filter(n => n.status === 'pending').length;
-      console.log('🔄 AdminDashboard: Setting pending count to:', pendingHighValueCount);
       setStablePendingCount(pendingHighValueCount);
       
       if (!hasInitiallyLoaded) {

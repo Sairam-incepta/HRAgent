@@ -44,8 +44,6 @@ export const updateEmployeeBonus = async (employeeId: string, bonusToAdd: number
 
 export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonus | null> => {
   try {
-    console.log(`🔍 Calculating total lifetime bonus for employee: ${employeeId}`);
-
     // Get employee and query policy_sales directly with employee_id filter
     const [employee, policySalesResult, highValueNotificationsResult, clientReviewsResult] = await Promise.all([
       getEmployee(employeeId),
@@ -67,7 +65,6 @@ export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonu
     ]);
 
     if (!employee) {
-      console.log('❌ Employee not found');
       return null;
     }
 
@@ -86,8 +83,6 @@ export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonu
     const allPolicySales = policySalesResult.data || [];
     const highValueNotifications = highValueNotificationsResult.data || [];
     const clientReviews = clientReviewsResult.data || [];
-
-    console.log(`📈 Found ${allPolicySales.length} total sales for employee`);
 
     if (allPolicySales.length === 0) {
       // Return zero bonus if no sales ever
@@ -146,8 +141,6 @@ export const getEmployeeBonus = async (employeeId: string): Promise<EmployeeBonu
     const allFiveStarReviews = (clientReviews || []).filter(review => review.rating === 5);
     const reviewBonuses = allFiveStarReviews.length * 10;
     totalBonuses += reviewBonuses;
-
-    console.log(`💰 Total lifetime bonus: ${totalBonuses.toFixed(2)} from ${allPolicySales.length} sales and ${allFiveStarReviews.length} 5-star reviews`);
 
     return {
       id: crypto.randomUUID(),

@@ -48,12 +48,9 @@ export function AdminStats() {
   }, []);
 
   const loadStats = async () => {
-    try {
-      console.log("🔄 AdminStats: Loading statistics...");
-      
+    try {      
       // Get employees (all employees - role is handled by Clerk, not database)
       const employees = await getEmployees();
-      console.log("👥 AdminStats: Found employees:", employees.length);
       
       let totalPolicies = 0;
       let totalHours = 0;
@@ -80,13 +77,9 @@ export function AdminStats() {
       endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
       endOfWeek.setHours(23, 59, 59, 999);
       
-      console.log(`📅 Current period: ${currentPeriodStart.toISOString().split('T')[0]} to ${currentPeriodEnd.toISOString().split('T')[0]}`);
-      console.log(`📅 Current week: ${startOfWeek.toISOString().split('T')[0]} to ${endOfWeek.toISOString().split('T')[0]}`);
-      
       // Get policy sales and hours for each employee using correct employee ID
       for (const employee of employees) {
-        console.log(`📊 AdminStats: Getting data for employee ${employee.name} (clerk_user_id: ${employee.clerk_user_id})`);
-        
+
         // Skip admin users for hour calculations (they don't clock in/out)
         const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
         
@@ -100,7 +93,6 @@ export function AdminStats() {
           // Calculate hours for current biweekly period using clerk_user_id
           const empHours = await calculateActualHoursForPeriod(employee.clerk_user_id, currentPeriodStart, currentPeriodEnd);
           totalHours += empHours;
-          console.log(`⏰ AdminStats: Employee ${employee.name} worked ${empHours} hours in current period`);
           
           // Calculate this week's hours and overtime (using 40-hour weekly limit)
           const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
@@ -113,13 +105,10 @@ export function AdminStats() {
           } else {
             totalRegularHoursThisWeek += weekHours;
           }
-        } else {
-          console.log(`🔧 AdminStats: Skipping hour calculation for admin user ${employee.name}`);
         }
         
         // Get policy sales using clerk_user_id (this is what's stored in policy_sales.employee_id)
         const policySales = await getPolicySales(employee.clerk_user_id);
-        console.log(`📈 AdminStats: Employee ${employee.name} has ${policySales.length} sales`);
         
         totalPolicies += policySales.length;
       }
