@@ -170,7 +170,7 @@ async function generateSuccessMessage(actionType: string, data: any): Promise<st
     }
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4.1",
       messages: [
         {
           role: "system",
@@ -283,7 +283,7 @@ Use this context to provide personalized responses and acknowledge the employee'
     });
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4.1",
       messages: messages,
       max_tokens: 1000,
       temperature: 0.7,

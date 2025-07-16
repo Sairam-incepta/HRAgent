@@ -97,7 +97,7 @@ export async function handleAdminChat(message: string, userId: string) {
     });
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4.1",
       messages: messages,
       max_tokens: 1000,
       temperature: 0.7,
