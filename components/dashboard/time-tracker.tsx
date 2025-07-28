@@ -51,6 +51,8 @@ export function TimeTracker({
 
   const [loading, setLoading] = useState(true);
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  const lastLoadRef = useRef<number>(0);
 
   // Confirmation dialogs
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
@@ -74,41 +76,43 @@ export function TimeTracker({
     let activeBreakStart = null;
 
     for (const log of logs) {
-      // Check for active work session (clocked in but not out)
       if (log.clock_in && !log.clock_out) {
         activeLog = log;
         activeClockIn = new Date(log.clock_in).getTime();
         
-        // Check if currently on break within this session
         if (log.break_start && !log.break_end) {
           activeBreakStart = new Date(log.break_start).getTime();
         }
-      }
-      
-      // Check for active break (clocked out but break not ended)
-      else if (log.clock_out && log.break_start && !log.break_end) {
+      } else if (log.clock_out && log.break_start && !log.break_end) {
         activeLog = log;
         activeBreakStart = new Date(log.break_start).getTime();
       }
 
-      // Calculate completed work time for this log
       if (log.clock_in && log.clock_out) {
-        let workTime = (new Date(log.clock_out).getTime() - new Date(log.clock_in).getTime()) / 1000;
+        const clockIn = new Date(log.clock_in).getTime();
+        const clockOut = new Date(log.clock_out).getTime();
+        let workTime = (clockOut - clockIn) / 1000;
         
-        // Subtract break time if break was completed
         if (log.break_start && log.break_end) {
-          const breakTime = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / 1000;
-          workTime -= breakTime;
+          const breakStart = new Date(log.break_start).getTime();
+          const breakEnd = new Date(log.break_end).getTime();
+          const overlapStart = Math.max(clockIn, breakStart);
+          const overlapEnd = Math.min(clockOut, breakEnd);
+          const overlapTime = Math.max(0, overlapEnd - overlapStart) / 1000;
+          
+          workTime -= overlapTime;
+          
+          const breakTime = (breakEnd - breakStart) / 1000;
           totalBreak += breakTime;
         }
         
         totalWorked += Math.max(0, workTime);
       }
 
-      // Add any completed break time to total (even if work session is still active)
       if (log.break_start && log.break_end) {
-        const breakTime = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / 1000;
-        // Only add if we haven't already counted it above
+        const breakStart = new Date(log.break_start).getTime();
+        const breakEnd = new Date(log.break_end).getTime();
+        const breakTime = (breakEnd - breakStart) / 1000;
         if (!(log.clock_in && log.clock_out)) {
           totalBreak += breakTime;
         }
@@ -124,23 +128,20 @@ export function TimeTracker({
     };
   };
 
-  // Get current display times (including active sessions)
   const getCurrentTimes = () => {
     const now = Date.now();
     
     let currentWorked = session.totalWorkedToday;
     let currentBreak = session.totalBreakToday;
 
-    // Add current work session time
-    if (session.status === "working" || session.status === "overtime_pending") {
-      if (session.clockInTime) {
-        currentWorked = session.totalWorkedToday + Math.floor((now - session.clockInTime) / 1000);
-      }
+    if ((session.status === "working" || session.status === "overtime_pending") && session.clockInTime) {
+      const currentSessionTime = Math.floor((now - session.clockInTime) / 1000);
+      currentWorked = session.totalWorkedToday + currentSessionTime;
     }
 
-    // Add current break time
     if (session.status === "lunch" && session.breakStartTime) {
-      currentBreak = session.totalBreakToday + Math.floor((now - session.breakStartTime) / 1000);
+      const currentBreakSession = Math.floor((now - session.breakStartTime) / 1000);
+      currentBreak = session.totalBreakToday + currentBreakSession;
     }
 
     return { currentWorked, currentBreak };
@@ -149,7 +150,12 @@ export function TimeTracker({
   const loadSession = useCallback(async () => {
     if (!user?.id) return;
 
+    const now = Date.now();
+    if (now - lastLoadRef.current < 2000) return; // Debounce: skip if called within 2 seconds
+    lastLoadRef.current = now;
+
     try {
+      setLoading(true);
       const today = getCurrentDate();
       const logs = await getTimeLogsForDay(user.id, today);
       const { totalWorked, totalBreak, activeLog, activeClockIn, activeBreakStart } = calculateTimesFromLogs(logs);
@@ -157,7 +163,6 @@ export function TimeTracker({
       let newSession: ActiveSession;
 
       if (!activeLog) {
-        // No active session - idle
         newSession = {
           activeLogId: null,
           clockInTime: null,
@@ -167,17 +172,15 @@ export function TimeTracker({
           status: "idle"
         };
       } else if (activeBreakStart && !activeClockIn) {
-        // On break (clocked out, break started but not ended)
         newSession = {
           activeLogId: activeLog.id,
           clockInTime: null,
           breakStartTime: activeBreakStart,
           totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak, // This now includes previous breaks
+          totalBreakToday: totalBreak,
           status: "lunch"
         };
       } else if (activeClockIn) {
-        // Currently working
         const currentTotal = totalWorked + Math.floor((Date.now() - activeClockIn) / 1000);
         const hoursWorked = currentTotal / 3600;
         const status: TimeStatus = hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
@@ -185,13 +188,12 @@ export function TimeTracker({
         newSession = {
           activeLogId: activeLog.id,
           clockInTime: activeClockIn,
-          breakStartTime: activeBreakStart, // Will be set if on break within work session
+          breakStartTime: activeBreakStart,
           totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak, // This now includes previous breaks
+          totalBreakToday: totalBreak,
           status: activeBreakStart ? "lunch" : status
         };
       } else {
-        // Fallback to idle
         newSession = {
           activeLogId: null,
           clockInTime: null,
@@ -202,23 +204,75 @@ export function TimeTracker({
         };
       }
 
-      setSession(newSession);
-      onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
-      onLunchChange?.(newSession.status === "lunch");
-      setLoading(false);
+      // Only update if state has changed
+      if (
+        newSession.status !== session.status ||
+        newSession.activeLogId !== session.activeLogId ||
+        newSession.totalWorkedToday !== session.totalWorkedToday ||
+        newSession.totalBreakToday !== session.totalBreakToday
+      ) {
+        setSession(newSession);
+        onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
+        onLunchChange?.(newSession.status === "lunch");
+      }
     } catch (error) {
       console.error('Error loading session:', error);
+      toast({
+        title: "Sync Failed",
+        description: "Failed to sync time tracker state. Please refresh.",
+        variant: "destructive",
+      });
+    } finally {
       setLoading(false);
     }
-  }, [user?.id, maxHoursBeforeOvertime, onClockInChange, onLunchChange]);
+  }, [user?.id, maxHoursBeforeOvertime, onClockInChange, onLunchChange, session]);
 
+  // Initialize session and set up BroadcastChannel
   useEffect(() => {
     if (user?.id) {
       loadSession();
+      channelRef.current = new BroadcastChannel('time_tracker_channel');
+      channelRef.current.onmessage = (event) => {
+        if (event.data.type === 'state_changed') {
+          const { status, activeLogId } = event.data;
+          // Only load if the received state differs
+          if (status !== session.status || activeLogId !== session.activeLogId) {
+            loadSession();
+          }
+        }
+      };
     }
+
+    return () => {
+      if (channelRef.current) {
+        channelRef.current.close();
+        channelRef.current = null;
+      }
+    };
+  }, [user?.id, loadSession, session.status, session.activeLogId]);
+
+  // Periodic polling for cross-browser sync
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const pollInterval = setInterval(() => {
+      loadSession();
+    }, 15000); // Poll every 15 seconds
+
+    return () => clearInterval(pollInterval);
   }, [user?.id, loadSession]);
 
-  // Simplified timer effect
+  // Notify other tabs on state change
+  const notifyTabs = useCallback(() => {
+    if (channelRef.current) {
+      channelRef.current.postMessage({
+        type: 'state_changed',
+        status: session.status,
+        activeLogId: session.activeLogId
+      });
+    }
+  }, [session.status, session.activeLogId]);
+
   useEffect(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -229,12 +283,16 @@ export function TimeTracker({
         const { currentWorked } = getCurrentTimes();
         onTimeUpdate?.(currentWorked, session.status);
 
-        // Check for overtime transition
         if (session.status === "working" && !overtimeNotificationShown) {
           const hoursWorked = currentWorked / 3600;
           if (hoursWorked >= maxHoursBeforeOvertime) {
             setSession(prev => ({ ...prev, status: "overtime_pending" }));
             setOvertimeNotificationShown(true);
+            toast({
+              title: "Overtime Alert",
+              description: "You have reached the maximum hours for regular time.",
+              className: "bg-amber-100 text-amber-800",
+            });
           }
         }
       }, 1000);
@@ -250,7 +308,7 @@ export function TimeTracker({
   }, [session.status, session.clockInTime, session.breakStartTime, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate]);
 
   const handleClockIn = async () => {
-    if (!user?.id) return;
+    if (!user?.id || loading) return;
     setClockInConfirmOpen(false);
 
     try {
@@ -272,6 +330,7 @@ export function TimeTracker({
 
       onClockInChange?.(true);
       dashboardEvents.emit('time_logged');
+      notifyTabs();
 
       toast({
         title: "Clocked In",
@@ -289,17 +348,43 @@ export function TimeTracker({
   };
 
   const handleClockOut = async () => {
-    if (!session.activeLogId) return;
+    if (!session.activeLogId || loading) return;
     setClockOutConfirmOpen(false);
 
     try {
+      const now = new Date();
       const { currentWorked } = getCurrentTimes();
       
-      await updateTimeLog({ logId: session.activeLogId, clockOut: new Date() });
+      if (session.status === "lunch" && session.breakStartTime) {
+        const currentBreakTime = Math.floor((now.getTime() - session.breakStartTime) / 1000);
+        
+        await endBreak(session.activeLogId);
+        
+        setSession(prev => ({
+          ...prev,
+          breakStartTime: null,
+          totalBreakToday: prev.totalBreakToday + currentBreakTime,
+          status: "idle"
+        }));
+        
+        onLunchChange?.(false);
+      } else {
+        await updateTimeLog({ logId: session.activeLogId, clockOut: now });
+        
+        setSession(prev => ({
+          ...prev,
+          clockInTime: null,
+          activeLogId: null,
+          status: "idle"
+        }));
+        
+        onClockInChange?.(false);
+      }
 
       const finalHours = currentWorked / 3600;
       onClockOut?.(finalHours);
       dashboardEvents.emit('time_logged');
+      notifyTabs();
 
       toast({
         title: "Clocked Out",
@@ -319,16 +404,13 @@ export function TimeTracker({
   };
 
   const handleStartBreak = async () => {
-    if (!session.activeLogId) return;
+    if (!session.activeLogId || loading) return;
     setBreakStartConfirmOpen(false);
 
     try {
       const now = new Date();
-      
-      // Calculate the work time that was just completed
       const currentWorkTime = session.clockInTime ? Math.floor((now.getTime() - session.clockInTime) / 1000) : 0;
       
-      // End current work session and start break
       await updateTimeLog({ logId: session.activeLogId, clockOut: now });
       await startBreak(session.activeLogId);
 
@@ -336,12 +418,13 @@ export function TimeTracker({
         ...prev,
         clockInTime: null,
         breakStartTime: now.getTime(),
-        totalWorkedToday: prev.totalWorkedToday + currentWorkTime, // Add the work we just completed
+        totalWorkedToday: prev.totalWorkedToday + currentWorkTime,
         status: "lunch"
       }));
 
       onLunchChange?.(true);
       dashboardEvents.emit('time_logged');
+      notifyTabs();
 
       toast({
         title: "Break Started",
@@ -358,16 +441,13 @@ export function TimeTracker({
   };
 
   const handleEndBreak = async () => {
-    if (!session.activeLogId || !user?.id) return;
+    if (!session.activeLogId || !user?.id || loading) return;
     setBreakEndConfirmOpen(false);
 
     try {
       const now = new Date();
-      
-      // Calculate the break time that was just completed
       const currentBreakTime = session.breakStartTime ? Math.floor((now.getTime() - session.breakStartTime) / 1000) : 0;
       
-      // End break and create new work session
       await endBreak(session.activeLogId);
       const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
 
@@ -376,9 +456,7 @@ export function TimeTracker({
       }
 
       const newLog = Array.isArray(data) ? data[0] : data;
-      
-      const newTotalWorked = session.totalWorkedToday;
-      const hoursWorked = newTotalWorked / 3600;
+      const hoursWorked = session.totalWorkedToday / 3600;
       const newStatus: TimeStatus = hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
 
       setSession(prev => ({
@@ -386,12 +464,13 @@ export function TimeTracker({
         activeLogId: newLog.id,
         clockInTime: now.getTime(),
         breakStartTime: null,
-        totalBreakToday: prev.totalBreakToday + currentBreakTime, // Add the break we just completed
+        totalBreakToday: prev.totalBreakToday + currentBreakTime,
         status: newStatus
       }));
 
       onLunchChange?.(false);
       dashboardEvents.emit('time_logged');
+      notifyTabs();
 
       toast({
         title: "Break Ended",
@@ -453,6 +532,7 @@ export function TimeTracker({
                 {session.status === "idle" ? (
                   <Button
                     onClick={() => setClockInConfirmOpen(true)}
+                    disabled={loading}
                     className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96]"
                   >
                     <Play className="mr-2 h-4 w-4" /> Clock In
@@ -460,7 +540,8 @@ export function TimeTracker({
                 ) : (
                   <Button
                     onClick={() => setClockOutConfirmOpen(true)}
-                    className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white"
+                    disabled={session.status === "lunch" || loading}
+                    className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Square className="mr-2 h-4 w-4" /> Clock Out
                   </Button>
@@ -487,7 +568,7 @@ export function TimeTracker({
                 {session.status !== "lunch" ? (
                   <Button
                     onClick={() => setBreakStartConfirmOpen(true)}
-                    disabled={session.status !== "working" && session.status !== "overtime_pending"}
+                    disabled={session.status !== "working" && session.status !== "overtime_pending" || loading}
                     className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#e6a366] text-black"
                   >
                     <Coffee className="mr-2 h-4 w-4" /> Start Break
@@ -495,6 +576,7 @@ export function TimeTracker({
                 ) : (
                   <Button
                     onClick={() => setBreakEndConfirmOpen(true)}
+                    disabled={loading}
                     className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96]"
                   >
                     <Check className="mr-2 h-4 w-4" /> End Break
@@ -526,8 +608,7 @@ export function TimeTracker({
         )}
       </div>
 
-      {/* Confirmation Dialogs - Unchanged */}
-      <Dialog open={clockInConfirmOpen} onOpenChange={setClockInConfirmOpen}>
+      <Dialog open={clockInConfirmOpen && !loading} onOpenChange={setClockInConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirm Clock In</DialogTitle>
@@ -546,7 +627,7 @@ export function TimeTracker({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={clockOutConfirmOpen} onOpenChange={setClockOutConfirmOpen}>
+      <Dialog open={clockOutConfirmOpen && !loading} onOpenChange={setClockOutConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirm Clock Out</DialogTitle>
@@ -565,7 +646,7 @@ export function TimeTracker({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={breakStartConfirmOpen} onOpenChange={setBreakStartConfirmOpen}>
+      <Dialog open={breakStartConfirmOpen && !loading} onOpenChange={setBreakStartConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Start Break</DialogTitle>
@@ -584,12 +665,12 @@ export function TimeTracker({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={breakEndConfirmOpen} onOpenChange={setBreakEndConfirmOpen}>
+      <Dialog open={breakEndConfirmOpen && !loading} onOpenChange={setBreakEndConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>End Break</DialogTitle>
             <DialogDescription>
-              Ready to get back to work? Your break time was {formatTime(currentBreak)}.
+              Ready to get back to work? Your break time was {formatTime(session.breakStartTime ? Math.floor((Date.now() - session.breakStartTime) / 1000) : 0)}.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
