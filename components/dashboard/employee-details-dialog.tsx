@@ -7,11 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
+import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key, ArrowLeft, ArrowRight } from "lucide-react";
 import { getPolicySales } from "@/lib/util/policies";
 import { getClientReviews } from "@/lib/util/client-reviews";
 import { getEmployeeBonus } from "@/lib/util/employee-bonus";
-import { getWeeklySummary } from "@/lib/util/get";
+import { getWeeklySummary, getPeriodSummary } from "@/lib/util/get";
 import { getTimeLogsForDay } from "@/lib/util/time-logs";
 import { getDailySummaries } from "@/lib/util/daily-summaries";
 import { calculateIndividualPolicyBonus } from "@/lib/util/payroll";
@@ -62,6 +62,8 @@ export function EmployeeDetailsDialog({
   }>>({});
   const [policyBonuses, setPolicyBonuses] = useState<Record<string, number>>({});
   const [bonusesLoading, setBonusesLoading] = useState(false);
+  const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
+  const [initialWeekStart, setInitialWeekStart] = useState<string | null>(null);
 
   // Calculate max daily hours once for consistent scaling across all progress bars
   const maxDailyHours = useMemo(() => {
@@ -70,11 +72,46 @@ export function EmployeeDetailsDialog({
     return Math.max(...allDailyHours, 12); // At least 12 hours for good visualization
   }, [weeklyData]);
 
+  // Helper to format week range (add this function)
+  const formatWeekRange = (data: typeof weeklyData) => {
+    if (!data.length) return '';
+    const start = new Date(data[0].date);
+    const end = new Date(data[data.length - 1].date);
+    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  };
+
+  // Helpers for navigation (add these)
+  const goPrev = () => {
+    if (!currentWeekStart) return;
+    const prevStartDate = new Date(currentWeekStart);
+    prevStartDate.setDate(prevStartDate.getDate() - 7);
+    const prevStartStr = prevStartDate.toISOString().split('T')[0];
+    setCurrentWeekStart(prevStartStr);
+  };
+
+  const goNext = () => {
+    if (!currentWeekStart) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const nextStartDate = new Date(currentWeekStart);
+    nextStartDate.setDate(nextStartDate.getDate() + 7);
+    const nextStartStr = nextStartDate.toISOString().split('T')[0];
+    if (nextStartStr > todayStr) return; // Prevent future weeks
+    setCurrentWeekStart(nextStartStr);
+  };
+
+  const isLatestWeek = currentWeekStart === initialWeekStart;
+
   useEffect(() => {
     if (open && employee?.clerk_user_id) {
       loadEmployeeData();
     }
   }, [open, employee?.clerk_user_id]);
+
+  useEffect(() => {
+    if (open && employee?.clerk_user_id) {
+      loadWeekData();
+    }
+  }, [open, employee?.clerk_user_id, currentWeekStart]);
 
   // Listen for client review updates
   useEffect(() => {
@@ -82,10 +119,12 @@ export function EmployeeDetailsDialog({
 
     const handleClientReviewUpdate = () => {
       loadEmployeeData();
+      loadWeekData();
     };
 
     const handlePolicySaleUpdate = () => {
       loadEmployeeData();
+      loadWeekData();
     };
 
     // Subscribe to events and store cleanup functions
@@ -169,22 +208,45 @@ export function EmployeeDetailsDialog({
 
     setLoading(true);
     try {
-      const [policies, reviews, bonus, weekly, summaries] = await Promise.all([
+      const [policies, reviews, bonus, summaries] = await Promise.all([
         getPolicySales(employee.clerk_user_id),
         getClientReviews(employee.clerk_user_id),
         getEmployeeBonus(employee.clerk_user_id),
-        getWeeklySummary(employee.clerk_user_id),
         getDailySummaries(employee.clerk_user_id)
       ]);
 
       setEmployeePolicies(policies);
       setClientReviews(reviews);
       setEmployeeBonus(bonus);
-      setWeeklyData(weekly);
       setDailySummaries(summaries);
       await calculateAllPolicyBonuses(policies);
     } catch (error) {
       console.error('Error loading employee data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadWeekData = async () => {
+    if (!employee?.clerk_user_id) return;
+
+    setLoading(true);
+    try {
+      let weekly;
+      if (currentWeekStart) {
+        weekly = await getPeriodSummary(employee.clerk_user_id, currentWeekStart, 7);
+      } else {
+        weekly = await getWeeklySummary(employee.clerk_user_id);
+      }
+      setWeeklyData(weekly);
+      if (weekly.length && !initialWeekStart) {
+        setInitialWeekStart(weekly[0].date);
+      }
+      if (weekly.length) {
+        setCurrentWeekStart(weekly[0].date);
+      }
+    } catch (error) {
+      console.error('Error loading week data:', error);
     } finally {
       setLoading(false);
     }
@@ -421,10 +483,21 @@ export function EmployeeDetailsDialog({
                         {/* Hours Visualization - Right Side */}
                         <div className="space-y-4">
                           <div className="bg-muted/50 rounded-lg p-8">
-                            <h4 className="font-medium text-lg mb-6 flex items-center gap-2">
-                              <Clock className="h-6 w-6" />
-                              Weekly Hours Breakdown
-                            </h4>
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="font-medium text-lg flex items-center gap-2">
+                                <Clock className="h-6 w-6" />
+                                Weekly Hours Breakdown
+                              </h4>
+                              <div className="flex items-center gap-2">
+                                <Button variant="ghost" size="icon" onClick={goPrev}>
+                                  <ArrowLeft className="h-4 w-4" />
+                                </Button>
+                                <span className="text-sm font-medium">{formatWeekRange(weeklyData)}</span>
+                                <Button variant="ghost" size="icon" onClick={goNext} disabled={isLatestWeek}>
+                                  <ArrowRight className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
 
                             {(() => {
                               const totalWeeklyHours = weeklyData.reduce((total, day) => total + day.hoursWorked, 0);
@@ -491,7 +564,18 @@ export function EmployeeDetailsDialog({
               <TabsContent value="daily-hours" className="space-y-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Daily Hours This Week</CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle>Daily Hours</CardTitle>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="icon" onClick={goPrev}>
+                          <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm font-medium">{formatWeekRange(weeklyData)}</span>
+                        <Button variant="ghost" size="icon" onClick={goNext} disabled={isLatestWeek}>
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {loading ? (
@@ -622,252 +706,247 @@ export function EmployeeDetailsDialog({
                                       </span>
                                     )}
                                   </div>
-                                  {overtimeHours > 0 && (
-                                    <span className="text-amber-600 font-medium">
-                                      +{formatTime(overtimeHours)} OT
-                                    </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="daily-summaries" className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Daily Summaries ({dailySummaries.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <div className="space-y-4">
+                        {[...Array(5)].map((_, i) => (
+                          <div key={i} className="animate-pulse border rounded-lg p-4">
+                            <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
+                            <div className="h-3 bg-gray-200 rounded w-3/4 mb-3"></div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="h-3 bg-gray-200 rounded"></div>
+                              <div className="h-3 bg-gray-200 rounded"></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : dailySummaries.length > 0 ? (
+                      <div className="space-y-4">
+                        {dailySummaries.map((summary, index) => {
+                          // Get policies for this specific date
+                          const summaryDate = new Date(summary.date).toDateString();
+                          const dayPolicies = employeePolicies.filter(policy =>
+                            new Date(policy.sale_date).toDateString() === summaryDate
+                          );
+                          const highNetworthPolicies = dayPolicies.filter(policy => policy.amount >= 100000);
+
+                          return (
+                            <div key={index} className="border rounded-lg p-4 space-y-3">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <h4 className="font-semibold text-lg">
+                                    {formatDate(summary.date)}
+                                  </h4>
+                                  <p className="text-sm text-muted-foreground">
+                                    {new Date(summary.date).toLocaleDateString('en-US', {
+                                      weekday: 'long',
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric'
+                                    })}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-sm font-medium">
+                                    Total Policies: <span className="text-[#005cb3]">{dayPolicies.length}</span>
+                                  </p>
+                                  {highNetworthPolicies.length > 0 && (
+                                    <p className="text-sm font-medium">
+                                      High Networth: <span className="text-amber-600">{highNetworthPolicies.length}</span>
+                                    </p>
                                   )}
                                 </div>
                               </div>
-                        );
-                          })}
+
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground">Hours Worked:</span>
+                                  <span className="ml-2 font-medium">{formatTime(summary.hours_worked)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Policies Sold:</span>
+                                  <span className="ml-2 font-medium">{summary.policies_sold}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Total Sales:</span>
+                                  <span className="ml-2 font-medium">${summary.total_sales_amount.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Broker Fees:</span>
+                                  <span className="ml-2 font-medium">${summary.total_broker_fees.toLocaleString()}</span>
+                                </div>
+                              </div>
+
+                              {summary.description && (
+                                <div className="bg-muted/50 rounded p-3">
+                                  <p className="text-sm">
+                                    <span className="font-medium">Summary:</span> {summary.description}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <p>No daily summaries found.</p>
+                        <p className="text-sm mt-2">Daily summaries are created when employees submit their end-of-day reports through the chat interface.</p>
                       </div>
                     )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-            <TabsContent value="daily-summaries" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Daily Summaries ({dailySummaries.length})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loading ? (
-                    <div className="space-y-4">
-                      {[...Array(5)].map((_, i) => (
-                        <div key={i} className="animate-pulse border rounded-lg p-4">
-                          <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
-                          <div className="h-3 bg-gray-200 rounded w-3/4 mb-3"></div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="h-3 bg-gray-200 rounded"></div>
-                            <div className="h-3 bg-gray-200 rounded"></div>
+              <TabsContent value="policies" className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Policies Sold ({totalPolicies})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <div className="space-y-4">
+                        {[...Array(3)].map((_, i) => (
+                          <div key={i} className="animate-pulse border rounded-lg p-4">
+                            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                            <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="h-3 bg-gray-200 rounded"></div>
+                              <div className="h-3 bg-gray-200 rounded"></div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : dailySummaries.length > 0 ? (
-                    <div className="space-y-4">
-                      {dailySummaries.map((summary, index) => {
-                        // Get policies for this specific date
-                        const summaryDate = new Date(summary.date).toDateString();
-                        const dayPolicies = employeePolicies.filter(policy =>
-                          new Date(policy.sale_date).toDateString() === summaryDate
-                        );
-                        const highNetworthPolicies = dayPolicies.filter(policy => policy.amount >= 100000);
-
-                        return (
+                        ))}
+                      </div>
+                    ) : employeePolicies.length > 0 ? (
+                      <div className="space-y-4">
+                        {employeePolicies.map((policy, index) => (
                           <div key={index} className="border rounded-lg p-4 space-y-3">
                             <div className="flex justify-between items-start">
                               <div>
-                                <h4 className="font-semibold text-lg">
-                                  {formatDate(summary.date)}
-                                </h4>
-                                <p className="text-sm text-muted-foreground">
-                                  {new Date(summary.date).toLocaleDateString('en-US', {
-                                    weekday: 'long',
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric'
-                                  })}
-                                </p>
+                                <h4 className="font-semibold">{policy.policy_number}</h4>
+                                <p className="text-sm text-muted-foreground">{policy.client_name}</p>
                               </div>
                               <div className="text-right">
-                                <p className="text-sm font-medium">
-                                  Total Policies: <span className="text-[#005cb3]">{dayPolicies.length}</span>
-                                </p>
-                                {highNetworthPolicies.length > 0 && (
-                                  <p className="text-sm font-medium">
-                                    High Networth: <span className="text-amber-600">{highNetworthPolicies.length}</span>
-                                  </p>
-                                )}
+                                <p className="font-medium">${policy.amount.toLocaleString()}</p>
+                                <p className="text-sm text-muted-foreground">{new Date(policy.sale_date).toLocaleDateString()}</p>
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
-                                <span className="text-muted-foreground">Hours Worked:</span>
-                                <span className="ml-2 font-medium">{formatTime(summary.hours_worked)}</span>
+                                <span className="text-muted-foreground">Type:</span>
+                                <span className="ml-2 font-medium">{policy.policy_type}</span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Policies Sold:</span>
-                                <span className="ml-2 font-medium">{summary.policies_sold}</span>
+                                <span className="text-muted-foreground">Broker Fee:</span>
+                                <span className="ml-2 font-medium">${policy.broker_fee}</span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Total Sales:</span>
-                                <span className="ml-2 font-medium">${summary.total_sales_amount.toLocaleString()}</span>
+                                <span className="text-muted-foreground">Bonus:</span>
+                                <span className="ml-2 font-medium text-[#005cb3]">
+                                  {bonusesLoading ? (
+                                    <span className="animate-pulse">...</span>
+                                  ) : (
+                                    `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
+                                  )}
+                                </span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Broker Fees:</span>
-                                <span className="ml-2 font-medium">${summary.total_broker_fees.toLocaleString()}</span>
+                                <span className="text-muted-foreground">Cross-sold:</span>
+                                <span className="ml-2 font-medium">
+                                  {policy.is_cross_sold_policy ? "Yes" : "No"}
+                                </span>
                               </div>
                             </div>
 
-                            {summary.description && (
+                            {policy.client_description && (
                               <div className="bg-muted/50 rounded p-3">
                                 <p className="text-sm">
-                                  <span className="font-medium">Summary:</span> {summary.description}
+                                  <span className="font-medium">Client Notes:</span> {policy.client_description}
                                 </p>
                               </div>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <p>No daily summaries found.</p>
-                      <p className="text-sm mt-2">Daily summaries are created when employees submit their end-of-day reports through the chat interface.</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-center py-8 text-muted-foreground">No policies sold yet.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-            <TabsContent value="policies" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Policies Sold ({totalPolicies})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loading ? (
-                    <div className="space-y-4">
-                      {[...Array(3)].map((_, i) => (
-                        <div key={i} className="animate-pulse border rounded-lg p-4">
-                          <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                          <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="h-3 bg-gray-200 rounded"></div>
-                            <div className="h-3 bg-gray-200 rounded"></div>
+              <TabsContent value="reviews" className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Client Reviews ({clientReviews.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <div className="space-y-4">
+                        {[...Array(3)].map((_, i) => (
+                          <div key={i} className="animate-pulse border rounded-lg p-4">
+                            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                            <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
+                            <div className="h-3 bg-gray-200 rounded w-full"></div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : employeePolicies.length > 0 ? (
-                    <div className="space-y-4">
-                      {employeePolicies.map((policy, index) => (
-                        <div key={index} className="border rounded-lg p-4 space-y-3">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <h4 className="font-semibold">{policy.policy_number}</h4>
-                              <p className="text-sm text-muted-foreground">{policy.client_name}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-medium">${policy.amount.toLocaleString()}</p>
-                              <p className="text-sm text-muted-foreground">{new Date(policy.sale_date).toLocaleDateString()}</p>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <span className="text-muted-foreground">Type:</span>
-                              <span className="ml-2 font-medium">{policy.policy_type}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Broker Fee:</span>
-                              <span className="ml-2 font-medium">${policy.broker_fee}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Bonus:</span>
-                              <span className="ml-2 font-medium text-[#005cb3]">
-                                {bonusesLoading ? (
-                                  <span className="animate-pulse">...</span>
-                                ) : (
-                                  `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
-                                )}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Cross-sold:</span>
-                              <span className="ml-2 font-medium">
-                                {policy.is_cross_sold_policy ? "Yes" : "No"}
-                              </span>
-                            </div>
-                          </div>
-
-                          {policy.client_description && (
-                            <div className="bg-muted/50 rounded p-3">
-                              <p className="text-sm">
-                                <span className="font-medium">Client Notes:</span> {policy.client_description}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-center py-8 text-muted-foreground">No policies sold yet.</p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="reviews" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Client Reviews ({clientReviews.length})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loading ? (
-                    <div className="space-y-4">
-                      {[...Array(3)].map((_, i) => (
-                        <div key={i} className="animate-pulse border rounded-lg p-4">
-                          <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                          <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
-                          <div className="h-3 bg-gray-200 rounded w-full"></div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : clientReviews.length > 0 ? (
-                    <div className="space-y-4">
-                      {clientReviews.slice().reverse().map((review, index) => (
-                        <div key={index} className="border rounded-lg p-4 space-y-3">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <h4 className="font-semibold">{review.client_name}</h4>
-                              <p className="text-sm text-muted-foreground">Policy: {review.policy_number}</p>
-                            </div>
-                            <div className="text-right">
-                              <div className="flex items-center gap-1">
-                                {[...Array(5)].map((_, i) => (
-                                  <span key={i} className={`text-sm ${i < review.rating ? 'text-yellow-500' : 'text-gray-300'}`}>
-                                    ★
-                                  </span>
-                                ))}
-                                <span className="ml-1 text-sm font-medium">{review.rating}/5</span>
+                        ))}
+                      </div>
+                    ) : clientReviews.length > 0 ? (
+                      <div className="space-y-4">
+                        {clientReviews.slice().reverse().map((review, index) => (
+                          <div key={index} className="border rounded-lg p-4 space-y-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-semibold">{review.client_name}</h4>
+                                <p className="text-sm text-muted-foreground">Policy: {review.policy_number}</p>
                               </div>
-                              <p className="text-sm text-muted-foreground">{new Date(review.review_date).toLocaleDateString()}</p>
+                              <div className="text-right">
+                                <div className="flex items-center gap-1">
+                                  {[...Array(5)].map((_, i) => (
+                                    <span key={i} className={`text-sm ${i < review.rating ? 'text-yellow-500' : 'text-gray-300'}`}>
+                                      ★
+                                    </span>
+                                  ))}
+                                  <span className="ml-1 text-sm font-medium">{review.rating}/5</span>
+                                </div>
+                                <p className="text-sm text-muted-foreground">{new Date(review.review_date).toLocaleDateString()}</p>
+                              </div>
+                            </div>
+
+                            <div className="bg-muted/50 rounded p-3">
+                              <p className="text-sm">"{review.review}"</p>
                             </div>
                           </div>
-
-                          <div className="bg-muted/50 rounded p-3">
-                            <p className="text-sm">"{review.review}"</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-center py-8 text-muted-foreground">No client reviews yet.</p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </div>
-      </DialogContent>
-    </Dialog >
-      { passwordResetOpen && (
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-center py-8 text-muted-foreground">No client reviews yet.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {passwordResetOpen && (
         <PasswordResetDialog
           open={passwordResetOpen}
           onOpenChange={setPasswordResetOpen}
@@ -875,8 +954,7 @@ export function EmployeeDetailsDialog({
           employeeName={employee.name}
           employeeEmail={employee.email}
         />
-      )
-}
+      )}
     </>
   );
 }
