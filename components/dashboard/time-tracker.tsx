@@ -53,6 +53,9 @@ export function TimeTracker({
   const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const lastLoadRef = useRef<number>(0);
+  
+  // Add force update counter to trigger re-renders for timer display
+  const [, forceUpdate] = useState(0);
 
   // Confirmation dialogs
   const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
@@ -204,17 +207,22 @@ export function TimeTracker({
         };
       }
 
-      // Only update if state has changed
-      if (
-        newSession.status !== session.status ||
-        newSession.activeLogId !== session.activeLogId ||
-        newSession.totalWorkedToday !== session.totalWorkedToday ||
-        newSession.totalBreakToday !== session.totalBreakToday
-      ) {
-        setSession(newSession);
-        onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
-        onLunchChange?.(newSession.status === "lunch");
-      }
+      // Only update if state has actually changed
+      setSession(prevSession => {
+        if (
+          newSession.status !== prevSession.status ||
+          newSession.activeLogId !== prevSession.activeLogId ||
+          newSession.totalWorkedToday !== prevSession.totalWorkedToday ||
+          newSession.totalBreakToday !== prevSession.totalBreakToday ||
+          newSession.clockInTime !== prevSession.clockInTime ||
+          newSession.breakStartTime !== prevSession.breakStartTime
+        ) {
+          onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
+          onLunchChange?.(newSession.status === "lunch");
+          return newSession;
+        }
+        return prevSession;
+      });
     } catch (error) {
       console.error('Error loading session:', error);
       toast({
@@ -225,7 +233,7 @@ export function TimeTracker({
     } finally {
       setLoading(false);
     }
-  }, [user?.id, maxHoursBeforeOvertime, onClockInChange, onLunchChange, session]);
+  }, [user?.id, maxHoursBeforeOvertime, onClockInChange, onLunchChange, toast]);
 
   // Initialize session and set up BroadcastChannel
   useEffect(() => {
@@ -234,11 +242,9 @@ export function TimeTracker({
       channelRef.current = new BroadcastChannel('time_tracker_channel');
       channelRef.current.onmessage = (event) => {
         if (event.data.type === 'state_changed') {
-          const { status, activeLogId } = event.data;
-          // Only load if the received state differs
-          if (status !== session.status || activeLogId !== session.activeLogId) {
-            loadSession();
-          }
+          // Clear debounce to allow immediate load on broadcast
+          lastLoadRef.current = 0;
+          loadSession();
         }
       };
     }
@@ -249,7 +255,7 @@ export function TimeTracker({
         channelRef.current = null;
       }
     };
-  }, [user?.id, loadSession, session.status, session.activeLogId]);
+  }, [user?.id, loadSession]);
 
   // Periodic polling for cross-browser sync
   useEffect(() => {
@@ -257,7 +263,7 @@ export function TimeTracker({
 
     const pollInterval = setInterval(() => {
       loadSession();
-    }, 15000); // Poll every 15 seconds
+    }, 30000); // Poll every 30 seconds
 
     return () => clearInterval(pollInterval);
   }, [user?.id, loadSession]);
@@ -280,7 +286,12 @@ export function TimeTracker({
 
     if (session.status !== "idle") {
       timerRef.current = setInterval(() => {
-        const { currentWorked } = getCurrentTimes();
+        const { currentWorked, currentBreak } = getCurrentTimes();
+        
+        // Force re-render to update displayed times
+        forceUpdate(prev => prev + 1);
+        
+        // Update parent component
         onTimeUpdate?.(currentWorked, session.status);
 
         if (session.status === "working" && !overtimeNotificationShown) {
@@ -305,7 +316,7 @@ export function TimeTracker({
         clearInterval(timerRef.current);
       }
     };
-  }, [session.status, session.clockInTime, session.breakStartTime, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate]);
+  }, [session, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate, toast]);
 
   const handleClockIn = async () => {
     if (!user?.id || loading) return;
@@ -392,6 +403,8 @@ export function TimeTracker({
         className: "bg-green-100 text-green-800",
       });
 
+      // Clear debounce and reload
+      lastLoadRef.current = 0;
       await loadSession();
     } catch (error) {
       console.error("Clock out error:", error);
