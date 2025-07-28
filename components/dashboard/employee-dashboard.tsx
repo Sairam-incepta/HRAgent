@@ -2,16 +2,16 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useUser } from "@clerk/nextjs";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
+import {
   Clock,
   Filter,
   Search,
@@ -19,6 +19,8 @@ import {
   Star,
   FileText,
   Calendar,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { TimeTracker } from "@/components/dashboard/time-tracker";
@@ -41,7 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getEmployeeRequests } from "@/lib/util/employee-requests";
 import { getPolicySales } from "@/lib/util/policies";
 import { getClientReviews } from "@/lib/util/client-reviews";
-import { getWeeklySummary, getTodayHours, getThisWeekHours } from "@/lib/util/get";
+import { getTodayHours, getThisWeekHours, getPeriodSummary } from "@/lib/util/get";
 import { getEmployee } from "@/lib/util/employee";
 import { type Request } from "@/lib/util/employee-requests";
 
@@ -56,23 +58,23 @@ interface EmployeeDashboardProps {
 export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClockOutPrompt }: EmployeeDashboardProps) {
   const { user, isLoaded, isSignedIn } = useUser();
   const { toast } = useToast();
-  
+
   // UI State
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-  
+
   // Time Tracking State
   const [isOnLunch, setIsOnLunch] = useState(false);
   const [isClockedIn, setIsClockedIn] = useState(false);
   const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
   const [timeStatus, setTimeStatus] = useState<"idle" | "working" | "lunch" | "overtime_pending">("idle");
-  
+
   // Data State
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
-  const [weeklyData, setWeeklyData] = useState<Array<{
+  const [periodData, setPeriodData] = useState<Array<{
     date: string;
     dayName: string;
     hoursWorked: number;
@@ -106,17 +108,54 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
   // Simple current time (only update every minute for date/time display)
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  
+
   const employeeSettings = {
     maxHoursBeforeOvertime: 8,
     hourlyRate: 25
   };
 
+  const periodDays = 14;
+  const [periodStart, setPeriodStart] = useState(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const payrollReference = new Date('2025-08-01T00:00:00');
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const msPerPeriod = periodDays * msPerDay;
+    const timeSinceReference = today.getTime() - payrollReference.getTime();
+    const periodsSinceReference = Math.floor(timeSinceReference / msPerPeriod);
+    const currentPeriodStart = new Date(payrollReference.getTime() + periodsSinceReference * msPerPeriod);
+    return currentPeriodStart;
+  });
+
+  const periodEnd = useMemo(() => {
+    const end = new Date(periodStart);
+    end.setDate(end.getDate() + periodDays - 1);
+    return end;
+  }, [periodStart]);
+
+  const formatDate = (dateString: string) => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  };
+
+  const periodTitle = useMemo(() => {
+    const startStr = periodStart.toISOString().slice(0, 10);
+    const endStr = periodEnd.toISOString().slice(0, 10);
+    return `Payroll Period: ${formatDate(startStr)} - ${formatDate(endStr)}`;
+  }, [periodStart, periodEnd]);
+
+  const canGoNext = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return periodEnd < today;
+  }, [periodEnd]);
+
   // Update current time every minute (not every second)
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000); // Every minute instead of every second
+    }, 60000); // Every minute
     return () => clearInterval(interval);
   }, []);
 
@@ -131,17 +170,25 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   useEffect(() => {
     if (user?.id) {
       loadEmployeeData();
-      loadWeeklyData();
       loadRequests();
       loadPerformanceData();
+      loadCurrentData();
+      loadPeriodData();
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      loadPeriodData();
+    }
+  }, [periodStart, user?.id]);
 
   // Single event listener for all dashboard updates
   useEffect(() => {
     const handlePolicySale = () => {
       if (!user?.id) return;
-      loadWeeklyData();
+      loadCurrentData();
+      loadPeriodData();
       loadPerformanceData();
     };
 
@@ -157,12 +204,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
     const handleTimeLogged = () => {
       if (!user?.id) return;
-      loadWeeklyData();
+      loadCurrentData();
+      loadPeriodData();
     };
 
     const handleDailySummary = () => {
       if (!user?.id) return;
-      loadWeeklyData();
+      loadCurrentData();
+      loadPeriodData();
       loadPerformanceData();
     };
 
@@ -188,22 +237,33 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   useEffect(() => {
     const checkDayChange = () => {
       if (!user?.id) return;
-      
+
       const currentDate = new Date().toDateString();
       const lastKnownDate = localStorage.getItem('last_known_date');
-      
+
       if (lastKnownDate && lastKnownDate !== currentDate) {
-        loadWeeklyData();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const payrollReference = new Date('2025-08-01T00:00:00');
+        const msPerDay = 24 * 60 * 60 * 1000;
+        const msPerPeriod = periodDays * msPerDay;
+        const timeSinceReference = today.getTime() - payrollReference.getTime();
+        const periodsSinceReference = Math.floor(timeSinceReference / msPerPeriod);
+        const newPeriodStart = new Date(payrollReference.getTime() + periodsSinceReference * msPerPeriod);
+
+        setPeriodStart(newPeriodStart);
+        loadCurrentData();
+        loadPeriodData();
         loadPerformanceData();
         loadRequests();
       }
-      
+
       localStorage.setItem('last_known_date', currentDate);
     };
 
     checkDayChange();
     const interval = setInterval(checkDayChange, 1200000); // 20 minutes
-    
+
     return () => clearInterval(interval);
   }, [user?.id]);
 
@@ -211,7 +271,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const livePay = useMemo(() => {
     const totalHours = currentElapsedTime / 3600;
     const totalPay = totalHours * employeeSettings.hourlyRate;
-    
+
     return { totalHours, totalPay };
   }, [currentElapsedTime, employeeSettings.hourlyRate]);
 
@@ -219,7 +279,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     return requests.filter(request => {
       const matchesFilter = requestFilter === "all" || request.status === requestFilter;
       const matchesSearch = request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           request.description.toLowerCase().includes(searchTerm.toLowerCase());
+        request.description.toLowerCase().includes(searchTerm.toLowerCase());
       return matchesFilter && matchesSearch;
     });
   }, [requests, requestFilter, searchTerm]);
@@ -233,15 +293,15 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     setTimeStatus(status as any);
 
     // Simple real-time update for today's bar chart
-    setWeeklyData(prev => {
+    setPeriodData(prev => {
       if (!prev?.length) return prev;
-      
+
       const todayIndex = prev.findIndex(d => d.isToday);
       if (todayIndex === -1) return prev;
-      
+
       const newHours = parseFloat((elapsedSeconds / 3600).toFixed(2));
       if (prev[todayIndex].hoursWorked === newHours) return prev;
-      
+
       const updated = [...prev];
       updated[todayIndex] = { ...updated[todayIndex], hoursWorked: newHours };
       return updated;
@@ -264,7 +324,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     // Simplified clock-out prompt
     if (onClockOutPrompt) {
       const fallbackMessage = "How was your day? I'd love to hear about your accomplishments and how things went!";
-      
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -293,11 +353,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   // Data loading functions
   const loadEmployeeData = async () => {
     if (!user?.id) return;
-    
+
     try {
       const employee = await getEmployee(user.id);
       const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
-      
+
       setEmployeeData({
         name: employee?.name || clerkName || 'Employee',
         email: employee?.email || user.emailAddresses[0]?.emailAddress || '',
@@ -318,30 +378,39 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
-  const loadWeeklyData = async () => {
+  const loadCurrentData = async () => {
     if (!user?.id) return;
-    
+
     try {
-      const [todayHoursData, thisWeekHoursData, weeklyDataResult] = await Promise.all([
+      const [todayHoursData, thisWeekHoursData] = await Promise.all([
         getTodayHours(user.id),
-        getThisWeekHours(user.id),
-        getWeeklySummary(user.id)
+        getThisWeekHours(user.id)
       ]);
-      
+
       setTodayHours(todayHoursData);
       setThisWeekHours(thisWeekHoursData);
-      setWeeklyData(weeklyDataResult);
     } catch (error) {
-      console.error('Error loading weekly data:', error);
+      console.error('Error loading current data:', error);
+    }
+  };
+
+  const loadPeriodData = async () => {
+    if (!user?.id) return;
+
+    try {
+      const periodDataResult = await getPeriodSummary(user.id, periodStart.toISOString().slice(0, 10), periodDays);
+      setPeriodData(periodDataResult);
+    } catch (error) {
+      console.error('Error loading period data:', error);
     }
   };
 
   const loadPerformanceData = async () => {
     if (!user?.id) return;
-    
+
     try {
       setPerformanceData(prev => ({ ...prev, loading: true }));
-      
+
       const results = await Promise.allSettled([
         getPolicySales(user.id),
         getClientReviews(user.id)
@@ -349,13 +418,13 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
       const policySales = results[0].status === 'fulfilled' ? results[0].value : [];
       const clientReviews = results[1].status === 'fulfilled' ? results[1].value : [];
-      
+
       const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
       const totalReviews = clientReviews.length;
-      const avgRating = totalReviews > 0 
+      const avgRating = totalReviews > 0
         ? (clientReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews)
         : 0;
-      
+
       setPerformanceData({
         totalPolicies: policySales.length,
         totalSales,
@@ -371,7 +440,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
   const loadRequests = async () => {
     if (!user?.id) return;
-    
+
     setRequestsLoading(true);
     try {
       const requestsData = await getEmployeeRequests(user.id);
@@ -392,7 +461,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const formatTimeDisplay = (hours: number) => {
     const wholeHours = Math.floor(hours);
     const minutes = Math.round((hours - wholeHours) * 60);
-    
+
     if (wholeHours === 0) return `${minutes}m`;
     if (minutes === 0) return `${wholeHours}h`;
     return `${wholeHours}h ${minutes}m`;
@@ -409,15 +478,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   };
 
   const getMaxHours = () => {
-    if (!weeklyData.length) return 8;
-    const maxDailyHours = Math.max(...weeklyData.map(day => day.hoursWorked));
+    if (!periodData.length) return 8;
+    const maxDailyHours = Math.max(...periodData.map(day => day.hoursWorked));
     return Math.max(maxDailyHours, 8);
-  };
-
-  const formatDate = (dateString: string) => {
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    return `${date.getMonth() + 1}/${date.getDate()}`;
   };
 
   const getUserName = () => {
@@ -528,7 +591,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       {/* Time Tracking Section */}
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
         <div className="flex flex-col sm:flex-row gap-2 w-full">
-          <TimeTracker 
+          <TimeTracker
             onClockInChange={handleClockInChange}
             onLunchChange={handleLunchChange}
             onTimeUpdate={handleTimeUpdate}
@@ -552,23 +615,23 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                   {formatTimeDisplay(displayHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
-              <Progress 
-                value={getProgressPercentage()} 
+              <Progress
+                value={getProgressPercentage()}
                 className={`[&>div]:${getProgressColor()}`}
               />
               <div className="flex justify-between items-center mt-2">
                 <p className="text-xs text-muted-foreground">
-                  {timeStatus === "idle" 
+                  {timeStatus === "idle"
                     ? "Clock in to start tracking your hours"
                     : timeStatus === "lunch"
-                    ? "On lunch break - timer paused"
-                    : timeStatus === "overtime_pending"
-                    ? "Overtime approval pending"
-                    : displayHours > employeeSettings.maxHoursBeforeOvertime
-                    ? "Tracking your extended hours"
-                    : displayHours > employeeSettings.maxHoursBeforeOvertime * 0.8
-                    ? "Approaching your daily target hours"
-                    : "Tracking your work hours"
+                      ? "On lunch break - timer paused"
+                      : timeStatus === "overtime_pending"
+                        ? "Overtime approval pending"
+                        : displayHours > employeeSettings.maxHoursBeforeOvertime
+                          ? "Tracking your extended hours"
+                          : displayHours > employeeSettings.maxHoursBeforeOvertime * 0.8
+                            ? "Approaching your daily target hours"
+                            : "Tracking your work hours"
                   }
                 </p>
                 {timeStatus !== "idle" && (
@@ -590,7 +653,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               <CardTitle>Requests & Communication</CardTitle>
               <CardDescription>Manage your requests and view approval status</CardDescription>
             </div>
-            <Button 
+            <Button
               onClick={() => setRequestDialogOpen(true)}
               className="bg-[#005cb3] hover:bg-[#004a96]"
             >
@@ -640,14 +703,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                             {new Date(request.request_date).toLocaleDateString()}
                           </p>
                         </div>
-                        <Badge 
-                          variant="outline" 
+                        <Badge
+                          variant="outline"
                           className={
                             request.status === "approved"
                               ? "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]"
                               : request.status === "pending"
-                              ? "bg-secondary/50 text-muted-foreground"
-                              : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                ? "bg-secondary/50 text-muted-foreground"
+                                : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
                           }
                         >
                           {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
@@ -674,32 +737,57 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         </CardContent>
       </Card>
 
-      {/* Weekly Performance Chart */}
+      {/* Biweekly Performance Chart */}
       <Card className="hover:shadow-md transition-shadow">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-[#005cb3]" />
-            <CardTitle>This Week&apos;s Performance</CardTitle>
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const newStart = new Date(periodStart);
+                newStart.setDate(newStart.getDate() - periodDays);
+                setPeriodStart(newStart);
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-[#005cb3]" />
+              <CardTitle>{periodTitle}</CardTitle>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!canGoNext}
+              onClick={() => {
+                const newStart = new Date(periodStart);
+                newStart.setDate(newStart.getDate() + periodDays);
+                setPeriodStart(newStart);
+              }}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
             <div className="text-sm text-muted-foreground">
-              {formatTimeDisplay(weeklyData.reduce((total, day) => total + day.hoursWorked, 0))} total
+              {formatTimeDisplay(periodData.reduce((total, day) => total + day.hoursWorked, 0))} total
             </div>
           </div>
-          
+
           <div className="py-4"></div>
-          
+
           <div className="bg-muted/10 rounded-lg p-4">
             <div className="flex items-end justify-between gap-2 pt-8" style={{ height: '140px' }}>
-              {weeklyData.map((day) => {
+              {periodData.map((day) => {
                 const maxHours = getMaxHours();
                 const barHeight = maxHours > 0 ? Math.max((day.hoursWorked / maxHours) * 100, day.hoursWorked > 0 ? 3 : 1) : 1;
                 const isToday = day.isToday;
                 const timeDisplay = formatTimeDisplay(day.hoursWorked);
-                
+
                 return (
                   <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
                     {day.policiesSold > 0 && (
@@ -707,24 +795,23 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                         {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
                       </div>
                     )}
-                    
+
                     <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
                       {timeDisplay}
                     </div>
-                    
-                    <div className="relative w-8 flex flex-col justify-end" style={{ height: '100px' }}>
-                      <div 
-                        className={`w-full rounded-t-sm transition-all duration-500 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/70' 
+
+                    <div className="relative w-6 flex flex-col justify-end" style={{ height: '100px' }}>
+                      <div
+                        className={`w-full rounded-t-sm transition-all duration-500 ${isToday
+                            ? 'bg-[#005cb3]'
+                            : day.hoursWorked > 0
+                              ? 'bg-[#005cb3]/70'
                               : 'bg-muted-foreground/30'
-                        }`}
+                          }`}
                         style={{ height: `${barHeight}px` }}
                       />
                     </div>
-                    
+
                     <div className="text-center">
                       <div className="text-xs text-muted-foreground font-medium">
                         {day.dayName.slice(0, 3).toUpperCase()}
@@ -733,7 +820,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                         {formatDate(day.date)}
                       </div>
                     </div>
-                    
+
                     {isToday && (
                       <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
                     )}
@@ -746,8 +833,8 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       </Card>
 
       {/* Dialogs */}
-      <RequestDialog 
-        open={requestDialogOpen} 
+      <RequestDialog
+        open={requestDialogOpen}
         onOpenChange={(open) => {
           setRequestDialogOpen(open);
           if (!open) {
