@@ -16,15 +16,15 @@ export const getEmployeeRateForDate = async (employeeId: string, targetDate: Dat
   }
 
   const targetDateStr = targetDate.toISOString().split('T')[0];
-  
+
   // If the target date is before the current rate became effective,
   // use the previous rate (if available)
-  if (employee.rate_effective_date && 
-      targetDateStr < employee.rate_effective_date && 
-      employee.previous_rate) {
+  if (employee.rate_effective_date &&
+    targetDateStr < employee.rate_effective_date &&
+    employee.previous_rate) {
     return employee.previous_rate;
   }
-  
+
   // Otherwise use current rate
   return employee.hourly_rate;
 };
@@ -33,7 +33,7 @@ export const getEmployeeRateForDate = async (employeeId: string, targetDate: Dat
 export const formatHoursMinutes = (totalHours: number): string => {
   const hours = Math.floor(totalHours);
   const minutes = Math.round((totalHours - hours) * 60);
-  
+
   if (hours === 0 && minutes === 0) {
     return '0h 0m';
   } else if (hours === 0) {
@@ -59,7 +59,7 @@ export const calculateActualHoursForPeriod = async (employeeId: string, startDat
     // Get ALL time logs for the period in one query
     const startDateStr = getLocalDateString(startDate);
     const endDateStr = getLocalDateString(endDate);
-    
+
     const { data: timeLogs, error } = await supabase
       .from('time_logs')
       .select('*')
@@ -78,16 +78,37 @@ export const calculateActualHoursForPeriod = async (employeeId: string, startDat
     const today = getLocalDateString();
 
     (timeLogs || []).forEach(log => {
-      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
+      if (log.clock_in && log.clock_out) {
+        // Completed session
         const clockInTime = new Date(log.clock_in);
         const clockOutTime = new Date(log.clock_out);
-        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
+        let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+        // Subtract break time if exists
+        if (log.break_start && log.break_end) {
+          const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+          sessionHours -= breakHours;
+        }
+
+        if (sessionHours > 0) {
+          totalHours += sessionHours;
+        }
       } else if (log.clock_in && !log.clock_out) {
-        // If currently clocked in, calculate up to now (only if it's today)
-        if (log.date === today && !log.break_start && !log.break_end) {
+        // Currently active session (only if it's today)
+        if (log.date === today) {
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+          let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // If currently on break, subtract break time
+          if (log.break_start && !log.break_end) {
+            const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
         }
       }
     });

@@ -54,9 +54,14 @@ export function EmployeeDetailsDialog({
   const [dailySummaries, setDailySummaries] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
-  const [clockTimes, setClockTimes] = useState<Record<string, { firstIn: string | null, lastOut: string | null }>>({});
+  const [clockTimes, setClockTimes] = useState<Record<string, {
+    firstIn: string | null;
+    lastOut: string | null;
+    workSessions: number;
+    breakTime: number;
+  }>>({});
   const [policyBonuses, setPolicyBonuses] = useState<Record<string, number>>({});
-  const [bonusesLoading, setBonusesLoading] = useState(false);  
+  const [bonusesLoading, setBonusesLoading] = useState(false);
 
   // Calculate max daily hours once for consistent scaling across all progress bars
   const maxDailyHours = useMemo(() => {
@@ -98,19 +103,35 @@ export function EmployeeDetailsDialog({
   useEffect(() => {
     async function fetchClockTimes() {
       if (!employee?.clerk_user_id || !weeklyData.length) return;
-      const times: Record<string, { firstIn: string | null, lastOut: string | null }> = {};
+      const times: Record<string, { firstIn: string | null, lastOut: string | null, workSessions: number, breakTime: number }> = {};
       for (const day of weeklyData) {
         const logs = await getTimeLogsForDay(employee.clerk_user_id, day.date);
         if (logs && logs.length > 0) {
           logs.sort((a, b) => new Date(a.clock_in).getTime() - new Date(b.clock_in).getTime());
           const firstLog = logs[0];
           const lastLog = logs[logs.length - 1];
+
+          // Calculate total break time for this day
+          let totalBreakTime = 0;
+          let workSessions = 0;
+          logs.forEach(log => {
+            if (log.clock_in && log.clock_out) {
+              workSessions++;
+              if (log.break_start && log.break_end) {
+                const breakTime = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60);
+                totalBreakTime += breakTime;
+              }
+            }
+          });
+
           times[day.date] = {
             firstIn: firstLog.clock_in ? new Date(firstLog.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
             lastOut: lastLog.clock_out ? new Date(lastLog.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+            workSessions,
+            breakTime: Math.round(totalBreakTime)
           };
         } else {
-          times[day.date] = { firstIn: null, lastOut: null };
+          times[day.date] = { firstIn: null, lastOut: null, workSessions: 0, breakTime: 0 };
         }
       }
       setClockTimes(times);
@@ -120,7 +141,7 @@ export function EmployeeDetailsDialog({
 
   const calculateAllPolicyBonuses = async (policies: any[]) => {
     if (!policies.length || !employee?.clerk_user_id) return;
-    
+
     setBonusesLoading(true);
     try {
       const bonusPromises = policies.map(async (policy) => {
@@ -129,7 +150,7 @@ export function EmployeeDetailsDialog({
       });
 
       const bonusResults = await Promise.all(bonusPromises);
-      
+
       const bonusMap = bonusResults.reduce((acc, { policyId, bonus }) => {
         acc[policyId] = bonus;
         return acc;
@@ -145,7 +166,7 @@ export function EmployeeDetailsDialog({
 
   const loadEmployeeData = async () => {
     if (!employee?.clerk_user_id) return;
-    
+
     setLoading(true);
     try {
       const [policies, reviews, bonus, weekly, summaries] = await Promise.all([
@@ -155,7 +176,7 @@ export function EmployeeDetailsDialog({
         getWeeklySummary(employee.clerk_user_id),
         getDailySummaries(employee.clerk_user_id)
       ]);
-      
+
       setEmployeePolicies(policies);
       setClientReviews(reviews);
       setEmployeeBonus(bonus);
@@ -186,17 +207,17 @@ export function EmployeeDetailsDialog({
     // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day);
-    
+
     // Get today's date in the same format for comparison
     const today = new Date();
     const todayFormatted = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+
     const isToday = date.getTime() === todayFormatted.getTime();
-    
+
     if (isToday) {
       return "Today";
     }
-    
+
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
@@ -216,7 +237,7 @@ export function EmployeeDetailsDialog({
           <DialogHeader>
             <DialogTitle>Employee Details</DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-6">
             <div className="flex items-start gap-4">
               <Avatar className="h-16 w-16">
@@ -230,14 +251,14 @@ export function EmployeeDetailsDialog({
                 <div className="flex gap-2 mt-2">
                   <Badge variant="outline">{employee.department}</Badge>
                   <Badge variant="outline">{employee.position}</Badge>
-                  <Badge 
+                  <Badge
                     variant="outline"
                     className={
-                      employee.status === "active" 
+                      employee.status === "active"
                         ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        : employee.status === "on_leave" 
-                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" 
-                        : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
+                        : employee.status === "on_leave"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                          : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
                     }
                   >
                     {employee.status}
@@ -300,30 +321,30 @@ export function EmployeeDetailsDialog({
                     </div>
 
                     {/* Total Sales */}
-                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-                       <div className="flex items-center justify-between h-full">
-                         <div className="flex flex-col justify-center min-w-0 flex-1">
-                           <p className="text-xs text-muted-foreground leading-tight truncate">Total Sales</p>
-                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalSales.toLocaleString()}</p>
-                         </div>
-                         <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                           <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
-                         </div>
-                       </div>
-                     </div>
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Total Sales</p>
+                          <p className="text-2xl font-semibold text-foreground leading-tight">${totalSales.toLocaleString()}</p>
+                        </div>
+                        <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        </div>
+                      </div>
+                    </div>
 
-                     {/* Bonus Earned */}
-                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-                       <div className="flex items-center justify-between h-full">
-                         <div className="flex flex-col justify-center min-w-0 flex-1">
-                           <p className="text-xs text-muted-foreground leading-tight truncate">Bonus Earned</p>
-                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalBonus.toLocaleString()}</p>
-                         </div>
-                         <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                           <BarChart className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                         </div>
-                       </div>
-                     </div>
+                    {/* Bonus Earned */}
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Bonus Earned</p>
+                          <p className="text-2xl font-semibold text-foreground leading-tight">${totalBonus.toLocaleString()}</p>
+                        </div>
+                        <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <BarChart className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                        </div>
+                      </div>
+                    </div>
 
                     {/* Client Reviews */}
                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
@@ -333,7 +354,7 @@ export function EmployeeDetailsDialog({
                           <div className="flex items-baseline gap-1">
                             <p className="text-2xl font-semibold text-foreground leading-tight">{clientReviews.length}</p>
                             <span className="text-xs text-muted-foreground">
-                              {clientReviews.length > 0 
+                              {clientReviews.length > 0
                                 ? `Avg: ${(clientReviews.reduce((sum, r) => sum + r.rating, 0) / clientReviews.length).toFixed(2)}/5`
                                 : 'No reviews'
                               }
@@ -396,7 +417,7 @@ export function EmployeeDetailsDialog({
                             <p className="text-muted-foreground text-center py-4">No recent activity found.</p>
                           )}
                         </div>
-                        
+
                         {/* Hours Visualization - Right Side */}
                         <div className="space-y-4">
                           <div className="bg-muted/50 rounded-lg p-8">
@@ -404,12 +425,12 @@ export function EmployeeDetailsDialog({
                               <Clock className="h-6 w-6" />
                               Weekly Hours Breakdown
                             </h4>
-                            
+
                             {(() => {
                               const totalWeeklyHours = weeklyData.reduce((total, day) => total + day.hoursWorked, 0);
                               const weeklyOvertime = Math.max(0, totalWeeklyHours - 40);
                               const regularHours = Math.min(totalWeeklyHours, 40);
-                              
+
                               return (
                                 <div className="space-y-6">
                                   {/* Weekly Summary */}
@@ -426,7 +447,7 @@ export function EmployeeDetailsDialog({
                                       </div>
                                     )}
                                   </div>
-                                  
+
                                   {/* Weekly Progress Bar - Out of 40 hours */}
                                   <div className="space-y-3">
                                     <div className="flex justify-between text-base font-medium">
@@ -435,13 +456,13 @@ export function EmployeeDetailsDialog({
                                     </div>
                                     <div className="relative w-full bg-gray-200 rounded-full h-6">
                                       {/* Blue bar for regular hours (up to 40) */}
-                                      <div 
+                                      <div
                                         className="bg-blue-500 h-6 rounded-full transition-all duration-500"
                                         style={{ width: `${Math.min((regularHours / 40) * 100, 100)}%` }}
                                       ></div>
                                       {/* Orange overlay for overtime hours */}
                                       {weeklyOvertime > 0 && (
-                                        <div 
+                                        <div
                                           className="absolute top-0 left-0 bg-orange-500 h-6 rounded-full transition-all duration-500 opacity-80"
                                           style={{ width: `${Math.min((weeklyOvertime / 40) * 100, 100)}%` }}
                                         ></div>
@@ -458,7 +479,7 @@ export function EmployeeDetailsDialog({
                               );
                             })()}
                           </div>
-                          
+
 
                         </div>
                       </div>
@@ -498,35 +519,35 @@ export function EmployeeDetailsDialog({
                             </span>
                           </div>
                         </div>
-                        
+
                         {/* Daily Hours with Progress Bars */}
                         <div className="space-y-3">
                           {weeklyData.map((day) => {
                             const dayClockTimes = clockTimes[day.date];
-                              const isToday = day.isToday;
-                              const hasClockData = dayClockTimes && (dayClockTimes.firstIn || dayClockTimes.lastOut);
-                              
-                              // Calculate overtime for this day (using 8-hour daily limit)
-                              const dailyOvertimeLimit = 8;
-                              const overtimeHours = Math.max(0, day.hoursWorked - dailyOvertimeLimit);
-                              const regularHours = Math.min(day.hoursWorked, dailyOvertimeLimit);
-                              
-                              // Determine status for current day
-                              let status = "Not worked";
-                              if (day.hoursWorked > 0) {
-                                if (isToday) {
-                                  if (dayClockTimes?.firstIn && !dayClockTimes?.lastOut) {
-                                    status = "Present";
-                                  } else if (dayClockTimes?.firstIn && dayClockTimes?.lastOut) {
-                                    status = "Completed";
-                                  } else {
-                                    status = "Present";
-                                  }
-                                } else {
+                            const isToday = day.isToday;
+                            const hasClockData = dayClockTimes && (dayClockTimes.firstIn || dayClockTimes.lastOut);
+
+                            // Calculate overtime for this day (using 8-hour daily limit)
+                            const dailyOvertimeLimit = 8;
+                            const overtimeHours = Math.max(0, day.hoursWorked - dailyOvertimeLimit);
+                            const regularHours = Math.min(day.hoursWorked, dailyOvertimeLimit);
+
+                            // Determine status for current day
+                            let status = "Not worked";
+                            if (day.hoursWorked > 0) {
+                              if (isToday) {
+                                if (dayClockTimes?.firstIn && !dayClockTimes?.lastOut) {
+                                  status = "Present";
+                                } else if (dayClockTimes?.firstIn && dayClockTimes?.lastOut) {
                                   status = "Completed";
+                                } else {
+                                  status = "Present";
                                 }
+                              } else {
+                                status = "Completed";
                               }
-                            
+                            }
+
                             return (
                               <div key={day.date} className="space-y-2">
                                 {/* Date and Status Header */}
@@ -543,41 +564,40 @@ export function EmployeeDetailsDialog({
                                     <span className="text-sm font-medium">
                                       {day.hoursWorked > 0 ? formatTime(day.hoursWorked) : '0h 00m'}
                                     </span>
-                                    <Badge 
-                                      variant="outline" 
-                                      className={`text-xs ${
-                                        status === "Present" 
-                                          ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                          : status === "Completed"
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs ${status === "Present"
+                                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                        : status === "Completed"
                                           ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
                                           : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
-                                      }`}
+                                        }`}
                                     >
                                       {status}
                                     </Badge>
                                   </div>
                                 </div>
-                                
+
                                 {/* Progress Bar */}
                                 <div className="space-y-1">
                                   <div className="relative bg-gray-200 rounded-full h-2">
                                     {/* Regular hours (green) */}
-                                    <div 
+                                    <div
                                       className="bg-green-500 h-2 rounded-full absolute left-0 top-0 transition-all duration-500"
                                       style={{ width: `${(regularHours / maxDailyHours) * 100}%` }}
                                     ></div>
                                     {/* Overtime hours (amber) - positioned after regular hours */}
                                     {overtimeHours > 0 && (
-                                      <div 
+                                      <div
                                         className="bg-amber-500 h-2 rounded-r-full absolute top-0 transition-all duration-500"
-                                        style={{ 
+                                        style={{
                                           left: `${(regularHours / maxDailyHours) * 100}%`,
-                                          width: `${(overtimeHours / maxDailyHours) * 100}%` 
+                                          width: `${(overtimeHours / maxDailyHours) * 100}%`
                                         }}
                                       ></div>
                                     )}
                                   </div>
-                                  
+
                                   {/* Time Details */}
                                   <div className="flex justify-between items-center text-xs text-muted-foreground">
                                     <div className="flex items-center gap-4">
@@ -589,6 +609,12 @@ export function EmployeeDetailsDialog({
                                       ) : isToday && dayClockTimes?.firstIn && (
                                         <span className="text-amber-600 font-medium">Currently Present</span>
                                       )}
+                                      {dayClockTimes?.breakTime > 0 && (
+                                        <span className="text-blue-600">Break: {dayClockTimes.breakTime}m</span>
+                                      )}
+                                      {dayClockTimes?.workSessions > 1 && (
+                                        <span className="text-purple-600">{dayClockTimes.workSessions} sessions</span>
+                                      )}
                                     </div>
                                     {overtimeHours > 0 && (
                                       <span className="text-amber-600 font-medium">
@@ -596,247 +622,252 @@ export function EmployeeDetailsDialog({
                                       </span>
                                     )}
                                   </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="daily-summaries" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Daily Summaries ({dailySummaries.length})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {loading ? (
-                      <div className="space-y-4">
-                        {[...Array(5)].map((_, i) => (
-                          <div key={i} className="animate-pulse border rounded-lg p-4">
-                            <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
-                            <div className="h-3 bg-gray-200 rounded w-3/4 mb-3"></div>
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="h-3 bg-gray-200 rounded"></div>
-                              <div className="h-3 bg-gray-200 rounded"></div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : dailySummaries.length > 0 ? (
-                      <div className="space-y-4">
-                        {dailySummaries.map((summary, index) => {
-                          // Get policies for this specific date
-                          const summaryDate = new Date(summary.date).toDateString();
-                          const dayPolicies = employeePolicies.filter(policy => 
-                            new Date(policy.sale_date).toDateString() === summaryDate
-                          );
-                          const highNetworthPolicies = dayPolicies.filter(policy => policy.amount >= 100000);
-                          
-                          return (
-                            <div key={index} className="border rounded-lg p-4 space-y-3">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <h4 className="font-semibold text-lg">
-                                    {formatDate(summary.date)}
-                                  </h4>
-                                  <p className="text-sm text-muted-foreground">
-                                    {new Date(summary.date).toLocaleDateString('en-US', { 
-                                      weekday: 'long',
-                                      year: 'numeric',
-                                      month: 'long',
-                                      day: 'numeric'
-                                    })}
-                                  </p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="text-sm font-medium">
-                                    Total Policies: <span className="text-[#005cb3]">{dayPolicies.length}</span>
-                                  </p>
-                                  {highNetworthPolicies.length > 0 && (
-                                    <p className="text-sm font-medium">
-                                      High Networth: <span className="text-amber-600">{highNetworthPolicies.length}</span>
-                                    </p>
+                                  {overtimeHours > 0 && (
+                                    <span className="text-amber-600 font-medium">
+                                      +{formatTime(overtimeHours)} OT
+                                    </span>
                                   )}
                                 </div>
                               </div>
-                              
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">Hours Worked:</span>
-                                  <span className="ml-2 font-medium">{formatTime(summary.hours_worked)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Policies Sold:</span>
-                                  <span className="ml-2 font-medium">{summary.policies_sold}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Total Sales:</span>
-                                  <span className="ml-2 font-medium">${summary.total_sales_amount.toLocaleString()}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Broker Fees:</span>
-                                  <span className="ml-2 font-medium">${summary.total_broker_fees.toLocaleString()}</span>
-                                </div>
-                              </div>
-                              
-                              {summary.description && (
-                                <div className="bg-muted/50 rounded p-3">
-                                  <p className="text-sm">
-                                    <span className="font-medium">Summary:</span> {summary.description}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                        );
+                          })}
                       </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        <p>No daily summaries found.</p>
-                        <p className="text-sm mt-2">Daily summaries are created when employees submit their end-of-day reports through the chat interface.</p>
                       </div>
                     )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-              <TabsContent value="policies" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Policies Sold ({totalPolicies})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {loading ? (
-                      <div className="space-y-4">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="animate-pulse border rounded-lg p-4">
-                            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                            <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="h-3 bg-gray-200 rounded"></div>
-                              <div className="h-3 bg-gray-200 rounded"></div>
-                            </div>
+            <TabsContent value="daily-summaries" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Daily Summaries ({dailySummaries.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <div className="space-y-4">
+                      {[...Array(5)].map((_, i) => (
+                        <div key={i} className="animate-pulse border rounded-lg p-4">
+                          <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
+                          <div className="h-3 bg-gray-200 rounded w-3/4 mb-3"></div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="h-3 bg-gray-200 rounded"></div>
+                            <div className="h-3 bg-gray-200 rounded"></div>
                           </div>
-                        ))}
-                      </div>
-                    ) : employeePolicies.length > 0 ? (
-                      <div className="space-y-4">
-                        {employeePolicies.map((policy, index) => (
+                        </div>
+                      ))}
+                    </div>
+                  ) : dailySummaries.length > 0 ? (
+                    <div className="space-y-4">
+                      {dailySummaries.map((summary, index) => {
+                        // Get policies for this specific date
+                        const summaryDate = new Date(summary.date).toDateString();
+                        const dayPolicies = employeePolicies.filter(policy =>
+                          new Date(policy.sale_date).toDateString() === summaryDate
+                        );
+                        const highNetworthPolicies = dayPolicies.filter(policy => policy.amount >= 100000);
+
+                        return (
                           <div key={index} className="border rounded-lg p-4 space-y-3">
                             <div className="flex justify-between items-start">
                               <div>
-                                <h4 className="font-semibold">{policy.policy_number}</h4>
-                                <p className="text-sm text-muted-foreground">{policy.client_name}</p>
+                                <h4 className="font-semibold text-lg">
+                                  {formatDate(summary.date)}
+                                </h4>
+                                <p className="text-sm text-muted-foreground">
+                                  {new Date(summary.date).toLocaleDateString('en-US', {
+                                    weekday: 'long',
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  })}
+                                </p>
                               </div>
                               <div className="text-right">
-                                <p className="font-medium">${policy.amount.toLocaleString()}</p>
-                                <p className="text-sm text-muted-foreground">{new Date(policy.sale_date).toLocaleDateString()}</p>
+                                <p className="text-sm font-medium">
+                                  Total Policies: <span className="text-[#005cb3]">{dayPolicies.length}</span>
+                                </p>
+                                {highNetworthPolicies.length > 0 && (
+                                  <p className="text-sm font-medium">
+                                    High Networth: <span className="text-amber-600">{highNetworthPolicies.length}</span>
+                                  </p>
+                                )}
                               </div>
                             </div>
-                            
-                            <div className="grid grid-cols-2 gap-4 text-sm">
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                               <div>
-                                <span className="text-muted-foreground">Type:</span>
-                                <span className="ml-2 font-medium">{policy.policy_type}</span>
+                                <span className="text-muted-foreground">Hours Worked:</span>
+                                <span className="ml-2 font-medium">{formatTime(summary.hours_worked)}</span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Broker Fee:</span>
-                                <span className="ml-2 font-medium">${policy.broker_fee}</span>
+                                <span className="text-muted-foreground">Policies Sold:</span>
+                                <span className="ml-2 font-medium">{summary.policies_sold}</span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Bonus:</span>
-                                <span className="ml-2 font-medium text-[#005cb3]">
-                                  {bonusesLoading ? (
-                                    <span className="animate-pulse">...</span>
-                                  ) : (
-                                    `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
-                                  )}
-                                </span>
+                                <span className="text-muted-foreground">Total Sales:</span>
+                                <span className="ml-2 font-medium">${summary.total_sales_amount.toLocaleString()}</span>
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Cross-sold:</span>
-                                <span className="ml-2 font-medium">
-                                  {policy.is_cross_sold_policy ? "Yes" : "No"}
-                                </span>
+                                <span className="text-muted-foreground">Broker Fees:</span>
+                                <span className="ml-2 font-medium">${summary.total_broker_fees.toLocaleString()}</span>
                               </div>
                             </div>
-                            
-                            {policy.client_description && (
+
+                            {summary.description && (
                               <div className="bg-muted/50 rounded p-3">
                                 <p className="text-sm">
-                                  <span className="font-medium">Client Notes:</span> {policy.client_description}
+                                  <span className="font-medium">Summary:</span> {summary.description}
                                 </p>
                               </div>
                             )}
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-center py-8 text-muted-foreground">No policies sold yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No daily summaries found.</p>
+                      <p className="text-sm mt-2">Daily summaries are created when employees submit their end-of-day reports through the chat interface.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-              <TabsContent value="reviews" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Client Reviews ({clientReviews.length})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {loading ? (
-                      <div className="space-y-4">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="animate-pulse border rounded-lg p-4">
-                            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                            <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
-                            <div className="h-3 bg-gray-200 rounded w-full"></div>
+            <TabsContent value="policies" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Policies Sold ({totalPolicies})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <div className="space-y-4">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="animate-pulse border rounded-lg p-4">
+                          <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                          <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="h-3 bg-gray-200 rounded"></div>
+                            <div className="h-3 bg-gray-200 rounded"></div>
                           </div>
-                        ))}
-                      </div>
-                    ) : clientReviews.length > 0 ? (
-                      <div className="space-y-4">
-                        {clientReviews.slice().reverse().map((review, index) => (
-                          <div key={index} className="border rounded-lg p-4 space-y-3">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h4 className="font-semibold">{review.client_name}</h4>
-                                <p className="text-sm text-muted-foreground">Policy: {review.policy_number}</p>
-                              </div>
-                              <div className="text-right">
-                                <div className="flex items-center gap-1">
-                                  {[...Array(5)].map((_, i) => (
-                                    <span key={i} className={`text-sm ${i < review.rating ? 'text-yellow-500' : 'text-gray-300'}`}>
-                                      ★
-                                    </span>
-                                  ))}
-                                  <span className="ml-1 text-sm font-medium">{review.rating}/5</span>
-                                </div>
-                                <p className="text-sm text-muted-foreground">{new Date(review.review_date).toLocaleDateString()}</p>
-                              </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : employeePolicies.length > 0 ? (
+                    <div className="space-y-4">
+                      {employeePolicies.map((policy, index) => (
+                        <div key={index} className="border rounded-lg p-4 space-y-3">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-semibold">{policy.policy_number}</h4>
+                              <p className="text-sm text-muted-foreground">{policy.client_name}</p>
                             </div>
-                            
+                            <div className="text-right">
+                              <p className="font-medium">${policy.amount.toLocaleString()}</p>
+                              <p className="text-sm text-muted-foreground">{new Date(policy.sale_date).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">Type:</span>
+                              <span className="ml-2 font-medium">{policy.policy_type}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Broker Fee:</span>
+                              <span className="ml-2 font-medium">${policy.broker_fee}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Bonus:</span>
+                              <span className="ml-2 font-medium text-[#005cb3]">
+                                {bonusesLoading ? (
+                                  <span className="animate-pulse">...</span>
+                                ) : (
+                                  `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
+                                )}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Cross-sold:</span>
+                              <span className="ml-2 font-medium">
+                                {policy.is_cross_sold_policy ? "Yes" : "No"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {policy.client_description && (
                             <div className="bg-muted/50 rounded p-3">
-                              <p className="text-sm">"{review.review}"</p>
+                              <p className="text-sm">
+                                <span className="font-medium">Client Notes:</span> {policy.client_description}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-center py-8 text-muted-foreground">No policies sold yet.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="reviews" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Client Reviews ({clientReviews.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <div className="space-y-4">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="animate-pulse border rounded-lg p-4">
+                          <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                          <div className="h-3 bg-gray-200 rounded w-1/2 mb-3"></div>
+                          <div className="h-3 bg-gray-200 rounded w-full"></div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : clientReviews.length > 0 ? (
+                    <div className="space-y-4">
+                      {clientReviews.slice().reverse().map((review, index) => (
+                        <div key={index} className="border rounded-lg p-4 space-y-3">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-semibold">{review.client_name}</h4>
+                              <p className="text-sm text-muted-foreground">Policy: {review.policy_number}</p>
+                            </div>
+                            <div className="text-right">
+                              <div className="flex items-center gap-1">
+                                {[...Array(5)].map((_, i) => (
+                                  <span key={i} className={`text-sm ${i < review.rating ? 'text-yellow-500' : 'text-gray-300'}`}>
+                                    ★
+                                  </span>
+                                ))}
+                                <span className="ml-1 text-sm font-medium">{review.rating}/5</span>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{new Date(review.review_date).toLocaleDateString()}</p>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-center py-8 text-muted-foreground">No client reviews yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </DialogContent>
-      </Dialog>
-      {passwordResetOpen && (
+
+                          <div className="bg-muted/50 rounded p-3">
+                            <p className="text-sm">"{review.review}"</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-center py-8 text-muted-foreground">No client reviews yet.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </DialogContent>
+    </Dialog >
+      { passwordResetOpen && (
         <PasswordResetDialog
           open={passwordResetOpen}
           onOpenChange={setPasswordResetOpen}
@@ -844,7 +875,8 @@ export function EmployeeDetailsDialog({
           employeeName={employee.name}
           employeeEmail={employee.email}
         />
-      )}
+      )
+}
     </>
   );
 }

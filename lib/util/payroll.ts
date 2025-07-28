@@ -68,7 +68,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     const MAX_PREVIOUS_PERIODS = 3;
 
     // Helper functions
-    const isAdmin = (emp: any): boolean => 
+    const isAdmin = (emp: any): boolean =>
       emp.position === 'Administrator';
 
     // FIXED: Use the same period calculation as the working payroll dialog
@@ -76,27 +76,27 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
       const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
       const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
-      
+
       const actualPeriodOffset = biweeklyPeriodsSinceReference + periodOffset;
-      
+
       const startDate = new Date(referenceDate);
       startDate.setDate(referenceDate.getDate() + (actualPeriodOffset * 14));
-      
+
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 13); // 14 days total (0-13)
-      
+
       return { startDate, endDate };
     };
 
-    const formatPeriodName = (startDate: Date, endDate: Date): string => 
+    const formatPeriodName = (startDate: Date, endDate: Date): string =>
       `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-    const filterSalesForPeriod = (startDate: Date, endDate: Date) => 
+    const filterSalesForPeriod = (startDate: Date, endDate: Date) =>
       policySales.filter(sale => {
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
-    
+
     // FIXED: Updated calculateTotalBonuses function with correct logic
     const calculateTotalBonuses = async (sales: any[], startDate: Date, endDate: Date): Promise<number> => {
       try {
@@ -105,7 +105,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         const startDateStr = getLocalDateString(startDate);
         const endDateStr = getLocalDateString(endDate);
         const saleIds = sales.map(sale => sale.id);
-        
+
         const employeeIds = Array.from(new Set(sales.map(sale => sale.employee_id)));
 
         const [
@@ -119,14 +119,14 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
             .in('id', saleIds)
             .gte('sale_date', startDateStr)
             .lte('sale_date', endDateStr),
-          
+
           supabase
             .from('high_value_policy_notifications')
             .select('id, employee_id, admin_bonus')
             .in('employee_id', employeeIds)
             .gte('reviewed_at', startDateStr)
             .lte('reviewed_at', endDateStr),
-          
+
           supabase
             .from('client_reviews')
             .select('employee_id, rating, review_date')
@@ -143,7 +143,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         const policySalesMap = new Map(
           (policySalesData || []).map(policy => [policy.id, policy])
         );
-        
+
         const highValueByEmployee = new Map<string, any[]>();
         (highValueNotifications || []).forEach(notification => {
           if (!highValueByEmployee.has(notification.employee_id)) {
@@ -228,7 +228,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     // Fetch all time logs for the date range
     const startDateStr = getLocalDateString(allPeriodsStart);
     const endDateStr = getLocalDateString(allPeriodsEnd);
-    
+
     const { data: allTimeLogs, error: timeLogsError } = await supabase
       .from('time_logs')
       .select('*')
@@ -257,21 +257,43 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
       const startDateStr = getLocalDateString(startDate);
       const endDateStr = getLocalDateString(endDate);
       const today = getLocalDateString();
-      
-      const periodLogs = employeeLogs.filter(log => 
+
+      const periodLogs = employeeLogs.filter(log =>
         log.date >= startDateStr && log.date <= endDateStr
       );
 
       let totalHours = 0;
       periodLogs.forEach(log => {
-        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
+        if (log.clock_in && log.clock_out) {
+          // Completed session
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
+          let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // Subtract break time if exists
+          if (log.break_start && log.break_end) {
+            const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
+        } else if (log.clock_in && !log.clock_out && log.date === today) {
+          // Currently active session (only for today)
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+          let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // If currently on break, subtract break time
+          if (log.break_start && !log.break_end) {
+            const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
         }
       });
 
@@ -291,15 +313,15 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
         }
       });
 
-      return { 
-        totalHours: Math.round(totalHours * 100) / 100, 
-        totalPay: Math.round(totalPay * 100) / 100 
+      return {
+        totalHours: Math.round(totalHours * 100) / 100,
+        totalPay: Math.round(totalPay * 100) / 100
       };
     };
 
     // Helper function to create a period object (now async)
     const createPeriodObject = async (
-      periodOffset: number, 
+      periodOffset: number,
       status: 'completed' | 'current'
     ): Promise<PayrollPeriod> => {
       const { startDate, endDate } = calculatePeriodDates(periodOffset);
@@ -329,11 +351,11 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     // Create lightweight upcoming period
     const createUpcomingPeriod = (periodOffset: number): PayrollPeriod => {
       const { startDate, endDate } = calculatePeriodDates(periodOffset);
-      
+
       return {
         period: formatPeriodName(startDate, endDate),
-        employees: activeEmployees.length,  
-        total: 0, 
+        employees: activeEmployees.length,
+        total: 0,
         status: 'upcoming',
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
@@ -351,15 +373,15 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     // 1. Add previous periods that have meaningful data
     for (let i = -MAX_PREVIOUS_PERIODS; i < 0; i++) {
       const { startDate, endDate } = calculatePeriodDates(i);
-      
+
       // Quick check: Do we have any time logs or sales for this period?
       const periodSales = filterSalesForPeriod(startDate, endDate);
       const startDateStr = getLocalDateString(startDate);
       const endDateStr = getLocalDateString(endDate);
-      const hasTimeLogs = (allTimeLogs || []).some(log => 
+      const hasTimeLogs = (allTimeLogs || []).some(log =>
         log.date >= startDateStr && log.date <= endDateStr
       );
-      
+
       // Only calculate full period data if there's any activity
       if (hasTimeLogs || periodSales.length > 0) {
         periods.push(await createPeriodObject(i, 'completed'));
@@ -373,7 +395,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     periods.push(createUpcomingPeriod(1));
 
     return periods;
-  } 
+  }
   catch (error) {
     console.error('❌ Error getting payroll periods:', error);
     return [];
@@ -425,7 +447,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
   };
 }> => {
   try {
-    
+
     const start = new Date(startDate);
     const end = new Date(endDate);
 
@@ -434,7 +456,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const OVERTIME_MULTIPLIER = 1.0;
 
     // Helper functions - extracted and reusable
-    const isAdmin = (emp: any): boolean => 
+    const isAdmin = (emp: any): boolean =>
       emp.position === 'Administrator';
 
     const calculateHoursBreakdown = (totalHours: number) => {
@@ -450,10 +472,10 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const employees = await getEmployees();
     const activeEmployees = employees.filter(emp => emp.status === 'active');
     const activeEmployeeIds = activeEmployees.map(emp => emp.clerk_user_id);
-    
+
     const [
-      policySales, 
-      highValueNotificationsResult, 
+      policySales,
+      highValueNotificationsResult,
       clientReviewsResult,
       timeLogsResult
     ] = await Promise.all([
@@ -484,7 +506,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
     const highValueNotifications = highValueNotificationsResult?.data || [];
     const clientReviews = clientReviewsResult?.data || [];
     const allTimeLogs = timeLogsResult?.data || [];
-    
+
     if (timeLogsResult?.error) {
       console.error('❌ Error fetching time logs:', timeLogsResult.error);
     }
@@ -546,14 +568,36 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       let totalHours = 0;
 
       employeeLogs.forEach(log => {
-        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
+        if (log.clock_in && log.clock_out) {
+          // Completed session
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
+          let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // Subtract break time if exists
+          if (log.break_start && log.break_end) {
+            const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
+        } else if (log.clock_in && !log.clock_out && log.date === today) {
+          // Currently active session (only for today)
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+          let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // If currently on break, subtract break time
+          if (log.break_start && !log.break_end) {
+            const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
         }
       });
 
@@ -574,13 +618,13 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const empSales = salesByEmployee.get(emp.clerk_user_id) || [];
       const empReviews = reviewsByEmployee.get(emp.clerk_user_id) || [];
       const empHVNotifications = hvNotificationsByEmployee.get(emp.clerk_user_id) || [];
-      
+
       // Calculate hours (skip for admin users)
       let actualHours = 0;
       if (!isAdmin(emp)) {
         actualHours = calculateEmployeeHours(emp.clerk_user_id);
       }
-      
+
       // Calculate detailed bonus breakdown
       let empBonusBreakdown = {
         brokerFeeBonuses: { count: 0, amount: 0 },
@@ -606,14 +650,14 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
             const baseBonus = (broker_fee - 100) * 0.1;
             empBonusBreakdown.brokerFeeBonuses.count++;
             empBonusBreakdown.brokerFeeBonuses.amount += baseBonus;
-            
+
             // Cross-selling bonus: additional 1x of base broker bonus
             if (is_cross_sold_policy) {
               empBonusBreakdown.crossSellingBonuses.count++;
               empBonusBreakdown.crossSellingBonuses.amount += baseBonus;
             }
           }
-          
+
           // Life insurance bonus
           const policyTypeLower = (policy_type || '').toLowerCase();
           if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
@@ -627,7 +671,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       const totalAdminBonus = empHVNotifications.reduce((sum, notification) => {
         return sum + (notification.admin_bonus || 0);
       }, 0);
-      
+
       if (totalAdminBonus > 0) {
         empBonusBreakdown.highValuePolicyBonuses.count = empHVNotifications.length;
         empBonusBreakdown.highValuePolicyBonuses.amount = totalAdminBonus;
@@ -639,7 +683,7 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       empBonusBreakdown.reviewBonuses.amount = fiveStarReviews.length * 10;
 
       // Calculate totals
-      const totalBonuses = 
+      const totalBonuses =
         empBonusBreakdown.brokerFeeBonuses.amount +
         empBonusBreakdown.crossSellingBonuses.amount +
         empBonusBreakdown.lifeInsuranceBonuses.amount +
@@ -673,25 +717,25 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
         salesCount: empSales.length,
         salesAmount: Math.round(salesAmount),
         bonusBreakdown: {
-          brokerFeeBonuses: { 
-            count: empBonusBreakdown.brokerFeeBonuses.count, 
-            amount: Math.round(empBonusBreakdown.brokerFeeBonuses.amount * 100) / 100 
+          brokerFeeBonuses: {
+            count: empBonusBreakdown.brokerFeeBonuses.count,
+            amount: Math.round(empBonusBreakdown.brokerFeeBonuses.amount * 100) / 100
           },
-          crossSellingBonuses: { 
-            count: empBonusBreakdown.crossSellingBonuses.count, 
-            amount: Math.round(empBonusBreakdown.crossSellingBonuses.amount * 100) / 100 
+          crossSellingBonuses: {
+            count: empBonusBreakdown.crossSellingBonuses.count,
+            amount: Math.round(empBonusBreakdown.crossSellingBonuses.amount * 100) / 100
           },
-          lifeInsuranceBonuses: { 
-            count: empBonusBreakdown.lifeInsuranceBonuses.count, 
-            amount: Math.round(empBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100 
+          lifeInsuranceBonuses: {
+            count: empBonusBreakdown.lifeInsuranceBonuses.count,
+            amount: Math.round(empBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100
           },
-          reviewBonuses: { 
-            count: empBonusBreakdown.reviewBonuses.count, 
-            amount: Math.round(empBonusBreakdown.reviewBonuses.amount * 100) / 100 
+          reviewBonuses: {
+            count: empBonusBreakdown.reviewBonuses.count,
+            amount: Math.round(empBonusBreakdown.reviewBonuses.amount * 100) / 100
           },
-          highValuePolicyBonuses: { 
-            count: empBonusBreakdown.highValuePolicyBonuses.count, 
-            amount: Math.round(empBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100 
+          highValuePolicyBonuses: {
+            count: empBonusBreakdown.highValuePolicyBonuses.count,
+            amount: Math.round(empBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100
           }
         }
       });
@@ -712,25 +756,25 @@ export const getPayrollPeriodDetails = async (startDate: string, endDate: string
       totalSalesAmount: periodSales.reduce((sum: number, sale: any) => sum + sale.amount, 0),
       totalBrokerFees: Math.round(totalBrokerFees * 100) / 100,
       bonusBreakdown: {
-        brokerFeeBonuses: { 
-          count: summaryBonusBreakdown.brokerFeeBonuses.count, 
-          amount: Math.round(summaryBonusBreakdown.brokerFeeBonuses.amount * 100) / 100 
+        brokerFeeBonuses: {
+          count: summaryBonusBreakdown.brokerFeeBonuses.count,
+          amount: Math.round(summaryBonusBreakdown.brokerFeeBonuses.amount * 100) / 100
         },
-        crossSellingBonuses: { 
-          count: summaryBonusBreakdown.crossSellingBonuses.count, 
-          amount: Math.round(summaryBonusBreakdown.crossSellingBonuses.amount * 100) / 100 
+        crossSellingBonuses: {
+          count: summaryBonusBreakdown.crossSellingBonuses.count,
+          amount: Math.round(summaryBonusBreakdown.crossSellingBonuses.amount * 100) / 100
         },
-        lifeInsuranceBonuses: { 
-          count: summaryBonusBreakdown.lifeInsuranceBonuses.count, 
-          amount: Math.round(summaryBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100 
+        lifeInsuranceBonuses: {
+          count: summaryBonusBreakdown.lifeInsuranceBonuses.count,
+          amount: Math.round(summaryBonusBreakdown.lifeInsuranceBonuses.amount * 100) / 100
         },
-        reviewBonuses: { 
-          count: summaryBonusBreakdown.reviewBonuses.count, 
-          amount: Math.round(summaryBonusBreakdown.reviewBonuses.amount * 100) / 100 
+        reviewBonuses: {
+          count: summaryBonusBreakdown.reviewBonuses.count,
+          amount: Math.round(summaryBonusBreakdown.reviewBonuses.amount * 100) / 100
         },
-        highValuePolicyBonuses: { 
-          count: summaryBonusBreakdown.highValuePolicyBonuses.count, 
-          amount: Math.round(summaryBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100 
+        highValuePolicyBonuses: {
+          count: summaryBonusBreakdown.highValuePolicyBonuses.count,
+          amount: Math.round(summaryBonusBreakdown.highValuePolicyBonuses.amount * 100) / 100
         }
       }
     };
@@ -787,7 +831,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
 
     const history = [];
     const now = new Date();
-    
+
     // Use the same biweekly calculation as the main payroll system
     const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
     const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
@@ -817,14 +861,14 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         .lte('date', allEndDateStr)
         .order('date', { ascending: true })
         .order('clock_in', { ascending: true }),
-      
+
       supabase
         .from('high_value_policy_notifications')
         .select('id, employee_id, admin_bonus, reviewed_at, created_at')
         .eq('employee_id', employeeId)
         .gte('reviewed_at', allStartDateStr)
         .lte('reviewed_at', allEndDateStr),
-      
+
       supabase
         .from('client_reviews')
         .select('employee_id, rating, review_date')
@@ -852,21 +896,43 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
       const startDateStr = getLocalDateString(startDate);
       const endDateStr = getLocalDateString(endDate);
       const today = getLocalDateString();
-      
-      const periodLogs = allTimeLogs.filter(log => 
+
+      const periodLogs = allTimeLogs.filter(log =>
         log.date >= startDateStr && log.date <= endDateStr
       );
 
       let totalHours = 0;
       periodLogs.forEach(log => {
-        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
+        if (log.clock_in && log.clock_out) {
+          // Completed session
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
+          let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // Subtract break time if exists
+          if (log.break_start && log.break_end) {
+            const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
+        } else if (log.clock_in && !log.clock_out && log.date === today) {
+          // Currently active session (only for today)
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
-          totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+          let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // If currently on break, subtract break time
+          if (log.break_start && !log.break_end) {
+            const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            totalHours += sessionHours;
+          }
         }
       });
 
@@ -914,10 +980,10 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
             amount = 0
           } = policyData;
 
-                  // ONLY calculate bonuses for regular policies (< threshold)
-        if (amount < appSettings.highValueThreshold) {
+          // ONLY calculate bonuses for regular policies (< threshold)
+          if (amount < appSettings.highValueThreshold) {
             let saleBonus = 0;
-            
+
             // 1. Broker fee bonus: 10% of (broker fee - 100)
             if (broker_fee > 100) {
               const baseBrokerBonus = (broker_fee - 100) * 0.1;
@@ -928,7 +994,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
                 saleBonus += baseBrokerBonus;
               }
             }
-            
+
             // 3. Life insurance bonus: $10
             const policyTypeLower = (policy_type || '').toLowerCase();
             if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
@@ -945,7 +1011,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
           const notificationDate = getLocalDateString(new Date(hvn.reviewed_at || hvn.created_at));
           return notificationDate >= startDateStr && notificationDate <= endDateStr;
         });
-        
+
         const adminBonuses = periodHighValueNotifications.reduce((sum, notification) => {
           return sum + (notification.admin_bonus || 0);
         }, 0);
@@ -956,7 +1022,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
           const reviewDate = getLocalDateString(new Date(review.review_date));
           return reviewDate >= startDateStr && reviewDate <= endDateStr;
         });
-        
+
         const fiveStarReviews = periodReviews.filter(review => review.rating === 5);
         const reviewBonuses = fiveStarReviews.length * 10;
         totalBonuses += reviewBonuses;
@@ -972,10 +1038,10 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
     for (let i = 11; i >= 0; i--) {  // Start from oldest (11 periods back) to newest (0 periods back)
       const periodsBack = i;
       const currentPeriodStart = biweeklyPeriodsSinceReference - periodsBack;
-      
+
       const startDate = new Date(referenceDate);
       startDate.setDate(referenceDate.getDate() + (currentPeriodStart * 14));
-      
+
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 13); // 14 days total (0-13)
 
@@ -984,23 +1050,23 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         const saleDate = new Date(sale.sale_date);
         return saleDate >= startDate && saleDate <= endDate;
       });
-      
+
       // Calculate actual hours worked using pre-fetched time logs
       const totalHours = calculateHoursForPeriod(startDate, endDate);
-      
+
       // Use new bonus calculation system
       const totalBonuses = await calculateBonusesForPeriod(periodSales, startDate, endDate);
-      
+
       // Calculate overtime for biweekly period (80 regular hours)
       const biweeklyRegularLimit = 80; // 40 hours per week × 2 weeks
       const regularHours = Math.min(totalHours, biweeklyRegularLimit);
       const overtimeHours = Math.max(0, totalHours - biweeklyRegularLimit);
-      
+
       // Use employee.hourly_rate consistently
       const regularPay = regularHours * employee.hourly_rate;
       const overtimePay = overtimeHours * employee.hourly_rate * 1.0; // 1x rate for overtime
       const totalPay = regularPay + overtimePay + totalBonuses;
-      
+
       const salesAmount = periodSales.reduce((sum, sale) => sum + sale.amount, 0);
 
       history.push({
@@ -1017,7 +1083,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
         salesAmount: Math.round(salesAmount)
       });
     }
-    
+
     return history.reverse(); // Show newest periods first
   } catch (error) {
     console.error('Error getting employee payroll history:', error);
@@ -1076,42 +1142,42 @@ export const calculateIndividualPolicyBonus = async (policyId: string, employeeI
     const isHighValue = amount >= appSettings.highValueThreshold;
 
     if (isHighValue) {
-    // For high-value policies (≥ $5000), ONLY use admin bonus
-    const { data: highValueNotifications, error: hvError } = await supabase
-      .from('high_value_policy_notifications')
-      .select('admin_bonus, status, policy_number')
-      .eq('employee_id', employeeId)
-      .eq('policy_number', policyData.policy_number)
-      .eq('status', 'reviewed'); // Only reviewed notifications have valid admin bonuses
+      // For high-value policies (≥ $5000), ONLY use admin bonus
+      const { data: highValueNotifications, error: hvError } = await supabase
+        .from('high_value_policy_notifications')
+        .select('admin_bonus, status, policy_number')
+        .eq('employee_id', employeeId)
+        .eq('policy_number', policyData.policy_number)
+        .eq('status', 'reviewed'); // Only reviewed notifications have valid admin bonuses
 
-    if (!hvError && highValueNotifications && highValueNotifications.length > 0) {
-      const adminBonus = highValueNotifications.reduce((sum, notification) => {
-        return sum + (notification.admin_bonus || 0);
-      }, 0);
-      breakdown.adminBonus = adminBonus;
-      totalBonus = adminBonus;
-    }
-    } else {
-    // For regular policies (< $5000), calculate standard bonuses
-    // 1. Broker fee bonus: 10% of (broker fee - 100) - only if broker_fee > 100
-    if (broker_fee > 100) {
-      const baseBrokerBonus = (broker_fee - 100) * 0.1;
-      breakdown.brokerFeeBonus = baseBrokerBonus;
-      totalBonus += baseBrokerBonus;
-      // 2. Cross-selling bonus: additional broker fee bonus if cross-sold
-      if (is_cross_sold_policy) {
-        const crossSellingBonus = baseBrokerBonus;
-        breakdown.crossSellingBonus = crossSellingBonus;
-        totalBonus += crossSellingBonus;
+      if (!hvError && highValueNotifications && highValueNotifications.length > 0) {
+        const adminBonus = highValueNotifications.reduce((sum, notification) => {
+          return sum + (notification.admin_bonus || 0);
+        }, 0);
+        breakdown.adminBonus = adminBonus;
+        totalBonus = adminBonus;
       }
-    }
+    } else {
+      // For regular policies (< $5000), calculate standard bonuses
+      // 1. Broker fee bonus: 10% of (broker fee - 100) - only if broker_fee > 100
+      if (broker_fee > 100) {
+        const baseBrokerBonus = (broker_fee - 100) * 0.1;
+        breakdown.brokerFeeBonus = baseBrokerBonus;
+        totalBonus += baseBrokerBonus;
+        // 2. Cross-selling bonus: additional broker fee bonus if cross-sold
+        if (is_cross_sold_policy) {
+          const crossSellingBonus = baseBrokerBonus;
+          breakdown.crossSellingBonus = crossSellingBonus;
+          totalBonus += crossSellingBonus;
+        }
+      }
     }
 
     // 3. Life insurance bonus: $10 if policy type contains 'life' (applies to ALL policies)
     const policyTypeLower = policy_type.toLowerCase();
     if (policyTypeLower.includes('life') || policyTypeLower.includes('life_insurance')) {
-    breakdown.lifeInsuranceBonus = 10;
-    totalBonus += 10;
+      breakdown.lifeInsuranceBonus = 10;
+      totalBonus += 10;
     }
 
     return {
