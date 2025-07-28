@@ -5,7 +5,7 @@ import { notifyRequestSubmitted } from "../events";
 // Add a generic request to the database
 export const addRequest = async (request: {
   employeeId: string;
-  type: 'overtime' | 'vacation' | 'sick' | 'other';
+  type: 'overtime' | 'vacation' | 'sick' | 'edit-clock-time' | 'other';
   title: string;
   description: string;
   requestDate: string;
@@ -14,6 +14,8 @@ export const addRequest = async (request: {
   reason?: string;
   startDate?: string;
   endDate?: string;
+  clockInTime?: string;
+  clockOutTime?: string;
 }): Promise<DatabaseRequest | null> => {
   try {
     const { data, error } = await supabase
@@ -29,6 +31,8 @@ export const addRequest = async (request: {
         reason: request.reason,
         start_date: request.startDate,
         end_date: request.endDate,
+        clock_in_time: request.clockInTime,
+        clock_out_time: request.clockOutTime,
       })
       .select()
       .single();

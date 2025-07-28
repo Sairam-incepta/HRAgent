@@ -12,7 +12,8 @@ import {
   Check, 
   X, 
   Filter,
-  Search
+  Search,
+  Edit
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -205,7 +206,18 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
       case "overtime": return <Clock className="h-4 w-4" />;
       case "vacation": return <Calendar className="h-4 w-4" />;
       case "sick": return <AlertTriangle className="h-4 w-4" />;
+      case "edit-clock-time": return <Edit className="h-4 w-4" />;
       default: return <Calendar className="h-4 w-4" />;
+    }
+  };
+
+  const getTypeDisplayName = (type: string) => {
+    switch (type) {
+      case "edit-clock-time": return "Edit Clock Time";
+      case "overtime": return "Overtime";
+      case "vacation": return "Vacation";
+      case "sick": return "Sick Leave";
+      default: return "Other";
     }
   };
 
@@ -278,6 +290,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                 <SelectItem value="overtime">Overtime</SelectItem>
                 <SelectItem value="vacation">Vacation</SelectItem>
                 <SelectItem value="sick">Sick Leave</SelectItem>
+                <SelectItem value="edit-clock-time">Edit Clock Time</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
@@ -408,7 +421,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                 <div>
                   <h3 className="font-semibold">{selectedRequest.employeeName}</h3>
                   <p className="text-sm text-muted-foreground">
-                    {selectedRequest.type.charAt(0).toUpperCase() + selectedRequest.type.slice(1)} Request
+                    {getTypeDisplayName(selectedRequest.type)} Request
                   </p>
                 </div>
               </div>
@@ -433,6 +446,33 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                   <div>
                     <label className="text-sm font-medium">Additional Hours Requested</label>
                     <p className="text-sm">{selectedRequest.hours_requested} hours</p>
+                  </div>
+                )}
+                
+                {selectedRequest.clock_in_time && selectedRequest.clock_out_time && (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium">Clock In Time</label>
+                      <p className="text-sm">{selectedRequest.clock_in_time}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Clock Out Time</label>
+                      <p className="text-sm">{selectedRequest.clock_out_time}</p>
+                    </div>
+                  </>
+                )}
+                
+                {selectedRequest.start_date && (
+                  <div>
+                    <label className="text-sm font-medium">Start Date</label>
+                    <p className="text-sm">{new Date(selectedRequest.start_date).toLocaleDateString()}</p>
+                  </div>
+                )}
+                
+                {selectedRequest.end_date && (
+                  <div>
+                    <label className="text-sm font-medium">End Date</label>
+                    <p className="text-sm">{new Date(selectedRequest.end_date).toLocaleDateString()}</p>
                   </div>
                 )}
               </div>

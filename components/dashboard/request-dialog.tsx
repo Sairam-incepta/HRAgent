@@ -28,6 +28,8 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
   const [endDate, setEndDate] = useState<Date>();
   const [reason, setReason] = useState("");
   const [hours, setHours] = useState<number | undefined>(undefined);
+  const [clockInTime, setClockInTime] = useState("");
+  const [clockOutTime, setClockOutTime] = useState("");
   const { toast } = useToast();
   const { user } = useUser();
 
@@ -63,16 +65,28 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
       return;
     }
     
+    // Additional validation for edit clock in time requests
+    if (requestType === "edit-clock-time" && (!clockInTime || !clockOutTime)) {
+      toast({
+        title: "Error",
+        description: "Please enter both clock in and clock out times",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     const requestData = {
       employeeId: user.id,
       type: requestType as any,
-      title: `${requestType.charAt(0).toUpperCase() + requestType.slice(1)} Request`,
+      title: `${requestType.charAt(0).toUpperCase() + requestType.slice(1).replace('-', ' ')} Request`,
       description: reason,
       requestDate: startDate.toISOString().split('T')[0],
       hoursRequested: requestType === "overtime" ? hours : undefined,
       reason,
       startDate: startDate.toISOString().split('T')[0],
       endDate: endDate ? endDate.toISOString().split('T')[0] : undefined,
+      clockInTime: requestType === "edit-clock-time" ? clockInTime : undefined,
+      clockOutTime: requestType === "edit-clock-time" ? clockOutTime : undefined,
     };
         
     try {
@@ -87,6 +101,8 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
         setEndDate(undefined);
         setReason("");
         setHours(undefined);
+        setClockInTime("");
+        setClockOutTime("");
         onOpenChange(false);
         if (onRequestSubmitted) {
           onRequestSubmitted();
@@ -125,13 +141,16 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
                 <SelectItem value="vacation">Vacation</SelectItem>
                 <SelectItem value="sick">Sick Leave</SelectItem>
                 <SelectItem value="overtime">Overtime</SelectItem>
+                <SelectItem value="edit-clock-time">Edit Clock In Time</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
-            <Label>Start Date</Label>
+            <Label>
+              {requestType === "edit-clock-time" ? "Date" : "Start Date"}
+            </Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -197,6 +216,31 @@ export function RequestDialog({ open, onOpenChange, onRequestSubmitted }: Reques
                 onChange={e => setHours(Number(e.target.value))}
               />
             </div>
+          )}
+
+          {requestType === "edit-clock-time" && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="clockInTime">Clock In Time</Label>
+                <Input
+                  id="clockInTime"
+                  type="time"
+                  value={clockInTime}
+                  onChange={(e) => setClockInTime(e.target.value)}
+                  placeholder="HH:MM"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="clockOutTime">Clock Out Time</Label>
+                <Input
+                  id="clockOutTime"
+                  type="time"
+                  value={clockOutTime}
+                  onChange={(e) => setClockOutTime(e.target.value)}
+                  placeholder="HH:MM"
+                />
+              </div>
+            </>
           )}
 
           <div className="space-y-2">
