@@ -31,7 +31,6 @@ export interface PolicySale {
   bonus: number;
   employee_id: string;
   sale_date: string;
-  cross_sold: boolean;
   cross_sold_type?: string;
   cross_sold_to?: string;
   client_description?: string;
@@ -114,6 +113,10 @@ export interface Employee {
   status: 'active' | 'inactive' | 'on_leave'; // Changed to match database
   max_hours_before_overtime: number;
   hourly_rate: number;
+  rate_effective_date?: string;
+  previous_rate?: number;
+  rate_changed_at?: string;
+  rate_changed_by?: string;
   created_at: string;
 }
 
@@ -126,4 +129,21 @@ export interface OvertimeRequest {
   status: 'pending' | 'approved' | 'rejected';
   current_overtime_hours: number;
   created_at: string;
+}
+
+export interface DatabaseRequest {
+  id: string;
+  employee_id: string;
+  employeeName: string;
+  type: "overtime" | "vacation" | "sick" | "edit-clock-time" | "other";
+  title: string;
+  description: string;
+  request_date: string;
+  hours_requested?: number;
+  status: "pending" | "approved" | "rejected";
+  reason?: string;
+  clock_in_time?: string;
+  clock_out_time?: string;
+  start_date?: string;
+  end_date?: string;
 }

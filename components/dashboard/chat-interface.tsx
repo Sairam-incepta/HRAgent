@@ -10,7 +10,8 @@ import { ChatInput } from "./chat-input";
 import { PlaneIcon as PaperPlaneIcon, PlusCircle, Loader2, TrendingUp, Clock, Star, Users, AlertTriangle, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { getChatMessages, addChatMessage } from "@/lib/database";
+import { getChatMessages, addChatMessage } from "@/lib/util/chat-messages";
+
 
 type Message = {
   id: string;
@@ -243,14 +244,14 @@ export function ChatInterface({
       console.error('Chat error:', error);
       toast({
         title: "Error",
-        description: "Failed to get response from assistant. Please try again.",
+        description: "Failed to get response from assistant. Please contact your technical administrator.",
         variant: "destructive",
       });
       
       // Add error message
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "I'm sorry, I'm having trouble connecting right now. Please check that your OpenAI API key is configured and try again.",
+        content: "I'm sorry, I'm having trouble connecting right now. Please contact your technical administrator to investigate the issue.",
         sender: "bot",
         timestamp: new Date(),
       };

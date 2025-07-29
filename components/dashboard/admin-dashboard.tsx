@@ -12,58 +12,32 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { 
-  BarChart, 
-  Users, 
-  Clock, 
-  CreditCard, 
-  ArrowRight, 
-  FileText, 
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
-  Filter,
+  Clock,
+  FileText,
   Calendar,
   Building,
   Eye,
-  AlertTriangle,
-  MessageSquare,
-  UserPlus
 } from "lucide-react";
 import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
 import { AdminRequests } from "@/components/dashboard/admin-requests";
 import { HighValuePolicyNotifications } from "@/components/dashboard/high-value-policy-notifications";
 
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { PayrollDialog } from "@/components/dashboard/payroll-dialog";
 import { CompanyPayrollDialog } from "@/components/dashboard/company-payroll-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { 
-  getEmployees, 
-  getPolicySales, 
-  getPayrollPeriods, 
-  getHighValuePolicyNotificationsList,
-  getAllRequests,
-  debugDatabaseContents,
-  type PayrollPeriod
-} from "@/lib/database";
+
+import { getEmployees } from "@/lib/util/employee";
+import { getPolicySales } from "@/lib/util/policies";
+import { getPayrollPeriods } from "@/lib/util/payroll";
+import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
+import { getAllRequests } from "@/lib/util/requests";
+import { type PayrollPeriod } from "@/lib/util/payroll";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
 import { useToast } from "@/hooks/use-toast";
 
 export function AdminDashboard() {
   const { toast } = useToast();
-  const [isWeeklySummaryOpen, setIsWeeklySummaryOpen] = useState(false);
   const [payrollDialogOpen, setPayrollDialogOpen] = useState(false);
   const [companyPayrollDialogOpen, setCompanyPayrollDialogOpen] = useState(false);
 
@@ -97,7 +71,7 @@ export function AdminDashboard() {
     const interval = setInterval(() => {
       // Use a more subtle refresh that doesn't show loading states
       loadData(true); // Background refresh
-    }, 15000); // Reduced from 30 seconds to 15 seconds
+    }, 30000);
 
     return () => clearInterval(interval);
   }, []);
@@ -117,7 +91,6 @@ export function AdminDashboard() {
     };
 
     const handleHighValuePolicyUpdate = () => {
-      console.log('🔔 AdminDashboard: Received high_value_policy_updated event, refreshing data...');
       loadData(true); // Silent refresh when high-value policies are updated (resolved/unresolved)
     };
 
@@ -140,41 +113,44 @@ export function AdminDashboard() {
     if (!silentUpdate) {
       setLoading(true);
     }
-    
-    console.log('🔄 AdminDashboard: Loading data...', { silentUpdate });
-    
+        
     try {
-      // Debug database contents
-      await debugDatabaseContents();
-      
-      const [employeesData, salesData, periodsData, notificationsData, requestsData] = await Promise.all([
-        getEmployees(),
-        getPolicySales(),
-        getPayrollPeriods(),
+
+      // Light-weight refresh when called in background
+      let employeesData: any[] = employees;
+      let salesData: any[] = policySales;
+      let periodsData: PayrollPeriod[] = payrollPeriods;
+
+      if (!silentUpdate) {
+        // Full fetch for initial or manual refresh
+        [employeesData, salesData, periodsData] = await Promise.all([
+          getEmployees(),
+          getPolicySales(),
+          getPayrollPeriods()
+        ]);
+      }
+
+      const [notificationsData, requestsData] = await Promise.all([
         getHighValuePolicyNotificationsList(),
         getAllRequests()
       ]);
       
-      console.log('🔄 AdminDashboard: Loaded notifications:', notificationsData.length, notificationsData.map(n => ({
-        id: n.id,
-        policy_number: n.policy_number,
-        status: n.status
-      })));
-      
-      setEmployees(employeesData);
-      setPolicySales(salesData);
-      
-      // Filter periods to only show ones with actual data or current/upcoming periods
-      const filteredPeriods = periodsData.filter(period => {
-        // Always show current and upcoming periods
-        if (period.status === 'current' || period.status === 'upcoming') {
-          return true;
-        }
-        // For completed periods, only show if there's actual data (hours worked or sales)
-        return period.details.regularHours > 0 || period.details.totalSales > 0;
-      });
-      
-      setPayrollPeriods(filteredPeriods);
+      if (!silentUpdate) {
+        setEmployees(employeesData);
+        setPolicySales(salesData);
+
+        // Filter periods to only show ones with actual data or current/upcoming periods
+        const filteredPeriods = periodsData.filter(period => {
+          // Always show current and upcoming periods
+          if (period.status === 'current' || period.status === 'upcoming') {
+            return true;
+          }
+          // For completed periods, only show if there's actual data (hours worked or sales)
+          return period.details.regularHours > 0 || period.details.totalSales > 0;
+        });
+
+        setPayrollPeriods(filteredPeriods);
+      }
       setHighValueNotifications(notificationsData);
       
       // Count pending requests
@@ -183,10 +159,7 @@ export function AdminDashboard() {
       
       // Update stable count for high-value policies (only pending ones)
       const pendingHighValueCount = notificationsData.filter(n => n.status === 'pending').length;
-      console.log('🔄 AdminDashboard: Setting pending count to:', pendingHighValueCount);
       setStablePendingCount(pendingHighValueCount);
-      
-
       
       if (!hasInitiallyLoaded) {
         setHasInitiallyLoaded(true);
@@ -201,8 +174,6 @@ export function AdminDashboard() {
     }
   };
 
-
-
   const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -214,8 +185,6 @@ export function AdminDashboard() {
     hour: '2-digit',
     minute: '2-digit'
   });
-
-
 
   const handleCompanyPayrollView = (period: string) => {
     // Find the payroll period to check if it's upcoming
@@ -233,18 +202,6 @@ export function AdminDashboard() {
     setSelectedPayrollPeriod(period);
     setCompanyPayrollDialogOpen(true);
   };
-
-  const handleReviewNowClick = () => {
-    if (highValueNotificationsRef.current) {
-      highValueNotificationsRef.current.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start'
-      });
-    }
-  };
-
-  // Use stable count to prevent flicker during refreshes - only pending policies
-  const pendingHighValueCount = hasInitiallyLoaded ? stablePendingCount : highValueNotifications.filter(n => n.status === 'pending').length;
 
   return (
     <div className="space-y-6">

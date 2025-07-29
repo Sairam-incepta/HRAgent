@@ -86,4 +86,4 @@ Works on Vercel. Add environment variables to dashboard.
 
 ---
 
-**Detailed docs:** See `PROJECT_ARCHITECTURE.md` 
+**Detailed docs:** See `PROJECT_ARCHITECTURE.md` # Updated Mon Jun 23 17:38:06 EDT 2025

@@ -27,7 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEmployees, calculateActualHoursForPeriod } from "@/lib/database";
+import { getEmployees } from "@/lib/util/employee";
+import { calculateActualHoursForPeriod } from "@/lib/util/misc";
 import type { Employee } from "@/lib/supabase";
 
 interface CustomPublicMetadata {

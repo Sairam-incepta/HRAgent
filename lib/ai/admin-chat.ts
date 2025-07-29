@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 import openai from '@/lib/openai';
-import { 
-  getEmployees, 
-  getPolicySales, 
-  getOvertimeRequests,
-  getAllRequests,
-  getClientReviews,
-  getHighValuePolicyNotificationsList
-} from '@/lib/database';
+import { getEmployees } from '../util/employee';
+import { getPolicySales } from '../util/policies';
+import { getOvertimeRequests } from '../util/overtime-requests';
+import { getAllRequests } from '../util/requests';
+import { getClientReviews } from '../util/client-reviews';
+import { getHighValuePolicyNotificationsList } from '../util/high-value-policy-notifications';
 import { buildAdminSystemPrompt } from './system-prompts';
+import { getChatMessages } from '../util/chat-messages'; // Add this import
 
 // Clean up markdown formatting - avoid double formatting
 function cleanMarkdownResponse(response: string): string {
@@ -41,13 +40,14 @@ export async function handleAdminChat(message: string, userId: string) {
 
   try {
     // Get admin data for context - get ALL data for company-wide view
-    const [employees, allOvertimeRequests, allPolicySales, allRequests, allReviews, highValueNotifications] = await Promise.all([
+    const [employees, allOvertimeRequests, allPolicySales, allRequests, allReviews, highValueNotifications, chatHistory] = await Promise.all([
       getEmployees(),
       getOvertimeRequests(),
       getPolicySales(), // This gets ALL policy sales, not just for one employee
       getAllRequests(),
       getClientReviews(),
-      getHighValuePolicyNotificationsList()
+      getHighValuePolicyNotificationsList(),
+      getChatMessages({ userId, limit: 10 }) // Get last 10 messages for context
     ]);
 
     const activeEmployees = employees.filter(emp => emp.status === 'active');
@@ -68,18 +68,37 @@ export async function handleAdminChat(message: string, userId: string) {
       pendingHighValuePolicies
     );
 
+    // Build conversation history for OpenAI
+    const messages: any[] = [
+      {
+        role: "system",
+        content: systemPrompt
+      }
+    ];
+
+    // Add recent chat history (excluding the current message)
+    if (chatHistory && chatHistory.length > 0) {
+      // Convert chat history to OpenAI format
+      chatHistory
+        .filter(msg => msg.content !== message) // Exclude current message
+        .slice(-8) // Take last 8 messages to avoid token limits
+        .forEach(msg => {
+          messages.push({
+            role: msg.role === 'bot' ? 'assistant' : 'user',
+            content: msg.content
+          });
+        });
+    }
+
+    // Add current user message
+    messages.push({
+      role: "user",
+      content: message
+    });
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ],
+      messages: messages,
       max_tokens: 1000,
       temperature: 0.7,
     });
@@ -88,11 +107,12 @@ export async function handleAdminChat(message: string, userId: string) {
     const cleanedResponse = cleanMarkdownResponse(rawResponse);
     return NextResponse.json({ response: cleanedResponse });
 
-  } catch (error) {
+  } 
+  catch (error) {
     console.error('Admin chat error:', error);
     return NextResponse.json(
       { error: 'Failed to process admin chat request' },
       { status: 500 }
     );
   }
-} 
+}

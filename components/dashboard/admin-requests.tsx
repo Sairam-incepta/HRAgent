@@ -12,7 +12,8 @@ import {
   Check, 
   X, 
   Filter,
-  Search
+  Search,
+  Edit
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,34 +30,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { getAllRequests, updateRequestStatus, getEmployees } from "@/lib/database";
+import { getAllRequests, updateRequestStatus } from "@/lib/util/requests";
+import { getEmployees } from "@/lib/util/employee";
 import { dashboardEvents } from "@/lib/events";
-
-interface Request {
-  id: string;
-  employee_id: string;
-  employeeName: string;
-  type: "overtime" | "vacation" | "sick" | "other";
-  title: string;
-  description: string;
-  request_date: string;
-  hours_requested?: number;
-  status: "pending" | "approved" | "rejected";
-  reason?: string;
-}
+import { DatabaseRequest } from "@/lib/supabase";
 
 interface AdminRequestsProps {
   pendingCount?: number;
 }
 
 export function AdminRequests({ pendingCount }: AdminRequestsProps) {
-  const [requests, setRequests] = useState<Request[]>([]);
+  const [requests, setRequests] = useState<DatabaseRequest[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<DatabaseRequest | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const { toast } = useToast();
 
@@ -89,7 +79,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
         getEmployees()
       ]);
       // Transform requests to match the interface
-      const transformedRequests: Request[] = allRequests.map(req => {
+      const transformedRequests: DatabaseRequest[] = allRequests.map(req => {
         const employee = employeeData.find(emp => emp.clerk_user_id === req.employee_id);
         return {
           ...req,
@@ -206,7 +196,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     }
   };
 
-  const handleViewDetails = (request: Request) => {
+  const handleViewDetails = (request: DatabaseRequest) => {
     setSelectedRequest(request);
     setDetailsOpen(true);
   };
@@ -216,7 +206,18 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
       case "overtime": return <Clock className="h-4 w-4" />;
       case "vacation": return <Calendar className="h-4 w-4" />;
       case "sick": return <AlertTriangle className="h-4 w-4" />;
+      case "edit-clock-time": return <Edit className="h-4 w-4" />;
       default: return <Calendar className="h-4 w-4" />;
+    }
+  };
+
+  const getTypeDisplayName = (type: string) => {
+    switch (type) {
+      case "edit-clock-time": return "Edit Clock Time";
+      case "overtime": return "Overtime";
+      case "vacation": return "Vacation";
+      case "sick": return "Sick Leave";
+      default: return "Other";
     }
   };
 
@@ -289,6 +290,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                 <SelectItem value="overtime">Overtime</SelectItem>
                 <SelectItem value="vacation">Vacation</SelectItem>
                 <SelectItem value="sick">Sick Leave</SelectItem>
+                <SelectItem value="edit-clock-time">Edit Clock Time</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
@@ -419,7 +421,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                 <div>
                   <h3 className="font-semibold">{selectedRequest.employeeName}</h3>
                   <p className="text-sm text-muted-foreground">
-                    {selectedRequest.type.charAt(0).toUpperCase() + selectedRequest.type.slice(1)} Request
+                    {getTypeDisplayName(selectedRequest.type)} Request
                   </p>
                 </div>
               </div>
@@ -444,6 +446,33 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                   <div>
                     <label className="text-sm font-medium">Additional Hours Requested</label>
                     <p className="text-sm">{selectedRequest.hours_requested} hours</p>
+                  </div>
+                )}
+                
+                {selectedRequest.clock_in_time && selectedRequest.clock_out_time && (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium">Clock In Time</label>
+                      <p className="text-sm">{selectedRequest.clock_in_time}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Clock Out Time</label>
+                      <p className="text-sm">{selectedRequest.clock_out_time}</p>
+                    </div>
+                  </>
+                )}
+                
+                {selectedRequest.start_date && (
+                  <div>
+                    <label className="text-sm font-medium">Start Date</label>
+                    <p className="text-sm">{new Date(selectedRequest.start_date).toLocaleDateString()}</p>
+                  </div>
+                )}
+                
+                {selectedRequest.end_date && (
+                  <div>
+                    <label className="text-sm font-medium">End Date</label>
+                    <p className="text-sm">{new Date(selectedRequest.end_date).toLocaleDateString()}</p>
                   </div>
                 )}
               </div>

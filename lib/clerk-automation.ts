@@ -1,5 +1,5 @@
 import { clerkClient } from '@clerk/nextjs/server';
-import { createEmployee } from './database';
+import { createEmployee } from './util/employee';
 
 export interface ClerkUserData {
   firstName: string;

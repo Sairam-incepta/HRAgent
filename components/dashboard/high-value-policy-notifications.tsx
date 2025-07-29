@@ -7,20 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertTriangle, DollarSign, Eye, CheckCircle, Clock, Calendar, RotateCcw, Settings } from "lucide-react";
-import { 
-  getHighValuePolicyNotificationsList, 
-  updateHighValuePolicyNotification, 
-  getEmployees,
-  getUrgentReviewPolicies,
-  shouldShowPeriodEndNotification,
-  closeExpiredBiweeklyPeriods
-} from "@/lib/database";
+import { getHighValuePolicyNotificationsList, updateHighValuePolicyNotification } from "@/lib/util/high-value-policy-notifications";
+import { getUrgentReviewPolicies } from "@/lib/util/policies";
+import { shouldShowPeriodEndNotification, closeExpiredBiweeklyPeriods } from "@/lib/util/misc";
 import { PayrollDialog } from "./payroll-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { HighValuePolicyNotification } from "@/lib/supabase";
 import { dashboardEvents } from "@/lib/events";
-import { supabase } from "@/lib/supabase";
 import { Label } from "@/components/ui/label";
+import { appSettings } from "@/lib/config/app-settings";
 
 // Simplified - no need for employee names anymore
 
@@ -51,6 +46,12 @@ export function HighValuePolicyNotifications() {
   const [processingActions, setProcessingActions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // Load settings from appSettings
+    appSettings.loadSettings();
+    const threshold = appSettings.highValueThreshold;
+    setHighValuePolicyThreshold(threshold);
+    setTempThreshold(threshold);
+    
     loadHighValuePolicies();
     checkUrgentReviews();
   }, []);
@@ -98,28 +99,16 @@ export function HighValuePolicyNotifications() {
         setLoading(true);
       }
       
-      console.log('🔍 Loading high value policies...', { showLoading, silentUpdate, hasInitiallyLoaded });
       const notifications = await getHighValuePolicyNotificationsList();
-      console.log('🔍 Raw notifications from database:', notifications.length, notifications.map(n => ({
-        id: n.id,
-        policy_number: n.policy_number,
-        status: n.status,
-        policy_amount: n.policy_amount,
-        biweekly_period_end: n.biweekly_period_end
-      })));
       
-      // No need to fetch employees or map employee names anymore
       // Store successful data for future reference
       lastSuccessfulData.current = notifications;
       
       // Always update the state with fresh data
       setHighValuePolicies(notifications);
-      
-      console.log('🔍 Updated state with notifications, pending count:', notifications.filter(n => n.status === 'pending').length);
-      
+            
       // Emit event to update admin dashboard alert count automatically (only for non-silent updates)
       if (!silentUpdate) {
-        console.log('🔍 Emitting high_value_policy_updated event from loadHighValuePolicies');
         dashboardEvents.emit('high_value_policy_updated');
       }
       
@@ -131,7 +120,6 @@ export function HighValuePolicyNotifications() {
       
       // On error during silent update, keep the last successful data
       if (silentUpdate && lastSuccessfulData.current.length > 0) {
-        console.log('🔍 Using cached data due to error during silent update');
         setHighValuePolicies(lastSuccessfulData.current);
       }
     } finally {
@@ -153,19 +141,14 @@ export function HighValuePolicyNotifications() {
     if (processingActions.has(notificationId)) {
       return;
     }
-    
-    console.log('🔍 Marking policy as reviewed:', { notificationId, processingActions: Array.from(processingActions) });
-    
+        
     setProcessingActions(prev => new Set(prev).add(notificationId));
     
     try {
-      console.log('🔍 Calling updateHighValuePolicyNotification...');
       const result = await updateHighValuePolicyNotification(notificationId, {
         status: 'reviewed'
       });
-      
-      console.log('🔍 Update result:', result);
-      
+            
       if (!result) {
         throw new Error('Failed to update policy status');
       }
@@ -175,17 +158,14 @@ export function HighValuePolicyNotifications() {
         description: "High-value policy has been reviewed and payroll will be updated.",
       });
       
-      console.log('🔍 Emitting high_value_policy_updated event...');
       // Emit event for immediate updates across all components
       dashboardEvents.emit('high_value_policy_updated');
       
-      console.log('🔍 Refreshing local data...');
       // Refresh the local data and clear processing state
       loadHighValuePolicies(false, false);
       
       // Add delay to ensure database sync and then force another refresh
       setTimeout(() => {
-        console.log('🔍 Removing from processing set after delay...');
         setProcessingActions(prev => {
           const newSet = new Set(prev);
           newSet.delete(notificationId);
@@ -193,7 +173,6 @@ export function HighValuePolicyNotifications() {
         });
         
         // Force another refresh after delay to ensure UI is in sync
-        console.log('🔍 Forcing additional refresh after delay...');
         loadHighValuePolicies(false, false);
         dashboardEvents.emit('high_value_policy_updated');
       }, 1000); // Increased delay to 1 second
@@ -275,15 +254,11 @@ export function HighValuePolicyNotifications() {
     
     setProcessingActions(prev => new Set(prev).add(notificationId));
     
-    try {
-      console.log('🔄 Attempting to unresolve policy with ID:', notificationId);
-      
+    try {      
       const result = await updateHighValuePolicyNotification(notificationId, {
         status: 'pending'
       });
-      
-      console.log('✅ Unresolve result:', result);
-      
+            
       if (!result) {
         throw new Error('Failed to update policy status');
       }
@@ -365,22 +340,16 @@ export function HighValuePolicyNotifications() {
   
   // Filter out resolved and reviewed policies from display count for alerts (only show pending)
   const pendingPolicies = highValuePolicies.filter(policy => policy.status === 'pending');
-  
-  // Add comprehensive debugging for alert persistence
-  console.log('🔍 High Value Policy Alert Debug:', {
-    totalPolicies: highValuePolicies.length,
-    alertCount: alertCount,
-    pendingCount: pendingPolicies.length,
-    allPoliciesStatus: highValuePolicies.map(p => ({
-      id: p.id,
-      policy_number: p.policy_number,
-      status: p.status
-    }))
-  });
 
   const handleUpdateThreshold = () => {
+    // Update global settings
+    appSettings.setHighValueThreshold(tempThreshold);
     setHighValuePolicyThreshold(tempThreshold);
     setSettingsDialogOpen(false);
+    
+    // Refresh components that use this value
+    loadHighValuePolicies();
+    
     toast({
       title: "Threshold Updated",
       description: `High-value policy threshold updated to $${tempThreshold.toLocaleString()}`,
@@ -392,14 +361,6 @@ export function HighValuePolicyNotifications() {
       console.error('No selected policy found');
       return;
     }
-    
-    console.log('Selected policy details:', {
-      id: selectedPolicy.id,
-      policy_id: selectedPolicy.policy_id,
-      policy_number: selectedPolicy.policy_number,
-      amount: selectedPolicy.amount,
-      status: selectedPolicy.status
-    });
     
     try {
       const bonusValue = parseFloat(bonusAmount) || 0;
@@ -415,9 +376,7 @@ export function HighValuePolicyNotifications() {
       if (!notificationResult) {
         throw new Error('Failed to update high-value policy notification');
       }
-      
-      console.log('Notification updated successfully:', notificationResult);
-      
+            
       toast({
         title: "Bonus Set Successfully",
         description: `Admin bonus of $${bonusValue} has been set for policy ${selectedPolicy.policy_number}.`,
@@ -508,7 +467,7 @@ export function HighValuePolicyNotifications() {
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
               High Value Policy Alerts ({alertCount})
             </div>
             <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
@@ -570,16 +529,6 @@ export function HighValuePolicyNotifications() {
                 const daysUntilEnd = getDaysUntilPeriodEnd(policy.biweekly_period_end);
                 const isUrgent = daysUntilEnd !== null && daysUntilEnd <= 2;
                 const periodExpired = isPeriodExpired(policy.biweekly_period_end);
-                
-                console.log('🔍 Rendering policy:', {
-                  id: policy.id,
-                  policy_number: policy.policy_number,
-                  status: policy.status,
-                  periodExpired,
-                  biweekly_period_end: policy.biweekly_period_end,
-                  daysUntilEnd,
-                  shouldShowUnresolve: policy.status === 'resolved' && !periodExpired
-                });
                 
                 return (
                   <div 
@@ -707,7 +656,6 @@ export function HighValuePolicyNotifications() {
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                console.log('🖱️ Unresolve button clicked for policy:', policy.id, 'status:', policy.status, 'periodExpired:', periodExpired);
                                 handleUnresolve(policy.id);
                               }}
                               title="Mark this policy as pending again"
@@ -758,7 +706,6 @@ export function HighValuePolicyNotifications() {
                             <Button
                               size="sm"
                               onClick={() => {
-                                console.log('🖱️ Review button clicked for policy:', policy.id, 'status:', policy.status, 'processingActions:', Array.from(processingActions));
                                 handleMarkAsReviewed(policy.id);
                               }}
                               title="Review this policy and update payroll"

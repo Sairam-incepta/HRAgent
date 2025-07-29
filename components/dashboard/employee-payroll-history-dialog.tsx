@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { History, Clock, DollarSign, TrendingUp, Calendar } from "lucide-react";
-import { getEmployeePayrollHistory, getEmployee, formatHoursMinutes } from "@/lib/database";
+import { getEmployeePayrollHistory } from "@/lib/util/payroll";
+import { getEmployee } from "@/lib/util/employee";
+import { formatHoursMinutes } from "@/lib/util/misc";
 import { dashboardEvents } from "@/lib/events";
 
 interface EmployeePayrollHistoryDialogProps {
@@ -158,7 +159,7 @@ export function EmployeePayrollHistoryDialog({
                           <div>
                             <h4 className="font-medium">{period.period}</h4>
                             <p className="text-sm text-muted-foreground">
-                              {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
+                              {new Date(period.startDate + 'T00:00:00').toLocaleDateString()} - {new Date(period.endDate + 'T00:00:00').toLocaleDateString()}
                             </p>
                           </div>
                           <div className="text-right">

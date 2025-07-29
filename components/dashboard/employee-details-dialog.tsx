@@ -6,13 +6,18 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, Calendar, BarChart, FileText, TrendingUp, DollarSign, Key } from "lucide-react";
-import { getPolicySales, getClientReviews, getEmployeeBonus, getWeeklySummary, getTimeLogsForDay, getDailySummaries } from "@/lib/database";
+import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key, ArrowLeft, ArrowRight, Edit } from "lucide-react";
+import { getPolicySales } from "@/lib/util/policies";
+import { getClientReviews } from "@/lib/util/client-reviews";
+import { getEmployeeBonus } from "@/lib/util/employee-bonus";
+import { getWeeklySummary, getPeriodSummary } from "@/lib/util/get";
+import { getTimeLogsForDay } from "@/lib/util/time-logs";
+import { getDailySummaries } from "@/lib/util/daily-summaries";
+import { calculateIndividualPolicyBonus } from "@/lib/util/payroll";
 import { PasswordResetDialog } from "./password-reset-dialog";
+import { EditTimeLogsDialog } from "./edit-time-logs-dialog";
 import { dashboardEvents } from "@/lib/events";
-import { useUser } from '@clerk/nextjs';
 
 interface EmployeeDetailsDialogProps {
   open: boolean;
@@ -50,7 +55,17 @@ export function EmployeeDetailsDialog({
   const [dailySummaries, setDailySummaries] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
-  const [clockTimes, setClockTimes] = useState<Record<string, { firstIn: string | null, lastOut: string | null }>>({});
+  const [editTimeLogsOpen, setEditTimeLogsOpen] = useState(false);
+  const [clockTimes, setClockTimes] = useState<Record<string, {
+    firstIn: string | null;
+    lastOut: string | null;
+    workSessions: number;
+    breakTime: number;
+  }>>({});
+  const [policyBonuses, setPolicyBonuses] = useState<Record<string, number>>({});
+  const [bonusesLoading, setBonusesLoading] = useState(false);
+  const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
+  const [initialWeekStart, setInitialWeekStart] = useState<string | null>(null);
 
   // Calculate max daily hours once for consistent scaling across all progress bars
   const maxDailyHours = useMemo(() => {
@@ -59,11 +74,46 @@ export function EmployeeDetailsDialog({
     return Math.max(...allDailyHours, 12); // At least 12 hours for good visualization
   }, [weeklyData]);
 
+  // Helper to format week range (add this function)
+  const formatWeekRange = (data: typeof weeklyData) => {
+    if (!data.length) return '';
+    const start = new Date(data[0].date);
+    const end = new Date(data[data.length - 1].date);
+    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  };
+
+  // Helpers for navigation (add these)
+  const goPrev = () => {
+    if (!currentWeekStart) return;
+    const prevStartDate = new Date(currentWeekStart);
+    prevStartDate.setDate(prevStartDate.getDate() - 7);
+    const prevStartStr = prevStartDate.toISOString().split('T')[0];
+    setCurrentWeekStart(prevStartStr);
+  };
+
+  const goNext = () => {
+    if (!currentWeekStart) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const nextStartDate = new Date(currentWeekStart);
+    nextStartDate.setDate(nextStartDate.getDate() + 7);
+    const nextStartStr = nextStartDate.toISOString().split('T')[0];
+    if (nextStartStr > todayStr) return; // Prevent future weeks
+    setCurrentWeekStart(nextStartStr);
+  };
+
+  const isLatestWeek = currentWeekStart === initialWeekStart;
+
   useEffect(() => {
     if (open && employee?.clerk_user_id) {
       loadEmployeeData();
     }
   }, [open, employee?.clerk_user_id]);
+
+  useEffect(() => {
+    if (open && employee?.clerk_user_id) {
+      loadWeekData();
+    }
+  }, [open, employee?.clerk_user_id, currentWeekStart]);
 
   // Listen for client review updates
   useEffect(() => {
@@ -71,16 +121,21 @@ export function EmployeeDetailsDialog({
 
     const handleClientReviewUpdate = () => {
       loadEmployeeData();
+      loadWeekData();
     };
 
     const handlePolicySaleUpdate = () => {
       loadEmployeeData();
+      loadWeekData();
     };
 
     // Subscribe to events and store cleanup functions
     const cleanupFunctions = [
       dashboardEvents.on('client_review', handleClientReviewUpdate),
-      dashboardEvents.on('policy_sale', handlePolicySaleUpdate)
+      dashboardEvents.on('policy_sale', handlePolicySaleUpdate),
+      dashboardEvents.on('time_logged', () => {
+        loadWeekData();
+      })
     ];
 
     return () => {
@@ -92,19 +147,35 @@ export function EmployeeDetailsDialog({
   useEffect(() => {
     async function fetchClockTimes() {
       if (!employee?.clerk_user_id || !weeklyData.length) return;
-      const times: Record<string, { firstIn: string | null, lastOut: string | null }> = {};
+      const times: Record<string, { firstIn: string | null, lastOut: string | null, workSessions: number, breakTime: number }> = {};
       for (const day of weeklyData) {
         const logs = await getTimeLogsForDay(employee.clerk_user_id, day.date);
         if (logs && logs.length > 0) {
           logs.sort((a, b) => new Date(a.clock_in).getTime() - new Date(b.clock_in).getTime());
           const firstLog = logs[0];
           const lastLog = logs[logs.length - 1];
+
+          // Calculate total break time for this day
+          let totalBreakTime = 0;
+          let workSessions = 0;
+          logs.forEach(log => {
+            if (log.clock_in && log.clock_out) {
+              workSessions++;
+              if (log.break_start && log.break_end) {
+                const breakTime = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60);
+                totalBreakTime += breakTime;
+              }
+            }
+          });
+
           times[day.date] = {
             firstIn: firstLog.clock_in ? new Date(firstLog.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
             lastOut: lastLog.clock_out ? new Date(lastLog.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+            workSessions,
+            breakTime: Math.round(totalBreakTime)
           };
         } else {
-          times[day.date] = { firstIn: null, lastOut: null };
+          times[day.date] = { firstIn: null, lastOut: null, workSessions: 0, breakTime: 0 };
         }
       }
       setClockTimes(times);
@@ -112,30 +183,48 @@ export function EmployeeDetailsDialog({
     fetchClockTimes();
   }, [employee?.clerk_user_id, weeklyData]);
 
+  const calculateAllPolicyBonuses = async (policies: any[]) => {
+    if (!policies.length || !employee?.clerk_user_id) return;
+
+    setBonusesLoading(true);
+    try {
+      const bonusPromises = policies.map(async (policy) => {
+        const bonusData = await calculateIndividualPolicyBonus(policy.id, employee.clerk_user_id);
+        return { policyId: policy.id, bonus: bonusData.totalBonus };
+      });
+
+      const bonusResults = await Promise.all(bonusPromises);
+
+      const bonusMap = bonusResults.reduce((acc, { policyId, bonus }) => {
+        acc[policyId] = bonus;
+        return acc;
+      }, {} as Record<string, number>);
+
+      setPolicyBonuses(bonusMap);
+    } catch (error) {
+      console.error('Error calculating policy bonuses:', error);
+    } finally {
+      setBonusesLoading(false);
+    }
+  };
+
   const loadEmployeeData = async () => {
     if (!employee?.clerk_user_id) return;
-    
+
     setLoading(true);
     try {
-      console.log('🔍 Loading employee data for:', employee.clerk_user_id);
-      const [policies, reviews, bonus, weekly, summaries] = await Promise.all([
+      const [policies, reviews, bonus, summaries] = await Promise.all([
         getPolicySales(employee.clerk_user_id),
         getClientReviews(employee.clerk_user_id),
         getEmployeeBonus(employee.clerk_user_id),
-        getWeeklySummary(employee.clerk_user_id),
         getDailySummaries(employee.clerk_user_id)
       ]);
-      
-      console.log('📊 Daily summaries loaded:', summaries.length, summaries);
-      console.log('📋 Policies loaded:', policies.length);
-      console.log('⭐ Reviews loaded:', reviews.length);
-      console.log('📅 Weekly data loaded:', weekly.length);
-      
+
       setEmployeePolicies(policies);
       setClientReviews(reviews);
       setEmployeeBonus(bonus);
-      setWeeklyData(weekly);
       setDailySummaries(summaries);
+      await calculateAllPolicyBonuses(policies);
     } catch (error) {
       console.error('Error loading employee data:', error);
     } finally {
@@ -143,26 +232,59 @@ export function EmployeeDetailsDialog({
     }
   };
 
+  const loadWeekData = async () => {
+    if (!employee?.clerk_user_id) return;
+
+    setLoading(true);
+    try {
+      let weekly;
+      if (currentWeekStart) {
+        weekly = await getPeriodSummary(employee.clerk_user_id, currentWeekStart, 7);
+      } else {
+        weekly = await getWeeklySummary(employee.clerk_user_id);
+      }
+      setWeeklyData(weekly);
+      if (weekly.length && !initialWeekStart) {
+        setInitialWeekStart(weekly[0].date);
+      }
+      if (weekly.length) {
+        setCurrentWeekStart(weekly[0].date);
+      }
+    } catch (error) {
+      console.error('Error loading week data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const totalPolicies = employeePolicies.length;
+  const crossSoldCount = employeePolicies.filter(policy => policy.is_cross_sold_policy).length;
   const totalSales = employeePolicies.reduce((sum, policy) => sum + policy.amount, 0);
-  const totalBonus = employeeBonus?.total_bonus || 0;
-  const crossSoldCount = employeePolicies.filter(policy => policy.cross_sold).length;
+  // Calculate total policy bonuses
+  const totalPolicyBonuses = Object.values(policyBonuses).reduce((sum, bonus) => sum + bonus, 0);
+
+  // Calculate review bonuses for this employee
+  const fiveStarReviews = clientReviews.filter(review => review.rating === 5);
+  const reviewBonuses = fiveStarReviews.length * 10;
+
+  // Total bonuses = policy bonuses + review bonuses
+  const totalBonus = totalPolicyBonuses + reviewBonuses;
 
   const formatDate = (dateString: string) => {
     // Parse date string safely to avoid timezone issues (same fix as employee dashboard)
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day);
-    
+
     // Get today's date in the same format for comparison
     const today = new Date();
     const todayFormatted = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+
     const isToday = date.getTime() === todayFormatted.getTime();
-    
+
     if (isToday) {
       return "Today";
     }
-    
+
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
@@ -182,7 +304,7 @@ export function EmployeeDetailsDialog({
           <DialogHeader>
             <DialogTitle>Employee Details</DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-6">
             <div className="flex items-start gap-4">
               <Avatar className="h-16 w-16">
@@ -196,29 +318,40 @@ export function EmployeeDetailsDialog({
                 <div className="flex gap-2 mt-2">
                   <Badge variant="outline">{employee.department}</Badge>
                   <Badge variant="outline">{employee.position}</Badge>
-                  <Badge 
+                  <Badge
                     variant="outline"
                     className={
-                      employee.status === "active" 
+                      employee.status === "active"
                         ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        : employee.status === "on_leave" 
-                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" 
-                        : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
+                        : employee.status === "on_leave"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                          : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
                     }
                   >
                     {employee.status}
                   </Badge>
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPasswordResetOpen(true)}
-                className="flex items-center gap-2"
-              >
-                <Key className="h-4 w-4" />
-                Reset Password
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPasswordResetOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Key className="h-4 w-4" />
+                  Reset Password
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditTimeLogsOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit Time Logs
+                </Button>
+              </div>
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
@@ -265,31 +398,31 @@ export function EmployeeDetailsDialog({
                       </div>
                     </div>
 
-                                         {/* Total Sales */}
-                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-                       <div className="flex items-center justify-between h-full">
-                         <div className="flex flex-col justify-center min-w-0 flex-1">
-                           <p className="text-xs text-muted-foreground leading-tight truncate">Total Sales</p>
-                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalSales.toLocaleString()}</p>
-                         </div>
-                         <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                           <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
-                         </div>
-                       </div>
-                     </div>
+                    {/* Total Sales */}
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Total Sales</p>
+                          <p className="text-2xl font-semibold text-foreground leading-tight">${totalSales.toLocaleString()}</p>
+                        </div>
+                        <div className="h-8 w-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        </div>
+                      </div>
+                    </div>
 
-                     {/* Bonus Earned */}
-                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
-                       <div className="flex items-center justify-between h-full">
-                         <div className="flex flex-col justify-center min-w-0 flex-1">
-                           <p className="text-xs text-muted-foreground leading-tight truncate">Bonus Earned</p>
-                           <p className="text-2xl font-semibold text-foreground leading-tight">${totalBonus.toLocaleString()}</p>
-                         </div>
-                         <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                           <BarChart className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                         </div>
-                       </div>
-                     </div>
+                    {/* Bonus Earned */}
+                    <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
+                      <div className="flex items-center justify-between h-full">
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground leading-tight truncate">Bonus Earned</p>
+                          <p className="text-2xl font-semibold text-foreground leading-tight">${totalBonus.toLocaleString()}</p>
+                        </div>
+                        <div className="h-8 w-8 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                          <BarChart className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                        </div>
+                      </div>
+                    </div>
 
                     {/* Client Reviews */}
                     <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
@@ -299,7 +432,7 @@ export function EmployeeDetailsDialog({
                           <div className="flex items-baseline gap-1">
                             <p className="text-2xl font-semibold text-foreground leading-tight">{clientReviews.length}</p>
                             <span className="text-xs text-muted-foreground">
-                              {clientReviews.length > 0 
+                              {clientReviews.length > 0
                                 ? `Avg: ${(clientReviews.reduce((sum, r) => sum + r.rating, 0) / clientReviews.length).toFixed(2)}/5`
                                 : 'No reviews'
                               }
@@ -362,20 +495,31 @@ export function EmployeeDetailsDialog({
                             <p className="text-muted-foreground text-center py-4">No recent activity found.</p>
                           )}
                         </div>
-                        
+
                         {/* Hours Visualization - Right Side */}
                         <div className="space-y-4">
                           <div className="bg-muted/50 rounded-lg p-8">
-                            <h4 className="font-medium text-lg mb-6 flex items-center gap-2">
-                              <Clock className="h-6 w-6" />
-                              Weekly Hours Breakdown
-                            </h4>
-                            
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="font-medium text-lg flex items-center gap-2">
+                                <Clock className="h-6 w-6" />
+                                Weekly Hours Breakdown
+                              </h4>
+                              <div className="flex items-center gap-2">
+                                <Button variant="ghost" size="icon" onClick={goPrev}>
+                                  <ArrowLeft className="h-4 w-4" />
+                                </Button>
+                                <span className="text-sm font-medium">{formatWeekRange(weeklyData)}</span>
+                                <Button variant="ghost" size="icon" onClick={goNext} disabled={isLatestWeek}>
+                                  <ArrowRight className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+
                             {(() => {
                               const totalWeeklyHours = weeklyData.reduce((total, day) => total + day.hoursWorked, 0);
                               const weeklyOvertime = Math.max(0, totalWeeklyHours - 40);
                               const regularHours = Math.min(totalWeeklyHours, 40);
-                              
+
                               return (
                                 <div className="space-y-6">
                                   {/* Weekly Summary */}
@@ -392,7 +536,7 @@ export function EmployeeDetailsDialog({
                                       </div>
                                     )}
                                   </div>
-                                  
+
                                   {/* Weekly Progress Bar - Out of 40 hours */}
                                   <div className="space-y-3">
                                     <div className="flex justify-between text-base font-medium">
@@ -401,13 +545,13 @@ export function EmployeeDetailsDialog({
                                     </div>
                                     <div className="relative w-full bg-gray-200 rounded-full h-6">
                                       {/* Blue bar for regular hours (up to 40) */}
-                                      <div 
+                                      <div
                                         className="bg-blue-500 h-6 rounded-full transition-all duration-500"
                                         style={{ width: `${Math.min((regularHours / 40) * 100, 100)}%` }}
                                       ></div>
                                       {/* Orange overlay for overtime hours */}
                                       {weeklyOvertime > 0 && (
-                                        <div 
+                                        <div
                                           className="absolute top-0 left-0 bg-orange-500 h-6 rounded-full transition-all duration-500 opacity-80"
                                           style={{ width: `${Math.min((weeklyOvertime / 40) * 100, 100)}%` }}
                                         ></div>
@@ -424,8 +568,6 @@ export function EmployeeDetailsDialog({
                               );
                             })()}
                           </div>
-                          
-
                         </div>
                       </div>
                     )}
@@ -436,7 +578,18 @@ export function EmployeeDetailsDialog({
               <TabsContent value="daily-hours" className="space-y-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Daily Hours This Week</CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle>Daily Hours</CardTitle>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="icon" onClick={goPrev}>
+                          <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm font-medium">{formatWeekRange(weeklyData)}</span>
+                        <Button variant="ghost" size="icon" onClick={goNext} disabled={isLatestWeek}>
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {loading ? (
@@ -464,35 +617,35 @@ export function EmployeeDetailsDialog({
                             </span>
                           </div>
                         </div>
-                        
+
                         {/* Daily Hours with Progress Bars */}
                         <div className="space-y-3">
                           {weeklyData.map((day) => {
                             const dayClockTimes = clockTimes[day.date];
-                              const isToday = day.isToday;
-                              const hasClockData = dayClockTimes && (dayClockTimes.firstIn || dayClockTimes.lastOut);
-                              
-                              // Calculate overtime for this day (using 8-hour daily limit)
-                              const dailyOvertimeLimit = 8;
-                              const overtimeHours = Math.max(0, day.hoursWorked - dailyOvertimeLimit);
-                              const regularHours = Math.min(day.hoursWorked, dailyOvertimeLimit);
-                              
-                              // Determine status for current day
-                              let status = "Not worked";
-                              if (day.hoursWorked > 0) {
-                                if (isToday) {
-                                  if (dayClockTimes?.firstIn && !dayClockTimes?.lastOut) {
-                                    status = "Present";
-                                  } else if (dayClockTimes?.firstIn && dayClockTimes?.lastOut) {
-                                    status = "Completed";
-                                  } else {
-                                    status = "Present";
-                                  }
-                                } else {
+                            const isToday = day.isToday;
+                            const hasClockData = dayClockTimes && (dayClockTimes.firstIn || dayClockTimes.lastOut);
+
+                            // Calculate overtime for this day (using 8-hour daily limit)
+                            const dailyOvertimeLimit = 8;
+                            const overtimeHours = Math.max(0, day.hoursWorked - dailyOvertimeLimit);
+                            const regularHours = Math.min(day.hoursWorked, dailyOvertimeLimit);
+
+                            // Determine status for current day
+                            let status = "Not worked";
+                            if (day.hoursWorked > 0) {
+                              if (isToday) {
+                                if (dayClockTimes?.firstIn && !dayClockTimes?.lastOut) {
+                                  status = "Present";
+                                } else if (dayClockTimes?.firstIn && dayClockTimes?.lastOut) {
                                   status = "Completed";
+                                } else {
+                                  status = "Present";
                                 }
+                              } else {
+                                status = "Completed";
                               }
-                            
+                            }
+
                             return (
                               <div key={day.date} className="space-y-2">
                                 {/* Date and Status Header */}
@@ -509,41 +662,40 @@ export function EmployeeDetailsDialog({
                                     <span className="text-sm font-medium">
                                       {day.hoursWorked > 0 ? formatTime(day.hoursWorked) : '0h 00m'}
                                     </span>
-                                    <Badge 
-                                      variant="outline" 
-                                      className={`text-xs ${
-                                        status === "Present" 
-                                          ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                          : status === "Completed"
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs ${status === "Present"
+                                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                        : status === "Completed"
                                           ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
                                           : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400"
-                                      }`}
+                                        }`}
                                     >
                                       {status}
                                     </Badge>
                                   </div>
                                 </div>
-                                
+
                                 {/* Progress Bar */}
                                 <div className="space-y-1">
                                   <div className="relative bg-gray-200 rounded-full h-2">
                                     {/* Regular hours (green) */}
-                                    <div 
+                                    <div
                                       className="bg-green-500 h-2 rounded-full absolute left-0 top-0 transition-all duration-500"
                                       style={{ width: `${(regularHours / maxDailyHours) * 100}%` }}
                                     ></div>
                                     {/* Overtime hours (amber) - positioned after regular hours */}
                                     {overtimeHours > 0 && (
-                                      <div 
+                                      <div
                                         className="bg-amber-500 h-2 rounded-r-full absolute top-0 transition-all duration-500"
-                                        style={{ 
+                                        style={{
                                           left: `${(regularHours / maxDailyHours) * 100}%`,
-                                          width: `${(overtimeHours / maxDailyHours) * 100}%` 
+                                          width: `${(overtimeHours / maxDailyHours) * 100}%`
                                         }}
                                       ></div>
                                     )}
                                   </div>
-                                  
+
                                   {/* Time Details */}
                                   <div className="flex justify-between items-center text-xs text-muted-foreground">
                                     <div className="flex items-center gap-4">
@@ -554,6 +706,12 @@ export function EmployeeDetailsDialog({
                                         <span>Out: {dayClockTimes.lastOut}</span>
                                       ) : isToday && dayClockTimes?.firstIn && (
                                         <span className="text-amber-600 font-medium">Currently Present</span>
+                                      )}
+                                      {dayClockTimes?.breakTime > 0 && (
+                                        <span className="text-blue-600">Break: {dayClockTimes.breakTime}m</span>
+                                      )}
+                                      {dayClockTimes?.workSessions > 1 && (
+                                        <span className="text-purple-600">{dayClockTimes.workSessions} sessions</span>
                                       )}
                                     </div>
                                     {overtimeHours > 0 && (
@@ -597,11 +755,11 @@ export function EmployeeDetailsDialog({
                         {dailySummaries.map((summary, index) => {
                           // Get policies for this specific date
                           const summaryDate = new Date(summary.date).toDateString();
-                          const dayPolicies = employeePolicies.filter(policy => 
+                          const dayPolicies = employeePolicies.filter(policy =>
                             new Date(policy.sale_date).toDateString() === summaryDate
                           );
                           const highNetworthPolicies = dayPolicies.filter(policy => policy.amount >= 100000);
-                          
+
                           return (
                             <div key={index} className="border rounded-lg p-4 space-y-3">
                               <div className="flex justify-between items-start">
@@ -610,7 +768,7 @@ export function EmployeeDetailsDialog({
                                     {formatDate(summary.date)}
                                   </h4>
                                   <p className="text-sm text-muted-foreground">
-                                    {new Date(summary.date).toLocaleDateString('en-US', { 
+                                    {new Date(summary.date).toLocaleDateString('en-US', {
                                       weekday: 'long',
                                       year: 'numeric',
                                       month: 'long',
@@ -629,7 +787,7 @@ export function EmployeeDetailsDialog({
                                   )}
                                 </div>
                               </div>
-                              
+
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                                 <div>
                                   <span className="text-muted-foreground">Hours Worked:</span>
@@ -648,7 +806,7 @@ export function EmployeeDetailsDialog({
                                   <span className="ml-2 font-medium">${summary.total_broker_fees.toLocaleString()}</span>
                                 </div>
                               </div>
-                              
+
                               {summary.description && (
                                 <div className="bg-muted/50 rounded p-3">
                                   <p className="text-sm">
@@ -703,7 +861,7 @@ export function EmployeeDetailsDialog({
                                 <p className="text-sm text-muted-foreground">{new Date(policy.sale_date).toLocaleDateString()}</p>
                               </div>
                             </div>
-                            
+
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
                                 <span className="text-muted-foreground">Type:</span>
@@ -715,16 +873,22 @@ export function EmployeeDetailsDialog({
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Bonus:</span>
-                                <span className="ml-2 font-medium text-[#005cb3]">${policy.bonus}</span>
+                                <span className="ml-2 font-medium text-[#005cb3]">
+                                  {bonusesLoading ? (
+                                    <span className="animate-pulse">...</span>
+                                  ) : (
+                                    `$${(policyBonuses[policy.id] || 0).toLocaleString()}`
+                                  )}
+                                </span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Cross-sold:</span>
                                 <span className="ml-2 font-medium">
-                                  {policy.cross_sold ? `Yes - ${policy.cross_sold_type}` : "No"}
+                                  {policy.is_cross_sold_policy ? "Yes" : "No"}
                                 </span>
                               </div>
                             </div>
-                            
+
                             {policy.client_description && (
                               <div className="bg-muted/50 rounded p-3">
                                 <p className="text-sm">
@@ -760,7 +924,7 @@ export function EmployeeDetailsDialog({
                       </div>
                     ) : clientReviews.length > 0 ? (
                       <div className="space-y-4">
-                        {clientReviews.map((review, index) => (
+                        {clientReviews.slice().reverse().map((review, index) => (
                           <div key={index} className="border rounded-lg p-4 space-y-3">
                             <div className="flex justify-between items-start">
                               <div>
@@ -779,7 +943,7 @@ export function EmployeeDetailsDialog({
                                 <p className="text-sm text-muted-foreground">{new Date(review.review_date).toLocaleDateString()}</p>
                               </div>
                             </div>
-                            
+
                             <div className="bg-muted/50 rounded p-3">
                               <p className="text-sm">"{review.review}"</p>
                             </div>
@@ -803,6 +967,13 @@ export function EmployeeDetailsDialog({
           employeeId={employee.clerk_user_id}
           employeeName={employee.name}
           employeeEmail={employee.email}
+        />
+      )}
+      {editTimeLogsOpen && (
+        <EditTimeLogsDialog
+          open={editTimeLogsOpen}
+          onOpenChange={setEditTimeLogsOpen}
+          employee={employee}
         />
       )}
     </>

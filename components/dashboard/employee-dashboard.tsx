@@ -2,35 +2,28 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useUser } from "@clerk/nextjs";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Clock, 
-  Play, 
-  Square, 
-  Coffee, 
-  Check, 
-  Timer, 
-  ChevronDown, 
-  ChevronUp,
+import {
+  Clock,
   Filter,
   Search,
   TrendingUp,
   Star,
   FileText,
   Calendar,
-  User
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import TimeTracker from "@/components/dashboard/time-tracker";
+import { TimeTracker } from "@/components/dashboard/time-tracker";
 import { RequestDialog } from "@/components/dashboard/request-dialog";
 import { SettingsDialog } from "@/components/dashboard/settings-dialog";
 import { Input } from "@/components/ui/input";
@@ -47,20 +40,15 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  getEmployeeRequests, 
-  getPolicySales, 
-  getClientReviews, 
-  getDailySummaries,
-  getWeeklySummary,
-  getTodayHours,
-  getThisWeekHours,
-  getEmployee,
-  logTimezoneInfo,
-  type Request 
-} from "@/lib/database";
+import { getEmployeeRequests } from "@/lib/util/employee-requests";
+import { getPolicySales } from "@/lib/util/policies";
+import { getClientReviews } from "@/lib/util/client-reviews";
+import { getTodayHours, getThisWeekHours, getPeriodSummary } from "@/lib/util/get";
+import { getEmployee } from "@/lib/util/employee";
+import { type Request } from "@/lib/util/employee-requests";
+import { EmployeeInfoDialog } from "@/components/dashboard/employee-info-dialog";
+import { User } from "lucide-react";
 import { dashboardEvents } from "@/lib/events";
-import { ChatInterface } from "./chat-interface";
 
 interface EmployeeDashboardProps {
   initialTab?: string;
@@ -69,19 +57,26 @@ interface EmployeeDashboardProps {
 }
 
 export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClockOutPrompt }: EmployeeDashboardProps) {
-  // ✅ ALL HOOKS MUST BE DECLARED FIRST - NO EARLY RETURNS BEFORE THIS POINT
   const { user, isLoaded, isSignedIn } = useUser();
+  const { toast } = useToast();
+
+  // UI State
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [employeeInfoOpen, setEmployeeInfoOpen] = useState(false);
+
+  // Time Tracking State
   const [isOnLunch, setIsOnLunch] = useState(false);
   const [isClockedIn, setIsClockedIn] = useState(false);
   const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
   const [timeStatus, setTimeStatus] = useState<"idle" | "working" | "lunch" | "overtime_pending">("idle");
+
+  // Data State
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
-  const [weeklyData, setWeeklyData] = useState<Array<{
+  const [basePeriodData, setBasePeriodData] = useState<Array<{
     date: string;
     dayName: string;
     hoursWorked: number;
@@ -112,20 +107,78 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     avgRating: 0,
     loading: true
   });
+
+  // Simple current time (only update every minute for date/time display)
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
-  const { toast } = useToast();
-  
   const employeeSettings = {
     maxHoursBeforeOvertime: 8,
     hourlyRate: 25
   };
 
-  // Current time update effect
+  const periodDays = 14;
+  const [periodStart, setPeriodStart] = useState(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const payrollReference = new Date('2025-08-01T00:00:00');
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const msPerPeriod = periodDays * msPerDay;
+    const timeSinceReference = today.getTime() - payrollReference.getTime();
+    const periodsSinceReference = Math.floor(timeSinceReference / msPerPeriod);
+    const currentPeriodStart = new Date(payrollReference.getTime() + periodsSinceReference * msPerPeriod);
+    return currentPeriodStart;
+  });
+
+  const periodEnd = useMemo(() => {
+    const end = new Date(periodStart);
+    end.setDate(end.getDate() + periodDays - 1);
+    return end;
+  }, [periodStart]);
+
+  // Compute periodData with live updates
+  const periodData = useMemo(() => {
+    if (!basePeriodData.length) return basePeriodData;
+
+    // Find today's entry
+    const todayIndex = basePeriodData.findIndex(d => d.isToday);
+    if (todayIndex === -1) return basePeriodData;
+
+    // If we're tracking time, use the current elapsed time for today
+    if (isClockedIn || timeStatus === "lunch" || timeStatus === "overtime_pending") {
+      const updated = [...basePeriodData];
+      updated[todayIndex] = {
+        ...updated[todayIndex],
+        hoursWorked: currentElapsedTime / 3600
+      };
+      return updated;
+    }
+
+    return basePeriodData;
+  }, [basePeriodData, currentElapsedTime, isClockedIn, timeStatus]);
+
+  const formatDate = (dateString: string) => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  };
+
+  const periodTitle = useMemo(() => {
+    const startStr = periodStart.toISOString().slice(0, 10);
+    const endStr = periodEnd.toISOString().slice(0, 10);
+    return `Payroll Period: ${formatDate(startStr)} - ${formatDate(endStr)}`;
+  }, [periodStart, periodEnd]);
+
+  const canGoNext = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return periodEnd < today;
+  }, [periodEnd]);
+
+  // Update current time every minute (not every second)
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000);
+    }, 60000); // Every minute
     return () => clearInterval(interval);
   }, []);
 
@@ -136,108 +189,61 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   }, [isLoaded, isSignedIn]);
 
-  // Load employee data effect
+  // Load initial data
   useEffect(() => {
     if (user?.id) {
       loadEmployeeData();
-    }
-  }, [user?.id]);
-
-  // Load weekly data effect
-  useEffect(() => {
-    if (user?.id) {
-      loadWeeklyData();
-    }
-  }, [user?.id]);
-
-  // Load requests effect
-  useEffect(() => {
-    if (user?.id) {
       loadRequests();
+      loadPerformanceData();
+      loadCurrentData();
+      loadPeriodData();
     }
   }, [user?.id]);
 
-  // Load performance data effect - ADDED THIS
   useEffect(() => {
     if (user?.id) {
-      loadPerformanceData();
+      loadPeriodData();
     }
-  }, [user?.id]);
+  }, [periodStart, user?.id]);
 
-  // Refresh data periodically effect (fallback for edge cases)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (user?.id) {
-        loadWeeklyData();
-        loadPerformanceData();
-      }
-    }, 900000); // Refresh every 15 minutes as fallback (chat updates are real-time via events)
-
-    return () => clearInterval(interval);
-  }, [user?.id]);
-
-  // Day change detection effect
-  useEffect(() => {
-    const checkDayChange = () => {
-      if (!user?.id) return; // Don't check if user is logging out
-      
-      const now = new Date();
-      // Get date in user's timezone
-      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const localDate = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
-      const currentDate = localDate.toDateString(); // Gets date in user's timezone
-      
-      // Store the last known date
-      const lastKnownDate = localStorage.getItem('last_known_date');
-      
-      if (lastKnownDate && lastKnownDate !== currentDate) {
-        logTimezoneInfo(); // Log timezone info for debugging
-        loadWeeklyData();
-        loadPerformanceData();
-        loadRequests();
-      }
-      
-      localStorage.setItem('last_known_date', currentDate);
-    };
-
-    // Check immediately
-    checkDayChange();
-    
-    // Then check every 20 minutes
-    const interval = setInterval(checkDayChange, 1200000);
-    
-    return () => clearInterval(interval);
-  }, [user?.id]);
-
-  // Event listeners for dashboard updates
+  // Single event listener for all dashboard updates
   useEffect(() => {
     const handlePolicySale = () => {
-      loadWeeklyData();
+      if (!user?.id) return;
+      loadCurrentData();
+      loadPeriodData();
       loadPerformanceData();
     };
 
     const handleClientReview = () => {
+      if (!user?.id) return;
       loadPerformanceData();
     };
 
     const handleRequestSubmitted = () => {
+      if (!user?.id) return;
       loadRequests();
     };
 
     const handleTimeLogged = () => {
-      loadWeeklyData();
+      if (!user?.id) return;
+      loadCurrentData();
+      loadPeriodData();
     };
 
     const handleDailySummary = () => {
-      loadWeeklyData();
+      if (!user?.id) return;
+      loadCurrentData();
+      loadPeriodData();
       loadPerformanceData();
     };
 
     const handleHighValuePolicyUpdate = () => {
-      loadPerformanceData(); // Update performance metrics when high-value policies are resolved/unresolved
+      if (!user?.id) return;
+      loadPerformanceData();
     };
 
-    // Subscribe to events and store cleanup functions
+    // Subscribe to events with proper typed handlers
     const cleanupFunctions = [
       dashboardEvents.on('policy_sale', handlePolicySale),
       dashboardEvents.on('client_review', handleClientReview),
@@ -247,33 +253,64 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       dashboardEvents.on('high_value_policy_updated', handleHighValuePolicyUpdate)
     ];
 
-    return () => {
-      // Call all cleanup functions
-      cleanupFunctions.forEach(cleanup => cleanup());
-    };
-  }, []);
+    return () => cleanupFunctions.forEach(cleanup => cleanup());
+  }, [user?.id]);
 
-  // Computed values
+  // Day change detection (simplified)
+  useEffect(() => {
+    const checkDayChange = () => {
+      if (!user?.id) return;
+
+      const currentDate = new Date().toDateString();
+      const lastKnownDate = localStorage.getItem('last_known_date');
+
+      if (lastKnownDate && lastKnownDate !== currentDate) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const payrollReference = new Date('2025-08-01T00:00:00');
+        const msPerDay = 24 * 60 * 60 * 1000;
+        const msPerPeriod = periodDays * msPerDay;
+        const timeSinceReference = today.getTime() - payrollReference.getTime();
+        const periodsSinceReference = Math.floor(timeSinceReference / msPerPeriod);
+        const newPeriodStart = new Date(payrollReference.getTime() + periodsSinceReference * msPerPeriod);
+
+        setPeriodStart(newPeriodStart);
+        loadCurrentData();
+        loadPeriodData();
+        loadPerformanceData();
+        loadRequests();
+      }
+
+      localStorage.setItem('last_known_date', currentDate);
+    };
+
+    checkDayChange();
+    const interval = setInterval(checkDayChange, 1200000); // 20 minutes
+
+    return () => clearInterval(interval);
+  }, [user?.id]);
+
+  // Memoized values
   const livePay = useMemo(() => {
     const totalHours = currentElapsedTime / 3600;
     const totalPay = totalHours * employeeSettings.hourlyRate;
-    
-    return {
-      totalHours,
-      totalPay
-    };
+
+    return { totalHours, totalPay };
   }, [currentElapsedTime, employeeSettings.hourlyRate]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter(request => {
       const matchesFilter = requestFilter === "all" || request.status === requestFilter;
       const matchesSearch = request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           request.description.toLowerCase().includes(searchTerm.toLowerCase());
+        request.description.toLowerCase().includes(searchTerm.toLowerCase());
       return matchesFilter && matchesSearch;
     });
   }, [requests, requestFilter, searchTerm]);
 
-  // Memoized callbacks (must be before early return)
+  // Simplified display time logic - let TimeTracker be the source of truth
+  const displayHours = currentElapsedTime / 3600;
+
+  // Callbacks for TimeTracker
   const handleTimeUpdate = useCallback((elapsedSeconds: number, status: string) => {
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
@@ -292,14 +329,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       onClockOut();
     }
 
-    // Generate and send clock-out question to parent (ask about their day)
+    // Simplified clock-out prompt
     if (onClockOutPrompt) {
+      const fallbackMessage = "How was your day? I'd love to hear about your accomplishments and how things went!";
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: 'CLOCK_OUT_PROMPT',
             userRole: 'employee',
@@ -307,17 +344,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
           }),
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          onClockOutPrompt(data.response);
-        } else {
-          // Fallback question
-          onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
-        }
+        const data = response.ok ? await response.json() : null;
+        onClockOutPrompt(data?.response || fallbackMessage);
       } catch (error) {
         console.error('Error getting clock out prompt:', error);
-        // Fallback question
-        onClockOutPrompt("How was your day? I'd love to hear about your accomplishments and how things went!");
+        onClockOutPrompt(fallbackMessage);
       }
     }
   }, [onClockOut, onClockOutPrompt, user?.id]);
@@ -327,34 +358,23 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     return <div>Loading...</div>;
   }
 
+  // Data loading functions
   const loadEmployeeData = async () => {
     if (!user?.id) return;
-    
+
     try {
       const employee = await getEmployee(user.id);
-      
-      if (employee) {
-        setEmployeeData({
-          name: employee.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Employee',
-          email: employee.email || user.emailAddresses[0]?.emailAddress || '',
-          department: employee.department || 'Sales',
-          position: employee.position || 'Insurance Agent',
-          loading: false
-        });
-      } else {
-        // Use Clerk user data as fallback - construct proper name
-        const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
-        setEmployeeData({
-          name: clerkName || 'Employee',
-          email: user.emailAddresses[0]?.emailAddress || '',
-          department: 'Sales',
-          position: 'Insurance Agent',
-          loading: false
-        });
-      }
+      const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+
+      setEmployeeData({
+        name: employee?.name || clerkName || 'Employee',
+        email: employee?.email || user.emailAddresses[0]?.emailAddress || '',
+        department: employee?.department || 'Sales',
+        position: employee?.position || 'Insurance Agent',
+        loading: false
+      });
     } catch (error) {
       console.error('Error loading employee data:', error);
-      // Use Clerk user data as fallback - construct proper name
       const clerkName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
       setEmployeeData({
         name: clerkName || 'Employee',
@@ -366,31 +386,39 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
-  const loadWeeklyData = async () => {
+  const loadCurrentData = async () => {
     if (!user?.id) return;
-    
+
     try {
-      const [todayHoursData, thisWeekHoursData, weeklyDataResult] = await Promise.all([
+      const [todayHoursData, thisWeekHoursData] = await Promise.all([
         getTodayHours(user.id),
-        getThisWeekHours(user.id),
-        getWeeklySummary(user.id)
+        getThisWeekHours(user.id)
       ]);
-      
+
       setTodayHours(todayHoursData);
       setThisWeekHours(thisWeekHoursData);
-      setWeeklyData(weeklyDataResult);
     } catch (error) {
-      console.error('Error loading weekly data:', error);
+      console.error('Error loading current data:', error);
+    }
+  };
+
+  const loadPeriodData = async () => {
+    if (!user?.id) return;
+
+    try {
+      const periodDataResult = await getPeriodSummary(user.id, periodStart.toISOString().slice(0, 10), periodDays);
+      setBasePeriodData(periodDataResult);
+    } catch (error) {
+      console.error('Error loading period data:', error);
     }
   };
 
   const loadPerformanceData = async () => {
     if (!user?.id) return;
-    
+
     try {
       setPerformanceData(prev => ({ ...prev, loading: true }));
-      
-      // Use Promise.allSettled to handle potential failures gracefully
+
       const results = await Promise.allSettled([
         getPolicySales(user.id),
         getClientReviews(user.id)
@@ -398,13 +426,13 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
       const policySales = results[0].status === 'fulfilled' ? results[0].value : [];
       const clientReviews = results[1].status === 'fulfilled' ? results[1].value : [];
-      
+
       const totalSales = policySales.reduce((sum, sale) => sum + sale.amount, 0);
       const totalReviews = clientReviews.length;
-      const avgRating = totalReviews > 0 
+      const avgRating = totalReviews > 0
         ? (clientReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews)
         : 0;
-      
+
       setPerformanceData({
         totalPolicies: policySales.length,
         totalSales,
@@ -418,39 +446,9 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
-
-
-  const formatTimeDisplay = (hours: number) => {
-    const wholeHours = Math.floor(hours);
-    const minutes = Math.round((hours - wholeHours) * 60);
-    
-    if (wholeHours === 0) {
-      return `${minutes}m`;
-    } else if (minutes === 0) {
-      return `${wholeHours}h`;
-    } else {
-      return `${wholeHours}h ${minutes}m`;
-    }
-  };
-
-  const getProgressPercentage = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    return Math.min((currentHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
-  };
-
-  const getProgressColor = () => {
-    const currentHours = isClockedIn ? currentElapsedTime / 3600 : todayHours;
-    if (currentHours >= employeeSettings.maxHoursBeforeOvertime) {
-      return 'bg-amber-500';
-    } else if (currentHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) {
-      return 'bg-orange-500';
-    }
-    return 'bg-[#005cb3]';
-  };
-
   const loadRequests = async () => {
     if (!user?.id) return;
-    
+
     setRequestsLoading(true);
     try {
       const requestsData = await getEmployeeRequests(user.id);
@@ -467,37 +465,37 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     }
   };
 
-  const handleLunchBreak = () => {
-    setIsOnLunch(!isOnLunch);
-    toast({
-      title: isOnLunch ? "Back from lunch" : "Lunch break started",
-      description: isOnLunch 
-        ? "Welcome back! Your time tracking has resumed." 
-        : "Enjoy your lunch! Time tracking is paused.",
-    });
+  // Helper functions
+  const formatTimeDisplay = (hours: number) => {
+    const wholeHours = Math.floor(hours);
+    const minutes = Math.round((hours - wholeHours) * 60);
+
+    if (wholeHours === 0) return `${minutes}m`;
+    if (minutes === 0) return `${wholeHours}h`;
+    return `${wholeHours}h ${minutes}m`;
+  };
+
+  const getProgressPercentage = () => {
+    return Math.min((displayHours / employeeSettings.maxHoursBeforeOvertime) * 100, 100);
+  };
+
+  const getProgressColor = () => {
+    if (displayHours >= employeeSettings.maxHoursBeforeOvertime) return 'bg-amber-500';
+    if (displayHours >= employeeSettings.maxHoursBeforeOvertime * 0.8) return 'bg-orange-500';
+    return 'bg-[#005cb3]';
   };
 
   const getMaxHours = () => {
-    const maxDailyHours = Math.max(...weeklyData.map(day => day.hoursWorked));
-    // Use a dynamic scale: if max daily hours is less than 4, scale to 8 hours for better visualization
-    // Otherwise use the actual max hours or 8 hours, whichever is higher
-    if (maxDailyHours === 0) return 8; // Default scale when no hours worked
-    if (maxDailyHours < 4) return 8; // Use 8-hour scale for small values
-    return Math.max(maxDailyHours, 8); // Use actual max or 8 hours minimum
-  };
-
-  const formatDate = (dateString: string) => {
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    return `${date.getMonth() + 1}/${date.getDate()}`;
+    if (!periodData.length) return 8;
+    const maxDailyHours = Math.max(...periodData.map(day => day.hoursWorked));
+    return Math.max(maxDailyHours, 8);
   };
 
   const getUserName = () => {
     if (employeeData.name && employeeData.name !== 'Employee') {
       return employeeData.name.split(' ')[0];
     }
-    if (user?.firstName) return user.firstName;
-    return 'there';
+    return user?.firstName || 'there';
   };
 
   const getCurrentDate = () => currentTime.toLocaleDateString('en-US', {
@@ -512,15 +510,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     minute: '2-digit'
   });
 
-  // Helper to get user's first name for personalized welcome
-  const getFirstName = () => {
-    if (employeeData.name && employeeData.name !== 'Employee') {
-      return employeeData.name.split(' ')[0];
-    }
-    if (user?.firstName) return user.firstName;
-    return 'there';
-  };
-
   return (
     <div className="space-y-6">
       {/* Header with Live Date/Time */}
@@ -533,7 +522,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
             </p>
           )}
         </div>
-        <div className="flex flex-col items-end text-right">
+        <div className="flex flex-col items-end text-right gap-2">
           <div className="flex items-center gap-2 text-lg font-semibold">
             <Calendar className="h-5 w-5 text-[#005cb3]" />
             {getCurrentDate()}
@@ -545,10 +534,24 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         </div>
       </div>
 
-      {/* Performance Metrics - Clean Admin Style */}
-      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+      {/* Performance Metrics */}
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-4">
+        {/* My Info Card */}
+        <div className="bg-gradient-to-br from-[#005cb3]/10 to-[#005cb3]/5 dark:from-[#005cb3]/20 dark:to-[#005cb3]/10 rounded-lg border-2 border-[#005cb3]/20 dark:border-[#005cb3]/30 p-4 hover:shadow-md transition-all duration-200 h-20">
+          <div className="flex items-center justify-center h-full">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEmployeeInfoOpen(true)}
+              className="flex items-center gap-2 h-full w-full justify-center text-[#005cb3] dark:text-[#005cb3] hover:bg-white/50 dark:hover:bg-white/10 font-medium transition-all duration-200"
+            >
+              <User className="h-5 w-5" />
+              My Info
+            </Button>
+          </div>
+        </div>
+
         {performanceData.loading ? (
-          // Loading state
           Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="bg-card rounded-lg border p-4 h-20">
               <div className="animate-pulse flex items-center justify-between h-full">
@@ -562,7 +565,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
           ))
         ) : (
           <>
-            {/* Policies Sold */}
             <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
               <div className="flex items-center justify-between h-full">
                 <div className="flex flex-col justify-center min-w-0 flex-1">
@@ -575,7 +577,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               </div>
             </div>
 
-            {/* Sales Generated */}
             <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
               <div className="flex items-center justify-between h-full">
                 <div className="flex flex-col justify-center min-w-0 flex-1">
@@ -588,7 +589,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               </div>
             </div>
 
-            {/* Client Reviews */}
             <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
               <div className="flex items-center justify-between h-full">
                 <div className="flex flex-col justify-center min-w-0 flex-1">
@@ -614,17 +614,17 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       {/* Time Tracking Section */}
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
         <div className="flex flex-col sm:flex-row gap-2 w-full">
-          <TimeTracker 
+          <TimeTracker
             onClockInChange={handleClockInChange}
             onLunchChange={handleLunchChange}
             onTimeUpdate={handleTimeUpdate}
             maxHoursBeforeOvertime={employeeSettings.maxHoursBeforeOvertime}
-            hourlyRate={employeeSettings.hourlyRate}
             onClockOut={handleTimeTrackerClockOut}
           />
         </div>
       </div>
 
+      {/* Today's Hours Card */}
       <Card className="hover:shadow-md transition-shadow">
         <CardHeader>
           <CardTitle>Today&apos;s Hours</CardTitle>
@@ -635,29 +635,26 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               <div className="flex justify-between mb-2">
                 <span className="text-sm font-medium">Hours Worked</span>
                 <span className="text-sm">
-                  {isClockedIn
-                    ? formatTimeDisplay(currentElapsedTime / 3600)
-                    : formatTimeDisplay(todayHours)
-                  } / {employeeSettings.maxHoursBeforeOvertime}h 00m
+                  {formatTimeDisplay(displayHours)} / {employeeSettings.maxHoursBeforeOvertime}h 00m
                 </span>
               </div>
-              <Progress 
-                value={getProgressPercentage()} 
+              <Progress
+                value={getProgressPercentage()}
                 className={`[&>div]:${getProgressColor()}`}
               />
               <div className="flex justify-between items-center mt-2">
                 <p className="text-xs text-muted-foreground">
-                  {timeStatus === "idle" 
+                  {timeStatus === "idle"
                     ? "Clock in to start tracking your hours"
                     : timeStatus === "lunch"
-                    ? "On lunch break - timer paused"
-                    : timeStatus === "overtime_pending"
-                    ? "Overtime approval pending"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime
-                    ? "Tracking your extended hours"
-                    : (isClockedIn ? (currentElapsedTime / 3600) : todayHours) > employeeSettings.maxHoursBeforeOvertime * 0.8
-                    ? "Approaching your daily target hours"
-                    : "Tracking your work hours"
+                      ? "On lunch break - timer paused"
+                      : timeStatus === "overtime_pending"
+                        ? "Overtime approval pending"
+                        : displayHours > employeeSettings.maxHoursBeforeOvertime
+                          ? "Tracking your extended hours"
+                          : displayHours > employeeSettings.maxHoursBeforeOvertime * 0.8
+                            ? "Approaching your daily target hours"
+                            : "Tracking your work hours"
                   }
                 </p>
                 {timeStatus !== "idle" && (
@@ -666,12 +663,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                   </div>
                 )}
               </div>
-
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Requests Section */}
       <Card className="hover:shadow-md transition-shadow">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -679,7 +676,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
               <CardTitle>Requests & Communication</CardTitle>
               <CardDescription>Manage your requests and view approval status</CardDescription>
             </div>
-            <Button 
+            <Button
               onClick={() => setRequestDialogOpen(true)}
               className="bg-[#005cb3] hover:bg-[#004a96]"
             >
@@ -729,14 +726,14 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                             {new Date(request.request_date).toLocaleDateString()}
                           </p>
                         </div>
-                        <Badge 
-                          variant="outline" 
+                        <Badge
+                          variant="outline"
                           className={
                             request.status === "approved"
                               ? "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]"
                               : request.status === "pending"
-                              ? "bg-secondary/50 text-muted-foreground"
-                              : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                ? "bg-secondary/50 text-muted-foreground"
+                                : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
                           }
                         >
                           {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
@@ -763,67 +760,81 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         </CardContent>
       </Card>
 
+      {/* Biweekly Performance Chart */}
       <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const newStart = new Date(periodStart);
+                newStart.setDate(newStart.getDate() - periodDays);
+                setPeriodStart(newStart);
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-[#005cb3]" />
-              <CardTitle>This Week&apos;s Performance</CardTitle>
+              <CardTitle>{periodTitle}</CardTitle>
             </div>
-          </CardHeader>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!canGoNext}
+              onClick={() => {
+                const newStart = new Date(periodStart);
+                newStart.setDate(newStart.getDate() + periodDays);
+                setPeriodStart(newStart);
+              }}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Hours Worked by Day</h4>
             <div className="text-sm text-muted-foreground">
-              {formatTimeDisplay(weeklyData.reduce((total, day) => total + day.hoursWorked, 0))} total
+              {formatTimeDisplay(periodData.reduce((total, day) => total + day.hoursWorked, 0))} total
             </div>
           </div>
-          
-          {/* Spacing to push bar chart down */}
+
           <div className="py-4"></div>
-          
-          {/* Vertical Bar Chart Container */}
+
           <div className="bg-muted/10 rounded-lg p-4">
             <div className="flex items-end justify-between gap-2 pt-8" style={{ height: '140px' }}>
-              {weeklyData.map((day) => {
+              {periodData.map((day) => {
                 const maxHours = getMaxHours();
-                // Calculate bar height in pixels (max 100px for the chart area)
                 const barHeight = maxHours > 0 ? Math.max((day.hoursWorked / maxHours) * 100, day.hoursWorked > 0 ? 3 : 1) : 1;
                 const isToday = day.isToday;
-                
-                // Format hours and minutes for display
                 const timeDisplay = formatTimeDisplay(day.hoursWorked);
-                
+
                 return (
                   <div key={day.date} className="flex flex-col items-center gap-2 flex-1">
-                    {/* Sales indicator */}
                     {day.policiesSold > 0 && (
                       <div className="text-xs text-[#005cb3] font-medium mb-1">
                         {day.policiesSold} sale{day.policiesSold !== 1 ? 's' : ''}
                       </div>
                     )}
-                    
-                    {/* Time label above bar */}
+
                     <div className="text-xs font-medium text-center min-h-[20px] flex items-end">
                       {timeDisplay}
                     </div>
-                    
-                    {/* Vertical Bar with fixed pixel height */}
-                    <div className="relative w-8 flex flex-col justify-end" style={{ height: '100px' }}>
-                      <div 
-                        className={`w-full rounded-t-sm transition-all duration-500 ${
-                          isToday 
-                            ? 'bg-[#005cb3]' 
-                            : day.hoursWorked > 0 
-                              ? 'bg-[#005cb3]/70' 
-                              : 'bg-muted-foreground/30'
-                        }`}
-                        style={{ 
-                          height: `${barHeight}px`
-                        }}
+
+                    <div className="relative w-6 flex flex-col justify-end" style={{ height: '100px' }}>
+                      <div
+                        className={`w-full rounded-t-sm transition-all duration-500 ${isToday
+                          ? 'bg-[#005cb3]'
+                          : day.hoursWorked > 0
+                            ? 'bg-[#005cb3]/70'
+                            : 'bg-muted-foreground/30'
+                          }`}
+                        style={{ height: `${barHeight}px` }}
                       />
                     </div>
-                    
-                    {/* Day label and date (X-axis) */}
+
                     <div className="text-center">
                       <div className="text-xs text-muted-foreground font-medium">
                         {day.dayName.slice(0, 3).toUpperCase()}
@@ -832,8 +843,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                         {formatDate(day.date)}
                       </div>
                     </div>
-                    
-                    {/* Today indicator */}
+
                     {isToday && (
                       <div className="w-2 h-2 bg-[#005cb3] rounded-full"></div>
                     )}
@@ -845,19 +855,18 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         </CardContent>
       </Card>
 
-      <RequestDialog 
-        open={requestDialogOpen} 
+      {/* Dialogs */}
+      <RequestDialog
+        open={requestDialogOpen}
         onOpenChange={(open) => {
           setRequestDialogOpen(open);
           if (!open) {
-            // Refresh requests when dialog closes (after successful submission)
             setTimeout(() => {
               loadRequests();
             }, 100);
           }
         }}
         onRequestSubmitted={() => {
-          // Refresh requests immediately when a request is submitted
           loadRequests();
         }}
       />
@@ -869,7 +878,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         employeeEmail={employeeData.email}
       />
 
-
+      {/* Employee Info Dialog */}
+      <EmployeeInfoDialog
+        open={employeeInfoOpen}
+        onOpenChange={setEmployeeInfoOpen}
+      />
     </div>
   );
 }
