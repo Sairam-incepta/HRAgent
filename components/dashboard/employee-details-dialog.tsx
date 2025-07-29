@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key, ArrowLeft, ArrowRight } from "lucide-react";
+import { Clock, BarChart, FileText, TrendingUp, DollarSign, Key, ArrowLeft, ArrowRight, Edit } from "lucide-react";
 import { getPolicySales } from "@/lib/util/policies";
 import { getClientReviews } from "@/lib/util/client-reviews";
 import { getEmployeeBonus } from "@/lib/util/employee-bonus";
@@ -16,6 +16,7 @@ import { getTimeLogsForDay } from "@/lib/util/time-logs";
 import { getDailySummaries } from "@/lib/util/daily-summaries";
 import { calculateIndividualPolicyBonus } from "@/lib/util/payroll";
 import { PasswordResetDialog } from "./password-reset-dialog";
+import { EditTimeLogsDialog } from "./edit-time-logs-dialog";
 import { dashboardEvents } from "@/lib/events";
 
 interface EmployeeDetailsDialogProps {
@@ -54,6 +55,7 @@ export function EmployeeDetailsDialog({
   const [dailySummaries, setDailySummaries] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
+  const [editTimeLogsOpen, setEditTimeLogsOpen] = useState(false);
   const [clockTimes, setClockTimes] = useState<Record<string, {
     firstIn: string | null;
     lastOut: string | null;
@@ -130,7 +132,10 @@ export function EmployeeDetailsDialog({
     // Subscribe to events and store cleanup functions
     const cleanupFunctions = [
       dashboardEvents.on('client_review', handleClientReviewUpdate),
-      dashboardEvents.on('policy_sale', handlePolicySaleUpdate)
+      dashboardEvents.on('policy_sale', handlePolicySaleUpdate),
+      dashboardEvents.on('time_logged', () => {
+        loadWeekData();
+      })
     ];
 
     return () => {
@@ -327,15 +332,26 @@ export function EmployeeDetailsDialog({
                   </Badge>
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPasswordResetOpen(true)}
-                className="flex items-center gap-2"
-              >
-                <Key className="h-4 w-4" />
-                Reset Password
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPasswordResetOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Key className="h-4 w-4" />
+                  Reset Password
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditTimeLogsOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit Time Logs
+                </Button>
+              </div>
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
@@ -552,8 +568,6 @@ export function EmployeeDetailsDialog({
                               );
                             })()}
                           </div>
-
-
                         </div>
                       </div>
                     )}
@@ -953,6 +967,13 @@ export function EmployeeDetailsDialog({
           employeeId={employee.clerk_user_id}
           employeeName={employee.name}
           employeeEmail={employee.email}
+        />
+      )}
+      {editTimeLogsOpen && (
+        <EditTimeLogsDialog
+          open={editTimeLogsOpen}
+          onOpenChange={setEditTimeLogsOpen}
+          employee={employee}
         />
       )}
     </>

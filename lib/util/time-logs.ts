@@ -31,14 +31,42 @@ export const createTimeLog = async ({ employeeId, clockIn }: { employeeId: strin
   }
 };
 
-export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockOut: Date }): Promise<{ data: any; error: any }> => {
+export const updateTimeLog = async ({ 
+  logId, 
+  clockOut, 
+  clockIn,
+  breakStart, 
+  breakEnd 
+}: { 
+  logId: string;
+  clockOut: Date;
+  clockIn?: Date;
+  breakStart?: Date;
+  breakEnd?: Date;
+}): Promise<{ data: any; error: any }> => {
   try {
+    // Build the update object dynamically
+    const updateData: any = {
+      clock_out: clockOut.toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Add optional fields if provided
+    if (clockIn) {
+      updateData.clock_in = clockIn.toISOString();
+    }
+    
+    if (breakStart) {
+      updateData.break_start = breakStart.toISOString();
+    }
+    
+    if (breakEnd) {
+      updateData.break_end = breakEnd.toISOString();
+    }
+
     const { data, error } = await supabase
       .from('time_logs')
-      .update({
-        clock_out: clockOut.toISOString(),
-        updated_at: new Date().toISOString() 
-      })
+      .update(updateData)
       .eq('id', logId)
       .select()
       .single();
@@ -50,12 +78,11 @@ export const updateTimeLog = async ({ logId, clockOut }: { logId: string, clockO
 
     // Notify dashboard to refresh
     notifyTimeLogged();
-
     return { data, error: null };
   } catch (error) {
     console.error('Exception in updateTimeLog:', error);
-    return { 
-      data: null, 
+    return {
+      data: null,
       error: error instanceof Error ? error : new Error('Unknown error occurred')
     };
   }

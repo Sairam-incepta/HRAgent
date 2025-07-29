@@ -73,7 +73,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
 
     // FIXED: Use the same period calculation as the working payroll dialog
     const calculatePeriodDates = (periodOffset: number): { startDate: Date; endDate: Date } => {
-      const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
+      const referenceDate = new Date('2025-01-04'); // Friday, January 3, 2025 as reference
       const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
       const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
 
@@ -217,7 +217,7 @@ export const getPayrollPeriods = async (): Promise<PayrollPeriod[]> => {
     };
 
     // Calculate current period offset based on the working dialog logic
-    const referenceDate = new Date('2025-01-06');
+    const referenceDate = new Date('2025-01-04');
     const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
     const currentPeriodOffset = Math.floor(daysSinceReference / 14);
 
@@ -833,7 +833,7 @@ export const getEmployeePayrollHistory = async (employeeId: string): Promise<Arr
     const now = new Date();
 
     // Use the same biweekly calculation as the main payroll system
-    const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
+    const referenceDate = new Date('2025-01-04'); // Monday, January 6, 2025 as reference
     const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
     const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
 
