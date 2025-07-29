@@ -11,6 +11,7 @@ import { Calendar, Clock, Save, X, Edit3 } from "lucide-react";
 import { getTimeLogsForWeek, updateTimeLog } from "@/lib/util/time-logs";
 import { getLocalDateString } from "@/lib/util/timezone";
 import { useToast } from "@/hooks/use-toast";
+import { dashboardEvents } from "@/lib/events";
 
 interface TimeLog {
   id: string;
@@ -52,24 +53,39 @@ export function EditTimeLogsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<EditingLog | null>(null);
+  const [dateRange, setDateRange] = useState<{
+    startDate: string;
+    endDate: string;
+  }>({
+    startDate: getLocalDateString(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)), // Default: 2 weeks ago
+    endDate: getLocalDateString(new Date()) // Default: today
+  });
   const { toast } = useToast();
 
   useEffect(() => {
     if (open && employee?.clerk_user_id) {
       loadTimeLogs();
     }
-  }, [open, employee?.clerk_user_id]);
+  }, [open, employee?.clerk_user_id, dateRange]);
+
+  // Listen for time log updates
+  useEffect(() => {
+    if (!open) return;
+
+    const handleTimeLogUpdate = () => {
+      loadTimeLogs(); // Refresh the edit dialog data
+    };
+
+    const cleanup = dashboardEvents.on('time_logged', handleTimeLogUpdate);
+    return cleanup;
+  }, [open]);
 
   const loadTimeLogs = async () => {
     if (!employee?.clerk_user_id) return;
 
     setLoading(true);
     try {
-      // Get time logs for the past 2 weeks
-      const endDate = getLocalDateString(new Date());
-      const startDate = getLocalDateString(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
-      
-      const logs = await getTimeLogsForWeek(employee.clerk_user_id, startDate, endDate);
+      const logs = await getTimeLogsForWeek(employee.clerk_user_id, dateRange.startDate, dateRange.endDate);
       
       // Sort by date and clock_in in descending order (most recent first)
       const sortedLogs = logs.sort((a, b) => {
@@ -260,6 +276,24 @@ export function EditTimeLogsDialog({
             <Clock className="h-5 w-5" />
             Edit Time Logs - {employee.name}
           </DialogTitle>
+          <div className="flex gap-2 items-center mt-2">
+            <Label htmlFor="start-date" className="text-sm">From:</Label>
+            <Input
+              id="start-date"
+              type="date"
+              value={dateRange.startDate}
+              onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+              className="w-auto"
+            />
+            <Label htmlFor="end-date" className="text-sm">To:</Label>
+            <Input
+              id="end-date"
+              type="date"
+              value={dateRange.endDate}
+              onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+              className="w-auto"
+            />
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -408,7 +442,7 @@ export function EditTimeLogsDialog({
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No time logs found for the past 2 weeks.</p>
+              <p>No time logs found for the selected date range.</p>
             </div>
           )}
         </div>
