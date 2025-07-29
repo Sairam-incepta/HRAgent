@@ -74,7 +74,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   // Data State
   const [requests, setRequests] = useState<Request[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
-  const [periodData, setPeriodData] = useState<Array<{
+  const [basePeriodData, setBasePeriodData] = useState<Array<{
     date: string;
     dayName: string;
     hoursWorked: number;
@@ -132,6 +132,27 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
     end.setDate(end.getDate() + periodDays - 1);
     return end;
   }, [periodStart]);
+
+  // Compute periodData with live updates
+  const periodData = useMemo(() => {
+    if (!basePeriodData.length) return basePeriodData;
+    
+    // Find today's entry
+    const todayIndex = basePeriodData.findIndex(d => d.isToday);
+    if (todayIndex === -1) return basePeriodData;
+    
+    // If we're tracking time, use the current elapsed time for today
+    if (isClockedIn || timeStatus === "lunch" || timeStatus === "overtime_pending") {
+      const updated = [...basePeriodData];
+      updated[todayIndex] = {
+        ...updated[todayIndex],
+        hoursWorked: currentElapsedTime / 3600
+      };
+      return updated;
+    }
+    
+    return basePeriodData;
+  }, [basePeriodData, currentElapsedTime, isClockedIn, timeStatus]);
 
   const formatDate = (dateString: string) => {
     const [year, month, day] = dateString.split('-').map(Number);
@@ -291,21 +312,6 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const handleTimeUpdate = useCallback((elapsedSeconds: number, status: string) => {
     setCurrentElapsedTime(elapsedSeconds);
     setTimeStatus(status as any);
-
-    // Simple real-time update for today's bar chart
-    setPeriodData(prev => {
-      if (!prev?.length) return prev;
-
-      const todayIndex = prev.findIndex(d => d.isToday);
-      if (todayIndex === -1) return prev;
-
-      const newHours = parseFloat((elapsedSeconds / 3600).toFixed(2));
-      if (prev[todayIndex].hoursWorked === newHours) return prev;
-
-      const updated = [...prev];
-      updated[todayIndex] = { ...updated[todayIndex], hoursWorked: newHours };
-      return updated;
-    });
   }, []);
 
   const handleClockInChange = useCallback((clockedIn: boolean) => {
@@ -399,7 +405,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
 
     try {
       const periodDataResult = await getPeriodSummary(user.id, periodStart.toISOString().slice(0, 10), periodDays);
-      setPeriodData(periodDataResult);
+      setBasePeriodData(periodDataResult);
     } catch (error) {
       console.error('Error loading period data:', error);
     }

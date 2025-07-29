@@ -83,12 +83,20 @@ export function TimeTracker({
         activeLog = log;
         activeClockIn = new Date(log.clock_in).getTime();
         
+        // Add the current session time to totalWorked
+        const currentSessionTime = Math.floor((Date.now() - activeClockIn) / 1000);
+        totalWorked += currentSessionTime;
+        
         if (log.break_start && !log.break_end) {
           activeBreakStart = new Date(log.break_start).getTime();
         }
       } else if (log.clock_out && log.break_start && !log.break_end) {
         activeLog = log;
         activeBreakStart = new Date(log.break_start).getTime();
+        
+        // Add the current break time to totalBreak
+        const currentBreakTime = Math.floor((Date.now() - activeBreakStart) / 1000);
+        totalBreak += currentBreakTime;
       }
 
       if (log.clock_in && log.clock_out) {
@@ -112,13 +120,11 @@ export function TimeTracker({
         totalWorked += Math.max(0, workTime);
       }
 
-      if (log.break_start && log.break_end) {
+      if (log.break_start && log.break_end && !(log.clock_in && log.clock_out)) {
         const breakStart = new Date(log.break_start).getTime();
         const breakEnd = new Date(log.break_end).getTime();
         const breakTime = (breakEnd - breakStart) / 1000;
-        if (!(log.clock_in && log.clock_out)) {
-          totalBreak += breakTime;
-        }
+        totalBreak += breakTime;
       }
     }
 
@@ -175,24 +181,28 @@ export function TimeTracker({
           status: "idle"
         };
       } else if (activeBreakStart && !activeClockIn) {
+        // On break - subtract current break time from totalBreak since it was already added
+        const currentBreakTime = Math.floor((Date.now() - activeBreakStart) / 1000);
         newSession = {
           activeLogId: activeLog.id,
           clockInTime: null,
           breakStartTime: activeBreakStart,
           totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak,
+          totalBreakToday: totalBreak - currentBreakTime, // Subtract to avoid double counting
           status: "lunch"
         };
       } else if (activeClockIn) {
-        const currentTotal = totalWorked + Math.floor((Date.now() - activeClockIn) / 1000);
-        const hoursWorked = currentTotal / 3600;
+        // Working - subtract current session time from totalWorked since it was already added
+        const currentSessionTime = Math.floor((Date.now() - activeClockIn) / 1000);
+        const adjustedTotalWorked = totalWorked - currentSessionTime; // Subtract to avoid double counting
+        const hoursWorked = totalWorked / 3600; // Use the full total for overtime check
         const status: TimeStatus = hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
         
         newSession = {
           activeLogId: activeLog.id,
           clockInTime: activeClockIn,
           breakStartTime: activeBreakStart,
-          totalWorkedToday: totalWorked,
+          totalWorkedToday: adjustedTotalWorked,
           totalBreakToday: totalBreak,
           status: activeBreakStart ? "lunch" : status
         };
@@ -217,8 +227,11 @@ export function TimeTracker({
           newSession.clockInTime !== prevSession.clockInTime ||
           newSession.breakStartTime !== prevSession.breakStartTime
         ) {
-          onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
-          onLunchChange?.(newSession.status === "lunch");
+          // Schedule callbacks to run after render
+          Promise.resolve().then(() => {
+            onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
+            onLunchChange?.(newSession.status === "lunch");
+          });
           return newSession;
         }
         return prevSession;
@@ -285,6 +298,10 @@ export function TimeTracker({
     }
 
     if (session.status !== "idle") {
+      // Call onTimeUpdate immediately when status changes
+      const { currentWorked } = getCurrentTimes();
+      onTimeUpdate?.(currentWorked, session.status);
+
       timerRef.current = setInterval(() => {
         const { currentWorked, currentBreak } = getCurrentTimes();
         
@@ -308,6 +325,7 @@ export function TimeTracker({
         }
       }, 1000);
     } else {
+      // Call onTimeUpdate when idle
       onTimeUpdate?.(session.totalWorkedToday, session.status);
     }
 
