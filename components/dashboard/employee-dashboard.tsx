@@ -46,7 +46,8 @@ import { getClientReviews } from "@/lib/util/client-reviews";
 import { getTodayHours, getThisWeekHours, getPeriodSummary } from "@/lib/util/get";
 import { getEmployee } from "@/lib/util/employee";
 import { type Request } from "@/lib/util/employee-requests";
-
+import { EmployeeInfoDialog } from "@/components/dashboard/employee-info-dialog";
+import { User } from "lucide-react";
 import { dashboardEvents } from "@/lib/events";
 
 interface EmployeeDashboardProps {
@@ -64,6 +65,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [requestFilter, setRequestFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [employeeInfoOpen, setEmployeeInfoOpen] = useState(false);
 
   // Time Tracking State
   const [isOnLunch, setIsOnLunch] = useState(false);
@@ -136,11 +138,11 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
   // Compute periodData with live updates
   const periodData = useMemo(() => {
     if (!basePeriodData.length) return basePeriodData;
-    
+
     // Find today's entry
     const todayIndex = basePeriodData.findIndex(d => d.isToday);
     if (todayIndex === -1) return basePeriodData;
-    
+
     // If we're tracking time, use the current elapsed time for today
     if (isClockedIn || timeStatus === "lunch" || timeStatus === "overtime_pending") {
       const updated = [...basePeriodData];
@@ -150,7 +152,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       };
       return updated;
     }
-    
+
     return basePeriodData;
   }, [basePeriodData, currentElapsedTime, isClockedIn, timeStatus]);
 
@@ -520,7 +522,7 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
             </p>
           )}
         </div>
-        <div className="flex flex-col items-end text-right">
+        <div className="flex flex-col items-end text-right gap-2">
           <div className="flex items-center gap-2 text-lg font-semibold">
             <Calendar className="h-5 w-5 text-[#005cb3]" />
             {getCurrentDate()}
@@ -533,7 +535,22 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
       </div>
 
       {/* Performance Metrics */}
-      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-4">
+        {/* My Info Card */}
+        <div className="bg-gradient-to-br from-[#005cb3]/10 to-[#005cb3]/5 dark:from-[#005cb3]/20 dark:to-[#005cb3]/10 rounded-lg border-2 border-[#005cb3]/20 dark:border-[#005cb3]/30 p-4 hover:shadow-md transition-all duration-200 h-20">
+          <div className="flex items-center justify-center h-full">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEmployeeInfoOpen(true)}
+              className="flex items-center gap-2 h-full w-full justify-center text-[#005cb3] dark:text-[#005cb3] hover:bg-white/50 dark:hover:bg-white/10 font-medium transition-all duration-200"
+            >
+              <User className="h-5 w-5" />
+              My Info
+            </Button>
+          </div>
+        </div>
+
         {performanceData.loading ? (
           Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="bg-card rounded-lg border p-4 h-20">
@@ -809,10 +826,10 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
                     <div className="relative w-6 flex flex-col justify-end" style={{ height: '100px' }}>
                       <div
                         className={`w-full rounded-t-sm transition-all duration-500 ${isToday
-                            ? 'bg-[#005cb3]'
-                            : day.hoursWorked > 0
-                              ? 'bg-[#005cb3]/70'
-                              : 'bg-muted-foreground/30'
+                          ? 'bg-[#005cb3]'
+                          : day.hoursWorked > 0
+                            ? 'bg-[#005cb3]/70'
+                            : 'bg-muted-foreground/30'
                           }`}
                         style={{ height: `${barHeight}px` }}
                       />
@@ -859,6 +876,12 @@ export function EmployeeDashboard({ initialTab = "overview", onClockOut, onClock
         onOpenChange={setSettingsDialogOpen}
         employeeName={employeeData.name}
         employeeEmail={employeeData.email}
+      />
+
+      {/* Employee Info Dialog */}
+      <EmployeeInfoDialog
+        open={employeeInfoOpen}
+        onOpenChange={setEmployeeInfoOpen}
       />
     </div>
   );

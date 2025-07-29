@@ -63,6 +63,81 @@ export const addPolicySale = async (sale: {
   }
 };
 
+export const editPolicySale = async (policyId: string, updates: {
+  policyNumber: string;
+  clientName: string;
+  policyType: string;
+  amount: number;
+  brokerFee: number;
+  saleDate: Date;
+  crossSoldType?: string;
+  crossSoldTo?: string;
+  clientDescription?: string;
+  isCrossSoldPolicy: boolean;
+}): Promise<PolicySale | null> => {
+  try {
+    // First, get the current policy to get the employee_id and old bonus
+    const { data: currentPolicy, error: fetchError } = await supabase
+      .from('policy_sales')
+      .select('employee_id, bonus')
+      .eq('id', policyId)
+      .single();
+
+    if (fetchError || !currentPolicy) {
+      console.error('Error fetching current policy:', fetchError);
+      throw new Error('Policy not found');
+    }
+
+    // Calculate new bonus
+    const newBonus = calculateBonus(updates.brokerFee, updates.isCrossSoldPolicy);
+    const bonusDifference = newBonus - (currentPolicy.bonus || 0);
+
+    // Update the policy
+    const { data, error } = await supabase
+      .from('policy_sales')
+      .update({
+        policy_number: updates.policyNumber,
+        client_name: updates.clientName,
+        policy_type: updates.policyType,
+        amount: updates.amount,
+        broker_fee: updates.brokerFee,
+        sale_date: updates.saleDate.toISOString(),
+        cross_sold_type: updates.crossSoldType,
+        cross_sold_to: updates.crossSoldTo,
+        client_description: updates.clientDescription,
+        is_cross_sold_policy: updates.isCrossSoldPolicy,
+        bonus: newBonus,
+        created_at: new Date().toISOString()
+      })
+      .eq('id', policyId)
+      .select()
+      .single();
+
+    if (error) {
+      // Handle duplicate policy number specifically
+      if (error.code === '23505' && error.message.includes('policy_number')) {
+        throw new Error(`Policy number ${updates.policyNumber} already exists. Please use a different policy number.`);
+      }
+      
+      console.error('Error updating policy sale:', error);
+      throw new Error('Failed to update policy sale');
+    }
+
+    // Update employee bonus if there's a difference
+    if (bonusDifference !== 0) {
+      await updateEmployeeBonus(currentPolicy.employee_id, bonusDifference);
+    }
+
+    // Notify dashboard to refresh
+    notifyPolicySale(currentPolicy.employee_id);
+
+    return data;
+  } catch (error) {
+    console.error('Exception in editPolicySale:', error);
+    throw error;
+  }
+};
+
 export const getPolicySales = async (employeeId?: string): Promise<PolicySale[]> => {
   let query = supabase.from('policy_sales').select('*');
   
