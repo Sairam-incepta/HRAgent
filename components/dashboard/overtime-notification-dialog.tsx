@@ -92,6 +92,10 @@ export function OvertimeNotificationDialog({
     onOpenChange(false);
   };
 
+  const handleContinueWorking = () => {
+    onOpenChange(false);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
@@ -119,7 +123,7 @@ export function OvertimeNotificationDialog({
 
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              You have two options:
+              You have three options:
             </p>
             
             <div className="space-y-3">
@@ -163,6 +167,22 @@ export function OvertimeNotificationDialog({
                   disabled={isSubmitting}
                 >
                   Clock Out Now
+                </Button>
+              </div>
+
+              <div className="border rounded-lg p-3">
+                <h4 className="font-medium mb-2">Option 3: Continue Working</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Continue working without requesting overtime approval right now. You can submit a request later if needed.
+                </p>
+                
+                <Button 
+                  onClick={handleContinueWorking}
+                  variant="outline"
+                  className="w-full"
+                  disabled={isSubmitting}
+                >
+                  Continue Working (I'll decide later)
                 </Button>
               </div>
             </div>

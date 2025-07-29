@@ -60,7 +60,7 @@ export function AdminStats() {
       
       // Calculate current biweekly period dates
       const currentDate = new Date();
-      const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025
+      const referenceDate = new Date('2025-01-04'); // Friday, January 3, 2025
       const daysSinceReference = Math.floor((currentDate.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
       const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
       

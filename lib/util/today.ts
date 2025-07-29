@@ -53,33 +53,53 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
   try {
     // Get today's date in local timezone
     const today = getLocalDateString();
-    
+
     // Get all time logs for today
     const timeLogs = await getTimeLogsForDay(employeeId, today);
-    
+
     let totalHours = 0;
     let clockedIn = false;
-    
+
     // Calculate total hours worked and check if currently clocked in
     timeLogs.forEach(log => {
-      if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
-        // Completed session with lunch deduction
+      if (log.clock_in && log.clock_out) {
+        // Completed session
         const clockInTime = new Date(log.clock_in);
         const clockOutTime = new Date(log.clock_out);
-        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-      } else if (log.clock_in && !log.clock_out && !log.break_start && !log.break_end) {
-        // Currently clocked in - calculate up to now with lunch deduction
+        let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+        // Subtract break time if exists
+        if (log.break_start && log.break_end) {
+          const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+          sessionHours -= breakHours;
+        }
+
+        if (sessionHours > 0) {
+          totalHours += sessionHours;
+        }
+      } else if (log.clock_in && !log.clock_out) {
+        // Currently active session
         const clockInTime = new Date(log.clock_in);
         const now = new Date();
-        totalHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
-        clockedIn = true;
+        let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+        // If currently on break, subtract break time
+        if (log.break_start && !log.break_end) {
+          const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+          sessionHours -= breakHours;
+        }
+
+        if (sessionHours > 0) {
+          totalHours += sessionHours;
+          clockedIn = true;
+        }
       }
     });
-  
-  return {
+
+    return {
       totalHours: Math.round(totalHours * 100) / 100, // Round to 2 decimal places
       clockedIn
-  };
+    };
   } catch (error) {
     console.error('Error getting today time tracking:', error);
     return { totalHours: 0, clockedIn: false };

@@ -70,7 +70,7 @@ export function PayrollDialog({ open, onOpenChange, employeeName }: PayrollDialo
       const now = new Date();
       
       // Use the same biweekly calculation as the main payroll system
-      const referenceDate = new Date('2025-01-06'); // Monday, January 6, 2025 as reference
+      const referenceDate = new Date('2025-01-04'); // Friday, January 3, 2025 as reference
       const daysSinceReference = Math.floor((now.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
       const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
       

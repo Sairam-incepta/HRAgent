@@ -7,7 +7,7 @@ import { calculateWorkHoursWithLunchDeduction } from "./misc";
 export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number; total: number }> => {
   try {
     const employees = await getEmployees();
-    
+
     // Filter out admin users
     const nonAdminEmployees = employees.filter(emp => {
       const isAdmin = emp.position === 'Administrator';
@@ -46,10 +46,10 @@ export const getClockedInEmployeesCount = async (): Promise<{ clockedIn: number;
 
     nonAdminEmployees.forEach(employee => {
       const employeeLogs = employeeLogMap.get(employee.clerk_user_id) || [];
-      
+
       // Check if any log has clock_in but no clock_out (currently clocked in)
       const isClockedIn = employeeLogs.some((log: any) => log.clock_in && !log.clock_out);
-      
+
       if (isClockedIn) {
         clockedInCount++;
       }
@@ -71,12 +71,12 @@ export const getTotalPolicySalesAmount = async (): Promise<number> => {
     const { data, error } = await supabase
       .from('policy_sales')
       .select('amount');
-    
+
     if (error) {
       console.error('Error getting total policy sales amount:', error);
       return 0;
     }
-    
+
     return data?.reduce((sum, record) => sum + (record.amount || 0), 0) || 0;
   } catch (error) {
     console.error('Error getting total policy sales amount:', error);
@@ -88,7 +88,7 @@ export const getTotalPolicySalesAmount = async (): Promise<number> => {
 export const getOvertimeHoursThisWeek = async (): Promise<number> => {
   try {
     const employees = await getEmployees();
-    
+
     // Filter out admin users
     const nonAdminEmployees = employees.filter(emp => {
       const isAdmin = emp.position === 'Administrator';
@@ -141,15 +141,36 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
       let employeeWeekHours = 0;
 
       employeeLogs.forEach((log: any) => {
-        if (log.clock_in && log.clock_out && !log.break_start && !log.break_end) {
+        if (log.clock_in && log.clock_out) {
+          // Completed session
           const clockInTime = new Date(log.clock_in);
           const clockOutTime = new Date(log.clock_out);
-          employeeWeekHours += calculateWorkHoursWithLunchDeduction(clockInTime, clockOutTime);
-        } else if (log.clock_in && !log.clock_out && log.date === today && !log.break_start && !log.break_end) {
-          // If currently clocked in, calculate up to now
+          let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // Subtract break time if exists
+          if (log.break_start && log.break_end) {
+            const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            employeeWeekHours += sessionHours;
+          }
+        } else if (log.clock_in && !log.clock_out && log.date === today) {
+          // Currently active session (only for today)
           const clockInTime = new Date(log.clock_in);
           const now = new Date();
-          employeeWeekHours += calculateWorkHoursWithLunchDeduction(clockInTime, now);
+          let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+          // If currently on break, subtract break time
+          if (log.break_start && !log.break_end) {
+            const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
+            sessionHours -= breakHours;
+          }
+
+          if (sessionHours > 0) {
+            employeeWeekHours += sessionHours;
+          }
         }
       });
 

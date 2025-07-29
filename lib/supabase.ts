@@ -135,11 +135,15 @@ export interface DatabaseRequest {
   id: string;
   employee_id: string;
   employeeName: string;
-  type: "overtime" | "vacation" | "sick" | "other";
+  type: "overtime" | "vacation" | "sick" | "edit-clock-time" | "other";
   title: string;
   description: string;
   request_date: string;
   hours_requested?: number;
   status: "pending" | "approved" | "rejected";
   reason?: string;
+  clock_in_time?: string;
+  clock_out_time?: string;
+  start_date?: string;
+  end_date?: string;
 }
