@@ -64,10 +64,10 @@ CREATE POLICY "System can insert high-value notifications"
 ALTER TABLE policy_sales 
 ADD COLUMN IF NOT EXISTS is_cross_sold_policy boolean DEFAULT false;
 
--- Update existing records to set is_cross_sold_policy based on cross_sold field
-UPDATE policy_sales 
-SET is_cross_sold_policy = true 
-WHERE cross_sold = true AND is_cross_sold_policy IS NULL;
+-- -- Update existing records to set is_cross_sold_policy based on cross_sold field
+-- UPDATE policy_sales 
+-- SET is_cross_sold_policy = true 
+-- WHERE cross_sold = true AND is_cross_sold_policy IS NULL;
 
 -- Set remaining records to false if not already set
 UPDATE policy_sales 
