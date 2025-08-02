@@ -49,7 +49,6 @@ export function DailySummaryRequiredDialog({
         body: JSON.stringify({
           message: description.trim(),
           userRole: 'employee',
-          employeeId: user?.id || "emp-001",
           isDailySummarySubmission: true
         }),
       });
