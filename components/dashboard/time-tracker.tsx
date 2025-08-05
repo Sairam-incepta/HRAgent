@@ -4,7 +4,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Play, Square, Coffee, Check, Clock } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getTimeLogsForDay, createTimeLog, updateTimeLog, startBreak, endBreak, getTotalBreakTimeToday } from '@/lib/util/time-logs';
-import { getTodayHours } from '@/lib/util/get';
 import { getLocalDateString } from '@/lib/util/timezone';
 import { useToast } from '@/hooks/use-toast';
 import { dashboardEvents } from '@/lib/events';
@@ -20,14 +19,14 @@ interface TimeTrackerProps {
 
 type DialogType = 'clockIn' | 'clockOut' | 'breakStart' | 'breakEnd';
 
-const TimeTracker = ({ 
-  onTimeUpdate, 
-  onClockOut, 
+const TimeTracker = ({
+  onTimeUpdate,
+  onClockOut,
   maxHoursBeforeOvertime = 8,
-  employeeId 
+  employeeId
 }: TimeTrackerProps) => {
   const { toast } = useToast();
-  
+
   // Simple database-first state with real-time updates
   const [status, setStatus] = useState<TimeStatus>('idle');
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
@@ -36,7 +35,7 @@ const TimeTracker = ({
   const [completedBreakSeconds, setCompletedBreakSeconds] = useState<number>(0);
   const [currentBreakStart, setCurrentBreakStart] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(Date.now()); // Force re-renders
-  
+
   // UI state
   const [loading, setLoading] = useState<boolean>(true);
   const [activeDialog, setActiveDialog] = useState<DialogType | null>(null);
@@ -74,7 +73,7 @@ const TimeTracker = ({
     try {
       const today = getLocalDateString();
       const logs = await getTimeLogsForDay(employeeId, today);
-      
+
       // Calculate completed work (only finished sessions)
       let completedSeconds = 0;
       logs.forEach((log: any) => {
@@ -82,25 +81,13 @@ const TimeTracker = ({
           const clockInTime = new Date(log.clock_in).getTime();
           const clockOutTime = new Date(log.clock_out).getTime();
           let workTime = (clockOutTime - clockInTime) / 1000;
-          
-          // Subtract break time if exists within this session
-          if (log.break_start && log.break_end) {
-            const breakStart = new Date(log.break_start).getTime();
-            const breakEnd = new Date(log.break_end).getTime();
-            
-            // Only subtract if break is within work session
-            if (breakStart >= clockInTime && breakEnd <= clockOutTime) {
-              const breakTime = (breakEnd - breakStart) / 1000;
-              workTime -= breakTime;
-            }
-          }
-          
+
           completedSeconds += Math.max(0, workTime);
         }
       });
-      
+
       setCompletedWorkSeconds(Math.floor(completedSeconds));
-      
+
       // Calculate completed break time (only finished breaks)
       let completedBreakSecs = 0;
       logs.forEach((log: any) => {
@@ -109,13 +96,13 @@ const TimeTracker = ({
           completedBreakSecs += breakTime;
         }
       });
-      
+
       setCompletedBreakSeconds(Math.floor(completedBreakSecs));
-      
+
       // Determine status and current session start
       const activeBreakLog = logs.find((log: any) => log.break_start && !log.break_end);
       const activeWorkLog = logs.find((log: any) => log.clock_in && !log.clock_out);
-      
+
       if (activeBreakLog) {
         setStatus('on-break');
         setActiveLogId(activeBreakLog.id);
@@ -132,7 +119,7 @@ const TimeTracker = ({
         setCurrentSessionStart(null);
         setCurrentBreakStart(null);
       }
-      
+
     } catch (error) {
       console.error('Error loading from database:', error);
     }
@@ -148,29 +135,29 @@ const TimeTracker = ({
       });
       return;
     }
-    
+
     setActiveDialog(null);
-    
+
     try {
       const now = new Date();
-      const { data, error } = await createTimeLog({ 
-        employeeId, 
-        clockIn: now 
+      const { data, error } = await createTimeLog({
+        employeeId,
+        clockIn: now
       });
-      
+
       if (error || !data) throw new Error(error?.message || "Failed to clock in");
-      
+
       dashboardEvents.emit('time_logged');
-      
+
       toast({
         title: "Clocked In",
         description: `Work timer started at ${now.toLocaleTimeString()}`,
         className: "bg-green-100 text-green-800",
       });
-      
+
       // Refresh from database
       await loadFromDatabase();
-      
+
     } catch (error) {
       console.error('Clock in failed:', error);
       toast({
@@ -190,25 +177,25 @@ const TimeTracker = ({
       });
       return;
     }
-    
+
     setActiveDialog(null);
-    
+
     try {
       const now = new Date();
-      
+
       await updateTimeLog({ logId: activeLogId, clockOut: now });
       await startBreak(activeLogId);
-      
+
       dashboardEvents.emit('time_logged');
-      
+
       toast({
         title: "Break Started",
         description: "Work timer paused for break",
       });
-      
+
       // Refresh from database
       await loadFromDatabase();
-      
+
     } catch (error) {
       console.error('Start break failed:', error);
       toast({
@@ -228,25 +215,25 @@ const TimeTracker = ({
       });
       return;
     }
-    
+
     setActiveDialog(null);
-    
+
     try {
       const now = new Date();
-      
+
       await endBreak(activeLogId);
       await createTimeLog({ employeeId, clockIn: now });
-      
+
       dashboardEvents.emit('time_logged');
-      
+
       toast({
         title: "Break Ended",
         description: "Work timer resumed",
       });
-      
+
       // Refresh from database
       await loadFromDatabase();
-      
+
     } catch (error) {
       console.error('End break failed:', error);
       toast({
@@ -266,31 +253,31 @@ const TimeTracker = ({
       });
       return;
     }
-    
+
     setActiveDialog(null);
-    
+
     try {
       const now = new Date();
-      
+
       if (status === 'on-break') {
         await endBreak(activeLogId);
       } else {
         await updateTimeLog({ logId: activeLogId, clockOut: now });
       }
-      
+
       const finalHours = getTotalWorkSeconds() / 3600;
       onClockOut?.(finalHours);
       dashboardEvents.emit('time_logged');
-      
+
       toast({
         title: "Clocked Out",
         description: `You worked ${formatTime(getTotalWorkSeconds())} today`,
         className: "bg-green-100 text-green-800",
       });
-      
+
       // Refresh from database
       await loadFromDatabase();
-      
+
     } catch (error) {
       console.error('Clock out failed:', error);
       toast({
@@ -305,7 +292,7 @@ const TimeTracker = ({
   const getStatusInfo = (): { text: string; color: string } => {
     const totalWorkSeconds = getTotalWorkSeconds();
     const isOvertime = totalWorkSeconds / 3600 >= maxHoursBeforeOvertime;
-    
+
     switch (status) {
       case 'working':
         return {
@@ -336,12 +323,15 @@ const TimeTracker = ({
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Date.now());
-      // Update parent component
-      const totalWork = getTotalWorkSeconds();
-      onTimeUpdate?.(totalWork, status);
     }, 1000);
     return () => clearInterval(timer);
-  }, [getTotalWorkSeconds, onTimeUpdate, status]);
+  }, []);
+
+  // Separate effect for updating parent component
+  useEffect(() => {
+    const totalWork = getTotalWorkSeconds();
+    onTimeUpdate?.(totalWork, status);
+  }, [currentTime, getTotalWorkSeconds, onTimeUpdate, status]);
 
   if (loading) {
     return <div>Loading time tracker...</div>;
@@ -366,7 +356,7 @@ const TimeTracker = ({
                       {status === 'idle' && <Clock className="h-3 w-3 lg:h-4 lg:w-4" />}
                       {statusInfo.text}
                     </div>
-                    
+
                     <div className="space-y-1">
                       <div className="text-2xl sm:text-3xl lg:text-4xl font-mono font-bold tracking-wider text-foreground">
                         {formatTime(getTotalWorkSeconds())}
@@ -389,9 +379,8 @@ const TimeTracker = ({
                           </span>
                         </div>
                         <div className="space-y-1">
-                          <div className={`text-lg sm:text-xl lg:text-2xl font-mono font-bold ${
-                            status === 'on-break' ? 'text-[#f7b97f]' : 'text-muted-foreground'
-                          }`}>
+                          <div className={`text-lg sm:text-xl lg:text-2xl font-mono font-bold ${status === 'on-break' ? 'text-[#f7b97f]' : 'text-muted-foreground'
+                            }`}>
                             {formatTime(getTotalBreakSeconds())}
                           </div>
                           {status === 'on-break' && (
@@ -416,18 +405,18 @@ const TimeTracker = ({
                     disabled={loading}
                     className="bg-[#f7b97f] hover:bg-[#e6a366] text-black px-4 lg:px-6 py-2 text-sm lg:text-base"
                   >
-                    <Coffee className="mr-2 h-4 w-4" /> 
+                    <Coffee className="mr-2 h-4 w-4" />
                     Take Break
                   </Button>
                 )}
-                
+
                 {status === 'on-break' && (
                   <Button
                     onClick={() => setActiveDialog('breakEnd')}
                     disabled={loading}
                     className="bg-[#005cb3] hover:bg-[#004a96] text-white px-4 lg:px-6 py-2 text-sm lg:text-base"
                   >
-                    <Check className="mr-2 h-4 w-4" /> 
+                    <Check className="mr-2 h-4 w-4" />
                     End Break
                   </Button>
                 )}
@@ -439,19 +428,19 @@ const TimeTracker = ({
                     disabled={loading}
                     className="bg-[#005cb3] hover:bg-[#004a96] text-white px-6 lg:px-8 py-2.5 lg:py-3 text-sm lg:text-base font-medium"
                   >
-                    <Play className="mr-2 h-4 w-4 lg:h-5 lg:w-5" /> 
+                    <Play className="mr-2 h-4 w-4 lg:h-5 lg:w-5" />
                     Clock In
                   </Button>
-                ) : (
+                ) : status === 'working' ? (
                   <Button
                     onClick={() => setActiveDialog('clockOut')}
                     disabled={loading}
                     className="bg-red-600 hover:bg-red-700 text-white px-6 lg:px-8 py-2.5 lg:py-3 text-sm lg:text-base font-medium"
                   >
-                    <Square className="mr-2 h-4 w-4 lg:h-5 lg:w-5" /> 
+                    <Square className="mr-2 h-4 w-4 lg:h-5 lg:w-5" />
                     End Work Day
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
           </CardContent>

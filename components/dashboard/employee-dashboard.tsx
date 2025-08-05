@@ -115,7 +115,7 @@ export function EmployeeDashboard({ onClockOut, onClockOutPrompt }: EmployeeDash
     if (todayIndex === -1) return basePeriodData;
 
     // If we're tracking time, use the current elapsed time for today
-    if (timeStatus === "working" || timeStatus === "overtime_pending") {
+    if (timeStatus === "working" || timeStatus === "overtime_pending" || (timeStatus === "idle" && currentElapsedTime > 0)) {
       const updated = [...basePeriodData];
       updated[todayIndex] = {
         ...updated[todayIndex],
