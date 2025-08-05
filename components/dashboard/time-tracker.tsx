@@ -19,7 +19,7 @@ interface TimeTrackerProps {
 
 type DialogType = 'clockIn' | 'clockOut' | 'breakStart' | 'breakEnd';
 
-export const TimeTracker = ({
+const TimeTracker = ({
   onTimeUpdate,
   onClockOut,
   maxHoursBeforeOvertime = 8,
@@ -39,6 +39,7 @@ export const TimeTracker = ({
   // UI state
   const [loading, setLoading] = useState<boolean>(true);
   const [activeDialog, setActiveDialog] = useState<DialogType | null>(null);
+  const [operationInProgress, setOperationInProgress] = useState<boolean>(false);
 
   // Track last known date for midnight detection
   const lastDateRef = useRef<string | null>(null);
@@ -73,7 +74,9 @@ export const TimeTracker = ({
 
   // Handle midnight transition
   const handleMidnightTransition = async (): Promise<void> => {
-    if (!activeLogId) return;
+    if (!activeLogId || operationInProgress) return;
+
+    setOperationInProgress(true);
 
     try {
       // Get yesterday's end time (23:59:59 of the day that just ended)
@@ -88,11 +91,13 @@ export const TimeTracker = ({
 
       // Close previous day's session at yesterday's 23:59:59
       if (status === 'on-break') {
-        // End break and close session
-        await endBreak(activeLogId);
-        await updateTimeLog({ logId: activeLogId, clockOut: endOfPreviousDay });
+        // Only end the break - don't touch clock_out since it's already set
+        await updateTimeLog({ 
+          logId: activeLogId, 
+          breakEnd: endOfPreviousDay
+        });
       } else {
-        // Just close the work session
+        // Close the work session
         await updateTimeLog({ logId: activeLogId, clockOut: endOfPreviousDay });
       }
 
@@ -115,6 +120,11 @@ export const TimeTracker = ({
         description: "Please manually clock out and in",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
@@ -177,7 +187,7 @@ export const TimeTracker = ({
 
   // Action handlers with validation
   const handleClockIn = async (): Promise<void> => {
-    if (status !== 'idle') {
+    if (status !== 'idle' || operationInProgress) {
       toast({
         title: "Already Clocked In",
         description: `You are currently ${status === 'working' ? 'working' : 'on break'}`,
@@ -187,6 +197,7 @@ export const TimeTracker = ({
     }
 
     setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
@@ -215,11 +226,13 @@ export const TimeTracker = ({
         description: "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
   const handleStartBreak = async (): Promise<void> => {
-    if (status !== 'working' || !activeLogId) {
+    if (status !== 'working' || !activeLogId || operationInProgress) {
       toast({
         title: "Cannot Start Break",
         description: `You must be working to start a break. Current status: ${status}`,
@@ -229,6 +242,7 @@ export const TimeTracker = ({
     }
 
     setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
@@ -253,11 +267,16 @@ export const TimeTracker = ({
         description: "Please try again.",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
   const handleEndBreak = async (): Promise<void> => {
-    if (status !== 'on-break' || !activeLogId) {
+    if (status !== 'on-break' || !activeLogId || operationInProgress) {
       toast({
         title: "Cannot End Break",
         description: `You are not currently on break. Current status: ${status}`,
@@ -267,6 +286,7 @@ export const TimeTracker = ({
     }
 
     setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
@@ -291,11 +311,16 @@ export const TimeTracker = ({
         description: "Please try again.",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
   const handleClockOut = async (): Promise<void> => {
-    if (status === 'idle' || !activeLogId) {
+    if (status === 'idle' || !activeLogId || operationInProgress) {
       toast({
         title: "Cannot Clock Out",
         description: "You are not currently clocked in",
@@ -305,6 +330,7 @@ export const TimeTracker = ({
     }
 
     setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
@@ -335,6 +361,11 @@ export const TimeTracker = ({
         description: "Please try again.",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
@@ -666,3 +697,5 @@ export const TimeTracker = ({
     </>
   );
 };
+
+export { TimeTracker };

@@ -39,7 +39,7 @@ export const updateTimeLog = async ({
   breakEnd 
 }: { 
   logId: string;
-  clockOut: Date;
+  clockOut?: Date;
   clockIn?: Date;
   breakStart?: Date;
   breakEnd?: Date;
@@ -47,9 +47,12 @@ export const updateTimeLog = async ({
   try {
     // Build the update object dynamically
     const updateData: any = {
-      clock_out: clockOut.toISOString(),
       updated_at: new Date().toISOString()
     };
+
+    if (clockOut) {
+      updateData.clock_out = clockOut.toISOString();
+    }
 
     // Add optional fields if provided
     if (clockIn) {
