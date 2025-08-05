@@ -1,646 +1,594 @@
-"use client";
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Play, Square, Coffee, Check, Clock } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { getTimeLogsForDay, createTimeLog, updateTimeLog, startBreak, endBreak, getTotalBreakTimeToday } from '@/lib/util/time-logs';
+import { getLocalDateString } from '@/lib/util/timezone';
+import { useToast } from '@/hooks/use-toast';
+import { dashboardEvents } from '@/lib/events';
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Play, Square, Coffee, Check, Clock } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getTimeLogsForDay, createTimeLog, updateTimeLog, startBreak, endBreak } from "@/lib/util/time-logs";
-import { useUser } from '@clerk/nextjs';
-import { dashboardEvents } from "@/lib/events";
-
-type TimeStatus = "idle" | "working" | "lunch" | "overtime_pending";
+type TimeStatus = "idle" | "working" | "on-break";
 
 interface TimeTrackerProps {
-  onClockInChange?: (isClockedIn: boolean) => void;
-  onLunchChange?: (isOnLunch: boolean) => void;
   onTimeUpdate?: (elapsedSeconds: number, status: TimeStatus) => void;
   onClockOut?: (hoursWorked: number) => void;
   maxHoursBeforeOvertime?: number;
+  employeeId: string;
 }
 
-interface ActiveSession {
-  activeLogId: string | null;
-  clockInTime: number | null;
-  breakStartTime: number | null;
-  totalWorkedToday: number;
-  totalBreakToday: number;
-  status: TimeStatus;
-}
+type DialogType = 'clockIn' | 'clockOut' | 'breakStart' | 'breakEnd';
 
-export function TimeTracker({
-  onClockInChange,
-  onLunchChange,
+const TimeTracker = ({
   onTimeUpdate,
   onClockOut,
-  maxHoursBeforeOvertime = 8
-}: TimeTrackerProps) {
-  const { user } = useUser();
+  maxHoursBeforeOvertime = 8,
+  employeeId
+}: TimeTrackerProps) => {
   const { toast } = useToast();
-  
-  const [session, setSession] = useState<ActiveSession>({
-    activeLogId: null,
-    clockInTime: null,
-    breakStartTime: null,
-    totalWorkedToday: 0,
-    totalBreakToday: 0,
-    status: "idle"
-  });
 
-  const [loading, setLoading] = useState(true);
-  const [overtimeNotificationShown, setOvertimeNotificationShown] = useState(false);
-  const channelRef = useRef<BroadcastChannel | null>(null);
-  const lastLoadRef = useRef<number>(0);
-  
-  // Add force update counter to trigger re-renders for timer display
-  const [, forceUpdate] = useState(0);
+  // Simple database-first state with real-time updates
+  const [status, setStatus] = useState<TimeStatus>('idle');
+  const [activeLogId, setActiveLogId] = useState<string | null>(null);
+  const [completedWorkSeconds, setCompletedWorkSeconds] = useState<number>(0);
+  const [currentSessionStart, setCurrentSessionStart] = useState<number | null>(null);
+  const [completedBreakSeconds, setCompletedBreakSeconds] = useState<number>(0);
+  const [currentBreakStart, setCurrentBreakStart] = useState<number | null>(null);
+  const [currentTime, setCurrentTime] = useState<number>(Date.now()); // Force re-renders
 
-  // Confirmation dialogs
-  const [clockInConfirmOpen, setClockInConfirmOpen] = useState(false);
-  const [clockOutConfirmOpen, setClockOutConfirmOpen] = useState(false);
-  const [breakStartConfirmOpen, setBreakStartConfirmOpen] = useState(false);
-  const [breakEndConfirmOpen, setBreakEndConfirmOpen] = useState(false);
+  // UI state
+  const [loading, setLoading] = useState<boolean>(true);
+  const [activeDialog, setActiveDialog] = useState<DialogType | null>(null);
+  const [operationInProgress, setOperationInProgress] = useState<boolean>(false);
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  // Track last known date for midnight detection
+  const lastDateRef = useRef<string | null>(null);
 
-  const getCurrentDate = () => {
-    const now = new Date();
-    return now.toISOString().split('T')[0]; // Simple YYYY-MM-DD format
+  // Format seconds to H:MM:SS
+  const formatTime = (totalSeconds: number): string => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Single function to calculate all times from logs
-  const calculateTimesFromLogs = (logs: any[]) => {
-    let totalWorked = 0;
-    let totalBreak = 0;
-    let activeLog = null;
-    let activeClockIn = null;
-    let activeBreakStart = null;
-
-    for (const log of logs) {
-      if (log.clock_in && !log.clock_out) {
-        activeLog = log;
-        activeClockIn = new Date(log.clock_in).getTime();
-        
-        // Add the current session time to totalWorked
-        const currentSessionTime = Math.floor((Date.now() - activeClockIn) / 1000);
-        totalWorked += currentSessionTime;
-        
-        if (log.break_start && !log.break_end) {
-          activeBreakStart = new Date(log.break_start).getTime();
-        }
-      } else if (log.clock_out && log.break_start && !log.break_end) {
-        activeLog = log;
-        activeBreakStart = new Date(log.break_start).getTime();
-        
-        // Add the current break time to totalBreak
-        const currentBreakTime = Math.floor((Date.now() - activeBreakStart) / 1000);
-        totalBreak += currentBreakTime;
-      }
-
-      if (log.clock_in && log.clock_out) {
-        const clockIn = new Date(log.clock_in).getTime();
-        const clockOut = new Date(log.clock_out).getTime();
-        let workTime = (clockOut - clockIn) / 1000;
-        
-        if (log.break_start && log.break_end) {
-          const breakStart = new Date(log.break_start).getTime();
-          const breakEnd = new Date(log.break_end).getTime();
-          const overlapStart = Math.max(clockIn, breakStart);
-          const overlapEnd = Math.min(clockOut, breakEnd);
-          const overlapTime = Math.max(0, overlapEnd - overlapStart) / 1000;
-          
-          workTime -= overlapTime;
-          
-          const breakTime = (breakEnd - breakStart) / 1000;
-          totalBreak += breakTime;
-        }
-        
-        totalWorked += Math.max(0, workTime);
-      }
-
-      if (log.break_start && log.break_end && !(log.clock_in && log.clock_out)) {
-        const breakStart = new Date(log.break_start).getTime();
-        const breakEnd = new Date(log.break_end).getTime();
-        const breakTime = (breakEnd - breakStart) / 1000;
-        totalBreak += breakTime;
-      }
+  // Get total break time (completed + current break)
+  const getTotalBreakSeconds = useCallback((): number => {
+    let total = completedBreakSeconds;
+    if (status === 'on-break' && currentBreakStart) {
+      const currentBreakTime = Math.floor((currentTime - currentBreakStart) / 1000);
+      total += currentBreakTime;
     }
+    return total;
+  }, [completedBreakSeconds, status, currentBreakStart, currentTime]);
 
-    return {
-      totalWorked: Math.floor(totalWorked),
-      totalBreak: Math.floor(totalBreak),
-      activeLog,
-      activeClockIn,
-      activeBreakStart
-    };
-  };
-
-  const getCurrentTimes = () => {
-    const now = Date.now();
-    
-    let currentWorked = session.totalWorkedToday;
-    let currentBreak = session.totalBreakToday;
-
-    if ((session.status === "working" || session.status === "overtime_pending") && session.clockInTime) {
-      const currentSessionTime = Math.floor((now - session.clockInTime) / 1000);
-      currentWorked = session.totalWorkedToday + currentSessionTime;
+  // Get total work time (completed + current session)
+  const getTotalWorkSeconds = useCallback((): number => {
+    let total = completedWorkSeconds;
+    if (status === 'working' && currentSessionStart) {
+      const currentSessionTime = Math.floor((currentTime - currentSessionStart) / 1000);
+      total += currentSessionTime;
     }
+    return total;
+  }, [completedWorkSeconds, status, currentSessionStart, currentTime]);
 
-    if (session.status === "lunch" && session.breakStartTime) {
-      const currentBreakSession = Math.floor((now - session.breakStartTime) / 1000);
-      currentBreak = session.totalBreakToday + currentBreakSession;
-    }
+  // Handle midnight transition
+  const handleMidnightTransition = async (): Promise<void> => {
+    if (!activeLogId || operationInProgress) return;
 
-    return { currentWorked, currentBreak };
-  };
-
-  const loadSession = useCallback(async () => {
-    if (!user?.id) return;
-
-    const now = Date.now();
-    if (now - lastLoadRef.current < 2000) return; // Debounce: skip if called within 2 seconds
-    lastLoadRef.current = now;
+    setOperationInProgress(true);
 
     try {
-      setLoading(true);
-      const today = getCurrentDate();
-      const logs = await getTimeLogsForDay(user.id, today);
-      const { totalWorked, totalBreak, activeLog, activeClockIn, activeBreakStart } = calculateTimesFromLogs(logs);
+      // Get yesterday's end time (23:59:59 of the day that just ended)
+      const now = new Date();
+      const endOfPreviousDay = new Date(now);
+      endOfPreviousDay.setDate(now.getDate() - 1); // Go back one day
+      endOfPreviousDay.setHours(23, 59, 59, 999);  // Set to 23:59:59.999
+      
+      // Start of current day (00:00:00 of today)
+      const startOfCurrentDay = new Date(now);
+      startOfCurrentDay.setHours(0, 0, 0, 0);
 
-      let newSession: ActiveSession;
-
-      if (!activeLog) {
-        newSession = {
-          activeLogId: null,
-          clockInTime: null,
-          breakStartTime: null,
-          totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak,
-          status: "idle"
-        };
-      } else if (activeBreakStart && !activeClockIn) {
-        // On break - subtract current break time from totalBreak since it was already added
-        const currentBreakTime = Math.floor((Date.now() - activeBreakStart) / 1000);
-        newSession = {
-          activeLogId: activeLog.id,
-          clockInTime: null,
-          breakStartTime: activeBreakStart,
-          totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak - currentBreakTime, // Subtract to avoid double counting
-          status: "lunch"
-        };
-      } else if (activeClockIn) {
-        // Working - subtract current session time from totalWorked since it was already added
-        const currentSessionTime = Math.floor((Date.now() - activeClockIn) / 1000);
-        const adjustedTotalWorked = totalWorked - currentSessionTime; // Subtract to avoid double counting
-        const hoursWorked = totalWorked / 3600; // Use the full total for overtime check
-        const status: TimeStatus = hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
-        
-        newSession = {
-          activeLogId: activeLog.id,
-          clockInTime: activeClockIn,
-          breakStartTime: activeBreakStart,
-          totalWorkedToday: adjustedTotalWorked,
-          totalBreakToday: totalBreak,
-          status: activeBreakStart ? "lunch" : status
-        };
+      // Close previous day's session at yesterday's 23:59:59
+      if (status === 'on-break') {
+        // Only end the break - don't touch clock_out since it's already set
+        await updateTimeLog({ 
+          logId: activeLogId, 
+          breakEnd: endOfPreviousDay
+        });
       } else {
-        newSession = {
-          activeLogId: null,
-          clockInTime: null,
-          breakStartTime: null,
-          totalWorkedToday: totalWorked,
-          totalBreakToday: totalBreak,
-          status: "idle"
-        };
+        // Close the work session
+        await updateTimeLog({ logId: activeLogId, clockOut: endOfPreviousDay });
       }
 
-      // Only update if state has actually changed
-      setSession(prevSession => {
-        if (
-          newSession.status !== prevSession.status ||
-          newSession.activeLogId !== prevSession.activeLogId ||
-          newSession.totalWorkedToday !== prevSession.totalWorkedToday ||
-          newSession.totalBreakToday !== prevSession.totalBreakToday ||
-          newSession.clockInTime !== prevSession.clockInTime ||
-          newSession.breakStartTime !== prevSession.breakStartTime
-        ) {
-          // Schedule callbacks to run after render
-          Promise.resolve().then(() => {
-            onClockInChange?.(newSession.status === "working" || newSession.status === "overtime_pending");
-            onLunchChange?.(newSession.status === "lunch");
-          });
-          return newSession;
-        }
-        return prevSession;
-      });
-    } catch (error) {
-      console.error('Error loading session:', error);
+      // Start new session at today's 00:00:00
+      await createTimeLog({ employeeId, clockIn: startOfCurrentDay });
+
       toast({
-        title: "Sync Failed",
-        description: "Failed to sync time tracker state. Please refresh.",
+        title: "New Day Started",
+        description: "Your session has been automatically transferred to the new day",
+        className: "bg-blue-100 text-blue-800",
+      });
+
+      // Refresh state from database
+      await loadFromDatabase();
+
+    } catch (error) {
+      console.error('Midnight transition failed:', error);
+      toast({
+        title: "Session Transfer Failed", 
+        description: "Please manually clock out and in",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
     } finally {
-      setLoading(false);
+      setOperationInProgress(false);
     }
-  }, [user?.id, maxHoursBeforeOvertime, onClockInChange, onLunchChange, toast]);
+  };
 
-  // Initialize session and set up BroadcastChannel
-  useEffect(() => {
-    if (user?.id) {
-      loadSession();
-      channelRef.current = new BroadcastChannel('time_tracker_channel');
-      channelRef.current.onmessage = (event) => {
-        if (event.data.type === 'state_changed') {
-          // Clear debounce to allow immediate load on broadcast
-          lastLoadRef.current = 0;
-          loadSession();
+  // Load current status and times from database
+  const loadFromDatabase = async (): Promise<void> => {
+    try {
+      const today = getLocalDateString();
+      const logs = await getTimeLogsForDay(employeeId, today);
+
+      // Calculate completed work (only finished sessions)
+      let completedSeconds = 0;
+      logs.forEach((log: any) => {
+        if (log.clock_in && log.clock_out) {
+          const clockInTime = new Date(log.clock_in).getTime();
+          const clockOutTime = new Date(log.clock_out).getTime();
+          let workTime = (clockOutTime - clockInTime) / 1000;
+
+          completedSeconds += Math.max(0, workTime);
         }
-      };
-    }
-
-    return () => {
-      if (channelRef.current) {
-        channelRef.current.close();
-        channelRef.current = null;
-      }
-    };
-  }, [user?.id, loadSession]);
-
-  // Periodic polling for cross-browser sync
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const pollInterval = setInterval(() => {
-      loadSession();
-    }, 30000); // Poll every 30 seconds
-
-    return () => clearInterval(pollInterval);
-  }, [user?.id, loadSession]);
-
-  // Notify other tabs on state change
-  const notifyTabs = useCallback(() => {
-    if (channelRef.current) {
-      channelRef.current.postMessage({
-        type: 'state_changed',
-        status: session.status,
-        activeLogId: session.activeLogId
       });
-    }
-  }, [session.status, session.activeLogId]);
 
-  useEffect(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
+      setCompletedWorkSeconds(Math.floor(completedSeconds));
 
-    if (session.status !== "idle") {
-      // Call onTimeUpdate immediately when status changes
-      const { currentWorked } = getCurrentTimes();
-      onTimeUpdate?.(currentWorked, session.status);
-
-      timerRef.current = setInterval(() => {
-        const { currentWorked, currentBreak } = getCurrentTimes();
-        
-        // Force re-render to update displayed times
-        forceUpdate(prev => prev + 1);
-        
-        // Update parent component
-        onTimeUpdate?.(currentWorked, session.status);
-
-        if (session.status === "working" && !overtimeNotificationShown) {
-          const hoursWorked = currentWorked / 3600;
-          if (hoursWorked >= maxHoursBeforeOvertime) {
-            setSession(prev => ({ ...prev, status: "overtime_pending" }));
-            setOvertimeNotificationShown(true);
-            toast({
-              title: "Overtime Alert",
-              description: "You have reached the maximum hours for regular time.",
-              className: "bg-amber-100 text-amber-800",
-            });
-          }
+      // Calculate completed break time (only finished breaks)
+      let completedBreakSecs = 0;
+      logs.forEach((log: any) => {
+        if (log.break_start && log.break_end) {
+          const breakTime = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / 1000;
+          completedBreakSecs += breakTime;
         }
-      }, 1000);
-    } else {
-      // Call onTimeUpdate when idle
-      onTimeUpdate?.(session.totalWorkedToday, session.status);
+      });
+
+      setCompletedBreakSeconds(Math.floor(completedBreakSecs));
+
+      // Determine status and current session start
+      const activeBreakLog = logs.find((log: any) => log.break_start && !log.break_end);
+      const activeWorkLog = logs.find((log: any) => log.clock_in && !log.clock_out);
+
+      if (activeBreakLog) {
+        setStatus('on-break');
+        setActiveLogId(activeBreakLog.id);
+        setCurrentSessionStart(null);
+        setCurrentBreakStart(new Date(activeBreakLog.break_start).getTime());
+      } else if (activeWorkLog) {
+        setStatus('working');
+        setActiveLogId(activeWorkLog.id);
+        setCurrentSessionStart(new Date(activeWorkLog.clock_in).getTime());
+        setCurrentBreakStart(null);
+      } else {
+        setStatus('idle');
+        setActiveLogId(null);
+        setCurrentSessionStart(null);
+        setCurrentBreakStart(null);
+      }
+
+    } catch (error) {
+      console.error('Error loading from database:', error);
+    }
+  };
+
+  // Action handlers with validation
+  const handleClockIn = async (): Promise<void> => {
+    if (status !== 'idle' || operationInProgress) {
+      toast({
+        title: "Already Clocked In",
+        description: `You are currently ${status === 'working' ? 'working' : 'on break'}`,
+        variant: "destructive",
+      });
+      return;
     }
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [session, maxHoursBeforeOvertime, overtimeNotificationShown, onTimeUpdate, toast]);
-
-  const handleClockIn = async () => {
-    if (!user?.id || loading) return;
-    setClockInConfirmOpen(false);
+    setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
-      const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
+      const { data, error } = await createTimeLog({
+        employeeId,
+        clockIn: now
+      });
 
-      if (error || !data) {
-        throw new Error(error?.message || "Failed to clock in");
-      }
+      if (error || !data) throw new Error(error?.message || "Failed to clock in");
 
-      const newLog = Array.isArray(data) ? data[0] : data;
-      
-      setSession(prev => ({
-        ...prev,
-        activeLogId: newLog.id,
-        clockInTime: now.getTime(),
-        status: "working"
-      }));
-
-      onClockInChange?.(true);
       dashboardEvents.emit('time_logged');
-      notifyTabs();
 
       toast({
         title: "Clocked In",
         description: `Work timer started at ${now.toLocaleTimeString()}`,
         className: "bg-green-100 text-green-800",
       });
+
+      // Refresh from database
+      await loadFromDatabase();
+
     } catch (error) {
-      console.error("Clock in error:", error);
+      console.error('Clock in failed:', error);
       toast({
         title: "Clock In Failed",
-        description: (error as Error).message,
+        description: "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
-  const handleClockOut = async () => {
-    if (!session.activeLogId || loading) return;
-    setClockOutConfirmOpen(false);
-
-    try {
-      const now = new Date();
-      const { currentWorked } = getCurrentTimes();
-      
-      if (session.status === "lunch" && session.breakStartTime) {
-        const currentBreakTime = Math.floor((now.getTime() - session.breakStartTime) / 1000);
-        
-        await endBreak(session.activeLogId);
-        
-        setSession(prev => ({
-          ...prev,
-          breakStartTime: null,
-          totalBreakToday: prev.totalBreakToday + currentBreakTime,
-          status: "idle"
-        }));
-        
-        onLunchChange?.(false);
-      } else {
-        await updateTimeLog({ logId: session.activeLogId, clockOut: now });
-        
-        setSession(prev => ({
-          ...prev,
-          clockInTime: null,
-          activeLogId: null,
-          status: "idle"
-        }));
-        
-        onClockInChange?.(false);
-      }
-
-      const finalHours = currentWorked / 3600;
-      onClockOut?.(finalHours);
-      dashboardEvents.emit('time_logged');
-      notifyTabs();
-
+  const handleStartBreak = async (): Promise<void> => {
+    if (status !== 'working' || !activeLogId || operationInProgress) {
       toast({
-        title: "Clocked Out",
-        description: `You worked ${formatTime(currentWorked)} today`,
-        className: "bg-green-100 text-green-800",
-      });
-
-      // Clear debounce and reload
-      lastLoadRef.current = 0;
-      await loadSession();
-    } catch (error) {
-      console.error("Clock out error:", error);
-      toast({
-        title: "Clock Out Failed",
-        description: "Failed to clock out. Please try again.",
+        title: "Cannot Start Break",
+        description: `You must be working to start a break. Current status: ${status}`,
         variant: "destructive",
       });
+      return;
     }
-  };
 
-  const handleStartBreak = async () => {
-    if (!session.activeLogId || loading) return;
-    setBreakStartConfirmOpen(false);
+    setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
-      const currentWorkTime = session.clockInTime ? Math.floor((now.getTime() - session.clockInTime) / 1000) : 0;
-      
-      await updateTimeLog({ logId: session.activeLogId, clockOut: now });
-      await startBreak(session.activeLogId);
 
-      setSession(prev => ({
-        ...prev,
-        clockInTime: null,
-        breakStartTime: now.getTime(),
-        totalWorkedToday: prev.totalWorkedToday + currentWorkTime,
-        status: "lunch"
-      }));
+      await updateTimeLog({ logId: activeLogId, clockOut: now });
+      await startBreak(activeLogId);
 
-      onLunchChange?.(true);
       dashboardEvents.emit('time_logged');
-      notifyTabs();
 
       toast({
         title: "Break Started",
         description: "Work timer paused for break",
       });
+
+      // Refresh from database
+      await loadFromDatabase();
+
     } catch (error) {
-      console.error("Start break error:", error);
+      console.error('Start break failed:', error);
       toast({
         title: "Failed to Start Break",
         description: "Please try again.",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
-  const handleEndBreak = async () => {
-    if (!session.activeLogId || !user?.id || loading) return;
-    setBreakEndConfirmOpen(false);
+  const handleEndBreak = async (): Promise<void> => {
+    if (status !== 'on-break' || !activeLogId || operationInProgress) {
+      toast({
+        title: "Cannot End Break",
+        description: `You are not currently on break. Current status: ${status}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActiveDialog(null);
+    setOperationInProgress(true);
 
     try {
       const now = new Date();
-      const currentBreakTime = session.breakStartTime ? Math.floor((now.getTime() - session.breakStartTime) / 1000) : 0;
-      
-      await endBreak(session.activeLogId);
-      const { data, error } = await createTimeLog({ employeeId: user.id, clockIn: now });
 
-      if (error || !data) {
-        throw new Error("Failed to resume work after break");
-      }
+      await endBreak(activeLogId);
+      await createTimeLog({ employeeId, clockIn: now });
 
-      const newLog = Array.isArray(data) ? data[0] : data;
-      const hoursWorked = session.totalWorkedToday / 3600;
-      const newStatus: TimeStatus = hoursWorked >= maxHoursBeforeOvertime ? "overtime_pending" : "working";
-
-      setSession(prev => ({
-        ...prev,
-        activeLogId: newLog.id,
-        clockInTime: now.getTime(),
-        breakStartTime: null,
-        totalBreakToday: prev.totalBreakToday + currentBreakTime,
-        status: newStatus
-      }));
-
-      onLunchChange?.(false);
       dashboardEvents.emit('time_logged');
-      notifyTabs();
 
       toast({
         title: "Break Ended",
         description: "Work timer resumed",
       });
+
+      // Refresh from database
+      await loadFromDatabase();
+
     } catch (error) {
-      console.error("End break error:", error);
+      console.error('End break failed:', error);
       toast({
         title: "Failed to End Break",
         description: "Please try again.",
         variant: "destructive",
       });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    return [h, m, s].map((v) => v.toString().padStart(2, "0")).join(":");
+  const handleClockOut = async (): Promise<void> => {
+    if (status === 'idle' || !activeLogId || operationInProgress) {
+      toast({
+        title: "Cannot Clock Out",
+        description: "You are not currently clocked in",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActiveDialog(null);
+    setOperationInProgress(true);
+
+    try {
+      const now = new Date();
+
+      if (status === 'on-break') {
+        await endBreak(activeLogId);
+      } else {
+        await updateTimeLog({ logId: activeLogId, clockOut: now });
+      }
+
+      const finalHours = getTotalWorkSeconds() / 3600;
+      onClockOut?.(finalHours);
+      dashboardEvents.emit('time_logged');
+
+      toast({
+        title: "Clocked Out",
+        description: `You worked ${formatTime(getTotalWorkSeconds())} today`,
+        className: "bg-green-100 text-green-800",
+      });
+
+      // Refresh from database
+      await loadFromDatabase();
+
+    } catch (error) {
+      console.error('Clock out failed:', error);
+      toast({
+        title: "Clock Out Failed",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+      
+      // Force reload to get correct state from database
+      await loadFromDatabase();
+    } finally {
+      setOperationInProgress(false);
+    }
   };
 
-  const getStatusDisplay = (status: TimeStatus, currentTime: number) => {
+  // Get status display info
+  const getStatusInfo = (): { text: string; color: string } => {
+    const totalWorkSeconds = getTotalWorkSeconds();
+    const isOvertime = totalWorkSeconds / 3600 >= maxHoursBeforeOvertime;
+
     switch (status) {
-      case "idle": return "Not Clocked In";
-      case "lunch": return "On Break";
-      case "overtime_pending": return "Overtime Pending";
-      case "working": return currentTime / 3600 >= maxHoursBeforeOvertime ? "In Overtime" : "Currently Working";
-      default: return "Not Clocked In";
+      case 'working':
+        return {
+          text: isOvertime ? 'In Overtime' : 'Currently Working',
+          color: isOvertime ? 'bg-red-100 text-red-800' : 'bg-[#005cb3]/10 text-[#005cb3]'
+        };
+      case 'on-break':
+        return {
+          text: 'On Break',
+          color: 'bg-[#f7b97f]/20 text-[#f7b97f]'
+        };
+      default:
+        return {
+          text: 'Not Clocked In',
+          color: 'bg-muted text-muted-foreground'
+        };
     }
   };
 
-  const getStatusClass = (status: TimeStatus, currentTime: number) => {
-    switch (status) {
-      case "idle": return "bg-muted text-muted-foreground";
-      case "lunch": return "bg-[#f7b97f]/20 text-[#f7b97f]";
-      case "overtime_pending": return "bg-amber-100 text-amber-800";
-      case "working": 
-        return currentTime / 3600 >= maxHoursBeforeOvertime
-          ? "bg-red-100 text-red-800"
-          : "bg-[#005cb3]/10 text-[#005cb3]";
-      default: return "bg-muted text-muted-foreground";
+  // Initialize component
+  useEffect(() => {
+    if (employeeId) {
+      loadFromDatabase().finally(() => setLoading(false));
     }
-  };
+  }, [employeeId]);
+
+  // Update current time every second to force re-renders
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Midnight detection and handling
+  useEffect(() => {
+    const checkMidnight = () => {
+      const currentDate = getLocalDateString();
+      
+      // Store the current date on first load
+      if (!lastDateRef.current) {
+        lastDateRef.current = currentDate;
+        return;
+      }
+      
+      // If date changed and we have an active session
+      if (lastDateRef.current !== currentDate && (status === 'working' || status === 'on-break')) {
+        handleMidnightTransition();
+        lastDateRef.current = currentDate;
+      } else if (lastDateRef.current !== currentDate) {
+        // Update the date even if no active session
+        lastDateRef.current = currentDate;
+      }
+    };
+
+    // Check every minute for midnight crossing
+    const interval = setInterval(checkMidnight, 60000);
+    
+    // Also check immediately when status changes
+    checkMidnight();
+    
+    return () => clearInterval(interval);
+  }, [status, activeLogId]);
+
+  // Separate effect for updating parent component
+  useEffect(() => {
+    const totalWork = getTotalWorkSeconds();
+    onTimeUpdate?.(totalWork, status);
+  }, [currentTime, getTotalWorkSeconds, onTimeUpdate, status]);
 
   if (loading) {
     return <div>Loading time tracker...</div>;
   }
 
-  const { currentWorked, currentBreak } = getCurrentTimes();
+  const statusInfo = getStatusInfo();
 
   return (
     <>
-      <div className="flex flex-col sm:flex-row gap-4">
-        <Card className="w-full sm:w-auto transition-all duration-300 hover:shadow-md">
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <div className="flex gap-2 w-full sm:w-auto">
-                {session.status === "idle" ? (
-                  <Button
-                    onClick={() => setClockInConfirmOpen(true)}
-                    disabled={loading}
-                    className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96]"
-                  >
-                    <Play className="mr-2 h-4 w-4" /> Clock In
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => setClockOutConfirmOpen(true)}
-                    disabled={session.status === "lunch" || loading}
-                    className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Square className="mr-2 h-4 w-4" /> Clock Out
-                  </Button>
-                )}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Hero Timer Section */}
+        <Card className="relative overflow-hidden border bg-card lg:col-span-3">
+          <CardContent className="relative p-4 lg:p-6">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
+              {/* Main Timer Display */}
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4 lg:gap-6">
+                  <div className="space-y-2">
+                    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs lg:text-sm font-medium ${statusInfo.color} border`}>
+                      {status === 'working' && <div className="w-2 h-2 bg-[#005cb3] rounded-full animate-pulse" />}
+                      {status === 'on-break' && <Coffee className="h-3 w-3 lg:h-4 lg:w-4" />}
+                      {status === 'idle' && <Clock className="h-3 w-3 lg:h-4 lg:w-4" />}
+                      {statusInfo.text}
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-2xl sm:text-3xl lg:text-4xl font-mono font-bold tracking-wider text-foreground">
+                        {formatTime(getTotalWorkSeconds())}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Total work time today
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Break Timer (if has break time) */}
+                  {getTotalBreakSeconds() > 0 && (
+                    <>
+                      <div className="hidden sm:block h-12 lg:h-16 w-px bg-border opacity-50" />
+                      <div className="space-y-2 sm:pl-0 pl-4 border-l sm:border-l-0 border-border sm:border-opacity-0">
+                        <div className="flex items-center gap-2">
+                          <Coffee className="h-3 w-3 lg:h-4 lg:w-4 text-[#f7b97f]" />
+                          <span className="text-xs lg:text-sm text-muted-foreground">
+                            Total Breaks
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className={`text-lg sm:text-xl lg:text-2xl font-mono font-bold ${status === 'on-break' ? 'text-[#f7b97f]' : 'text-muted-foreground'
+                            }`}>
+                            {formatTime(getTotalBreakSeconds())}
+                          </div>
+                          {status === 'on-break' && (
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <div className="w-1 h-1 bg-[#f7b97f] rounded-full animate-pulse" />
+                              Currently on break
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
-              <div className={cn(
-                "px-3 py-1 rounded-full text-sm font-medium flex items-center whitespace-nowrap",
-                getStatusClass(session.status, currentWorked)
-              )}>
-                {getStatusDisplay(session.status, currentWorked)}
-                {(session.status !== "idle" || currentWorked > 0) && (
-                  <span className="ml-2 font-mono">{formatTime(currentWorked)}</span>
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-2 lg:gap-3 lg:flex-shrink-0">
+                {/* Secondary Action */}
+                {status === 'working' && (
+                  <Button
+                    onClick={() => setActiveDialog('breakStart')}
+                    disabled={loading}
+                    className="bg-[#f7b97f] hover:bg-[#e6a366] text-black px-4 lg:px-6 py-2 text-sm lg:text-base"
+                  >
+                    <Coffee className="mr-2 h-4 w-4" />
+                    Take Break
+                  </Button>
                 )}
+
+                {status === 'on-break' && (
+                  <Button
+                    onClick={() => setActiveDialog('breakEnd')}
+                    disabled={loading}
+                    className="bg-[#005cb3] hover:bg-[#004a96] text-white px-4 lg:px-6 py-2 text-sm lg:text-base"
+                  >
+                    <Check className="mr-2 h-4 w-4" />
+                    End Break
+                  </Button>
+                )}
+
+                {/* Primary Action */}
+                {status === 'idle' ? (
+                  <Button
+                    onClick={() => setActiveDialog('clockIn')}
+                    disabled={loading}
+                    className="bg-[#005cb3] hover:bg-[#004a96] text-white px-6 lg:px-8 py-2.5 lg:py-3 text-sm lg:text-base font-medium"
+                  >
+                    <Play className="mr-2 h-4 w-4 lg:h-5 lg:w-5" />
+                    Clock In
+                  </Button>
+                ) : status === 'working' ? (
+                  <Button
+                    onClick={() => setActiveDialog('clockOut')}
+                    disabled={loading}
+                    className="bg-red-600 hover:bg-red-700 text-white px-6 lg:px-8 py-2.5 lg:py-3 text-sm lg:text-base font-medium"
+                  >
+                    <Square className="mr-2 h-4 w-4 lg:h-5 lg:w-5" />
+                    End Work Day
+                  </Button>
+                ) : null}
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {session.status !== "idle" && (
-          <Card className="w-full sm:w-auto">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                {session.status !== "lunch" ? (
-                  <Button
-                    onClick={() => setBreakStartConfirmOpen(true)}
-                    disabled={session.status !== "working" && session.status !== "overtime_pending" || loading}
-                    className="w-full sm:w-auto bg-[#f7b97f] hover:bg-[#e6a366] text-black"
-                  >
-                    <Coffee className="mr-2 h-4 w-4" /> Start Break
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => setBreakEndConfirmOpen(true)}
-                    disabled={loading}
-                    className="w-full sm:w-auto bg-[#005cb3] hover:bg-[#004a96]"
-                  >
-                    <Check className="mr-2 h-4 w-4" /> End Break
-                  </Button>
-                )}
-
-                <div className={cn(
-                  "rounded-full px-4 py-1.5 text-sm font-medium flex items-center gap-2",
-                  session.status === "lunch"
-                    ? "bg-[#f7b97f]/20 text-[#f7b97f]"
-                    : "bg-muted text-muted-foreground"
-                )}>
-                  {session.status === "lunch" ? (
-                    <>
-                      <Clock className="h-4 w-4" />
-                      <span>Total break today: {formatTime(currentBreak)}</span>
-                    </>
-                  ) : (
-                    currentBreak > 0 ? (
-                      `Break time today: ${formatTime(currentBreak)}`
-                    ) : (
-                      "No breaks taken"
-                    )
-                  )}
+        {/* PST Time Widget */}
+        <Card className="bg-card lg:col-span-1">
+          <CardContent className="p-4 lg:p-6">
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-muted-foreground">Pacific Time</h3>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 justify-center lg:justify-start">
+                  <Clock className="h-4 w-4 text-[#005cb3]" />
+                  <span className="font-mono font-bold text-xl lg:text-2xl text-foreground">
+                    {new Date().toLocaleTimeString('en-US', {
+                      timeZone: 'America/Los_Angeles',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    })}
+                  </span>
+                </div>
+                <div className="text-center lg:text-left">
+                  <span className="text-sm text-muted-foreground">PST/PDT</span>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <Dialog open={clockInConfirmOpen && !loading} onOpenChange={setClockInConfirmOpen}>
-        <DialogContent>
+      {/* Clock In Dialog */}
+      <Dialog
+        open={activeDialog === 'clockIn'}
+        onOpenChange={(open) => !open && !loading && setActiveDialog(null)}
+      >
+        <DialogContent onEscapeKeyDown={(e) => loading && e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Confirm Clock In</DialogTitle>
             <DialogDescription>
@@ -648,37 +596,57 @@ export function TimeTracker({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setClockInConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setActiveDialog(null)}
+              disabled={loading}
+            >
               Cancel
             </Button>
-            <Button onClick={handleClockIn}>
-              Confirm
+            <Button onClick={handleClockIn} disabled={loading}>
+              {loading ? "Clocking In..." : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={clockOutConfirmOpen && !loading} onOpenChange={setClockOutConfirmOpen}>
-        <DialogContent>
+      {/* Clock Out Dialog */}
+      <Dialog
+        open={activeDialog === 'clockOut'}
+        onOpenChange={(open) => !open && !loading && setActiveDialog(null)}
+      >
+        <DialogContent onEscapeKeyDown={(e) => loading && e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Confirm Clock Out</DialogTitle>
             <DialogDescription>
-              Are you sure you want to end your work session? Your total time today is {formatTime(currentWorked)}.
+              Are you sure you want to end your work session? Your total time today is {formatTime(getTotalWorkSeconds())}.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setClockOutConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setActiveDialog(null)}
+              disabled={loading}
+            >
               Cancel
             </Button>
-            <Button className="bg-red-600 hover:bg-red-700" onClick={handleClockOut}>
-              Confirm
+            <Button
+              className="bg-red-600 hover:bg-red-700"
+              onClick={handleClockOut}
+              disabled={loading}
+            >
+              {loading ? "Clocking Out..." : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={breakStartConfirmOpen && !loading} onOpenChange={setBreakStartConfirmOpen}>
-        <DialogContent>
+      {/* Start Break Dialog */}
+      <Dialog
+        open={activeDialog === 'breakStart'}
+        onOpenChange={(open) => !open && !loading && setActiveDialog(null)}
+      >
+        <DialogContent onEscapeKeyDown={(e) => loading && e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Start Break</DialogTitle>
             <DialogDescription>
@@ -686,34 +654,48 @@ export function TimeTracker({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBreakStartConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setActiveDialog(null)}
+              disabled={loading}
+            >
               Cancel
             </Button>
-            <Button onClick={handleStartBreak}>
-              Start Break
+            <Button onClick={handleStartBreak} disabled={loading}>
+              {loading ? "Starting Break..." : "Start Break"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={breakEndConfirmOpen && !loading} onOpenChange={setBreakEndConfirmOpen}>
-        <DialogContent>
+      {/* End Break Dialog */}
+      <Dialog
+        open={activeDialog === 'breakEnd'}
+        onOpenChange={(open) => !open && !loading && setActiveDialog(null)}
+      >
+        <DialogContent onEscapeKeyDown={(e) => loading && e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>End Break</DialogTitle>
             <DialogDescription>
-              Ready to get back to work? Your break time was {formatTime(session.breakStartTime ? Math.floor((Date.now() - session.breakStartTime) / 1000) : 0)}.
+              Ready to get back to work? Your break time was {formatTime(getTotalBreakSeconds())}.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBreakEndConfirmOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setActiveDialog(null)}
+              disabled={loading}
+            >
               Cancel
             </Button>
-            <Button onClick={handleEndBreak}>
-              End Break
+            <Button onClick={handleEndBreak} disabled={loading}>
+              {loading ? "Ending Break..." : "End Break"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
   );
-}
+};
+
+export { TimeTracker };
