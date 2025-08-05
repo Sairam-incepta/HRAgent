@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Play, Square, Coffee, Check, Clock } from 'lucide-react';
@@ -19,7 +19,7 @@ interface TimeTrackerProps {
 
 type DialogType = 'clockIn' | 'clockOut' | 'breakStart' | 'breakEnd';
 
-const TimeTracker = ({
+export const TimeTracker = ({
   onTimeUpdate,
   onClockOut,
   maxHoursBeforeOvertime = 8,
@@ -39,6 +39,9 @@ const TimeTracker = ({
   // UI state
   const [loading, setLoading] = useState<boolean>(true);
   const [activeDialog, setActiveDialog] = useState<DialogType | null>(null);
+
+  // Track last known date for midnight detection
+  const lastDateRef = useRef<string | null>(null);
 
   // Format seconds to H:MM:SS
   const formatTime = (totalSeconds: number): string => {
@@ -67,6 +70,53 @@ const TimeTracker = ({
     }
     return total;
   }, [completedWorkSeconds, status, currentSessionStart, currentTime]);
+
+  // Handle midnight transition
+  const handleMidnightTransition = async (): Promise<void> => {
+    if (!activeLogId) return;
+
+    try {
+      // Get yesterday's end time (23:59:59 of the day that just ended)
+      const now = new Date();
+      const endOfPreviousDay = new Date(now);
+      endOfPreviousDay.setDate(now.getDate() - 1); // Go back one day
+      endOfPreviousDay.setHours(23, 59, 59, 999);  // Set to 23:59:59.999
+      
+      // Start of current day (00:00:00 of today)
+      const startOfCurrentDay = new Date(now);
+      startOfCurrentDay.setHours(0, 0, 0, 0);
+
+      // Close previous day's session at yesterday's 23:59:59
+      if (status === 'on-break') {
+        // End break and close session
+        await endBreak(activeLogId);
+        await updateTimeLog({ logId: activeLogId, clockOut: endOfPreviousDay });
+      } else {
+        // Just close the work session
+        await updateTimeLog({ logId: activeLogId, clockOut: endOfPreviousDay });
+      }
+
+      // Start new session at today's 00:00:00
+      await createTimeLog({ employeeId, clockIn: startOfCurrentDay });
+
+      toast({
+        title: "New Day Started",
+        description: "Your session has been automatically transferred to the new day",
+        className: "bg-blue-100 text-blue-800",
+      });
+
+      // Refresh state from database
+      await loadFromDatabase();
+
+    } catch (error) {
+      console.error('Midnight transition failed:', error);
+      toast({
+        title: "Session Transfer Failed", 
+        description: "Please manually clock out and in",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Load current status and times from database
   const loadFromDatabase = async (): Promise<void> => {
@@ -327,6 +377,36 @@ const TimeTracker = ({
     return () => clearInterval(timer);
   }, []);
 
+  // Midnight detection and handling
+  useEffect(() => {
+    const checkMidnight = () => {
+      const currentDate = getLocalDateString();
+      
+      // Store the current date on first load
+      if (!lastDateRef.current) {
+        lastDateRef.current = currentDate;
+        return;
+      }
+      
+      // If date changed and we have an active session
+      if (lastDateRef.current !== currentDate && (status === 'working' || status === 'on-break')) {
+        handleMidnightTransition();
+        lastDateRef.current = currentDate;
+      } else if (lastDateRef.current !== currentDate) {
+        // Update the date even if no active session
+        lastDateRef.current = currentDate;
+      }
+    };
+
+    // Check every minute for midnight crossing
+    const interval = setInterval(checkMidnight, 60000);
+    
+    // Also check immediately when status changes
+    checkMidnight();
+    
+    return () => clearInterval(interval);
+  }, [status, activeLogId]);
+
   // Separate effect for updating parent component
   useEffect(() => {
     const totalWork = getTotalWorkSeconds();
@@ -586,5 +666,3 @@ const TimeTracker = ({
     </>
   );
 };
-
-export { TimeTracker };
