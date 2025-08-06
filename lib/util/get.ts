@@ -101,12 +101,6 @@ export const getPeriodSummary = async (employeeId: string, startDate: string, pe
             const clockOutTime = new Date(log.clock_out);
             let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-            // Subtract break time if exists
-            if (log.break_start && log.break_end) {
-              const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-              sessionHours -= breakHours;
-            }
-
             if (sessionHours > 0) {
               hoursWorked += sessionHours;
             }
@@ -241,12 +235,6 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
             const clockOutTime = new Date(log.clock_out);
             let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-            // Subtract break time if exists
-            if (log.break_start && log.break_end) {
-              const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-              sessionHours -= breakHours;
-            }
-
             if (sessionHours > 0) {
               hoursWorked += sessionHours;
             }
@@ -255,12 +243,6 @@ export const getWeeklySummary = async (employeeId: string): Promise<Array<{
             const clockInTime = new Date(log.clock_in);
             const now = new Date();
             let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-
-            // If currently on break, subtract break time
-            if (log.break_start && !log.break_end) {
-              const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-              sessionHours -= breakHours;
-            }
 
             if (sessionHours > 0) {
               hoursWorked += sessionHours;
@@ -309,14 +291,6 @@ export const getTodayHours = async (employeeId: string): Promise<number> => {
         const clockOutTime = new Date(log.clock_out);
         let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-        // Subtract break time if it exists
-        if (log.break_start && log.break_end) {
-          const breakStart = new Date(log.break_start);
-          const breakEnd = new Date(log.break_end);
-          const breakHours = (breakEnd.getTime() - breakStart.getTime()) / (1000 * 60 * 60);
-          sessionHours -= breakHours;
-        }
-
         // Only add positive time
         if (sessionHours > 0) {
           totalHours += sessionHours;
@@ -326,13 +300,6 @@ export const getTodayHours = async (employeeId: string): Promise<number> => {
         const clockInTime = new Date(log.clock_in);
         const now = new Date();
         let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-
-        // If currently on break, subtract current break time
-        if (log.break_start && !log.break_end) {
-          const breakStart = new Date(log.break_start);
-          const currentBreakHours = (now.getTime() - breakStart.getTime()) / (1000 * 60 * 60);
-          sessionHours -= currentBreakHours;
-        }
 
         // Only add positive time
         if (sessionHours > 0) {
@@ -382,12 +349,6 @@ export const getThisWeekHours = async (employeeId: string): Promise<number> => {
         const clockOutTime = new Date(log.clock_out);
         let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-        // Subtract break time if exists
-        if (log.break_start && log.break_end) {
-          const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-          sessionHours -= breakHours;
-        }
-
         if (sessionHours > 0) {
           totalHours += sessionHours;
         }
@@ -396,12 +357,6 @@ export const getThisWeekHours = async (employeeId: string): Promise<number> => {
         const clockInTime = new Date(log.clock_in);
         const now = new Date();
         let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-
-        // If currently on break, subtract break time
-        if (log.break_start && !log.break_end) {
-          const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-          sessionHours -= breakHours;
-        }
 
         if (sessionHours > 0) {
           totalHours += sessionHours;
