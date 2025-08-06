@@ -68,12 +68,6 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
         const clockOutTime = new Date(log.clock_out);
         let sessionHours = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-        // Subtract break time if exists
-        if (log.break_start && log.break_end) {
-          const breakHours = (new Date(log.break_end).getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-          sessionHours -= breakHours;
-        }
-
         if (sessionHours > 0) {
           totalHours += sessionHours;
         }
@@ -82,12 +76,6 @@ export const getTodayTimeTracking = async (employeeId: string): Promise<{ totalH
         const clockInTime = new Date(log.clock_in);
         const now = new Date();
         let sessionHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
-
-        // If currently on break, subtract break time
-        if (log.break_start && !log.break_end) {
-          const breakHours = (now.getTime() - new Date(log.break_start).getTime()) / (1000 * 60 * 60);
-          sessionHours -= breakHours;
-        }
 
         if (sessionHours > 0) {
           totalHours += sessionHours;

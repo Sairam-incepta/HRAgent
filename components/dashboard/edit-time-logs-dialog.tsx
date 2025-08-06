@@ -251,14 +251,6 @@ export function EditTimeLogsDialog({
     const clockOut = new Date(log.clock_out);
     let totalMinutes = (clockOut.getTime() - clockIn.getTime()) / (1000 * 60);
     
-    // Subtract break time if available
-    if (log.break_start && log.break_end) {
-      const breakStart = new Date(log.break_start);
-      const breakEnd = new Date(log.break_end);
-      const breakMinutes = (breakEnd.getTime() - breakStart.getTime()) / (1000 * 60);
-      totalMinutes -= breakMinutes;
-    }
-    
     return Math.max(0, totalMinutes / 60);
   };
 
