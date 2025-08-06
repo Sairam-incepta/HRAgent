@@ -232,8 +232,6 @@ export function AdminDashboard() {
         <TabsContent value="overview" className="space-y-4">
           <AdminStats />
           
-
-
           {/* High-Value Policy Alerts - Full Width Below */}
           <div ref={highValueNotificationsRef} data-section="high-value-policies">
             <HighValuePolicyNotifications />

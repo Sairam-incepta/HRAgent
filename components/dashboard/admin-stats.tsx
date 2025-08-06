@@ -22,8 +22,6 @@ export function AdminStats() {
   });
   const [loading, setLoading] = useState(true);
 
-
-
   useEffect(() => {
     loadStats();
   }, []);
@@ -57,6 +55,7 @@ export function AdminStats() {
       let totalOvertimeThisWeek = 0;
       let totalRegularHoursThisWeek = 0;
       let clockedInCount = 0;
+      let adminCount = 0;
       
       // Calculate current biweekly period dates
       const currentDate = new Date();
@@ -81,7 +80,11 @@ export function AdminStats() {
       for (const employee of employees) {
 
         // Skip admin users for hour calculations (they don't clock in/out)
-        const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+        const isAdmin = employee.position === 'Administrator';
+
+        if (isAdmin){
+          adminCount++;
+        }
         
         if (!isAdmin) {
           // Check if employee is currently clocked in
@@ -125,7 +128,7 @@ export function AdminStats() {
       const expenditure = payrollDetails.summary.totalPay;
 
       setStats({
-        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length },
+        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length - adminCount},
         totalHours,
         totalPolicies,
         totalPolicySalesAmount,

@@ -100,7 +100,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     for (const employee of employeeList) {
       try {
         // Skip admin users for hour calculations (they don't clock in/out)
-        const isAdmin = employee.position === 'HR Manager' || employee.email === 'admin@letsinsure.hr';
+        const isAdmin = employee.position === 'Administrator';
         
         if (!isAdmin) {
           const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
