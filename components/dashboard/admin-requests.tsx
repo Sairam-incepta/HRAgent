@@ -5,31 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  Clock, 
-  Calendar, 
-  AlertTriangle, 
-  Check, 
-  X, 
-  Filter,
-  Search,
-  Edit
-} from "lucide-react";
+import { Clock, Calendar, AlertTriangle, Check, X, Filter, Search, Edit } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getAllRequests, updateRequestStatus } from "@/lib/util/requests";
 import { getEmployees } from "@/lib/util/employee";
 import { dashboardEvents } from "@/lib/events";
@@ -67,7 +47,6 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     ];
 
     return () => {
-      // Call all cleanup functions
       cleanupFunctions.forEach(cleanup => cleanup());
     };
   }, []);
@@ -97,14 +76,14 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
   };
 
   const filteredRequests = requests.filter(request => {
-    const matchesSearch = 
+    const matchesSearch =
       request.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.description.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     const matchesStatus = statusFilter === "all" || request.status === statusFilter;
     const matchesType = typeFilter === "all" || request.type === typeFilter;
-    
+
     return matchesSearch && matchesStatus && matchesType;
   });
 
@@ -112,18 +91,18 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     try {
       const success = await updateRequestStatus(requestId, 'approved');
       if (success) {
-        setRequests(prev => prev.map(req => 
-          req.id === requestId 
+        setRequests(prev => prev.map(req =>
+          req.id === requestId
             ? { ...req, status: "approved" as const }
             : req
         ));
-        
+
         const request = requests.find(r => r.id === requestId);
         toast({
           title: "Request Approved",
           description: `${request?.employeeName}'s ${request?.type} request has been approved.`,
         });
-        
+
         // Emit event to update notification bell
         dashboardEvents.emit('request_status_updated', { requestId, status: 'approved' });
       }
@@ -141,19 +120,19 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     try {
       const success = await updateRequestStatus(requestId, 'rejected');
       if (success) {
-        setRequests(prev => prev.map(req => 
-          req.id === requestId 
+        setRequests(prev => prev.map(req =>
+          req.id === requestId
             ? { ...req, status: "rejected" as const }
             : req
         ));
-        
+
         const request = requests.find(r => r.id === requestId);
         toast({
           title: "Request Rejected",
           description: `${request?.employeeName}'s ${request?.type} request has been rejected.`,
           variant: "destructive",
         });
-        
+
         // Emit event to update notification bell
         dashboardEvents.emit('request_status_updated', { requestId, status: 'rejected' });
       }
@@ -171,18 +150,18 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
     try {
       const success = await updateRequestStatus(requestId, 'pending');
       if (success) {
-        setRequests(prev => prev.map(req => 
-          req.id === requestId 
+        setRequests(prev => prev.map(req =>
+          req.id === requestId
             ? { ...req, status: "pending" as const }
             : req
         ));
-        
+
         const request = requests.find(r => r.id === requestId);
         toast({
           title: "Request Status Updated",
           description: `${request?.employeeName}'s ${request?.type} request has been set to pending.`,
         });
-        
+
         // Emit event to update notification bell
         dashboardEvents.emit('request_status_updated', { requestId, status: 'pending' });
       }
@@ -311,35 +290,35 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                           {request.employeeName.split(" ").map(n => n[0]).join("")}
                         </AvatarFallback>
                       </Avatar>
-                      
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           {getTypeIcon(request.type)}
                           <h4 className="font-medium truncate">{request.title}</h4>
                         </div>
-                        
+
                         <p className="text-sm text-muted-foreground mb-2">
                           {request.employeeName} • {new Date(request.request_date).toLocaleDateString()}
                         </p>
-                        
+
                         <p className="text-sm line-clamp-2">{request.description}</p>
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center gap-2 ml-4">
-                      <Badge 
+                      <Badge
                         variant="outline"
                         className={
-                          request.status === "approved" 
+                          request.status === "approved"
                             ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
                             : request.status === "rejected"
-                            ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
-                            : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                              ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                              : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
                         }
                       >
                         {request.status}
                       </Badge>
-                      
+
                       {request.status === "pending" && (
                         <div className="flex gap-1">
                           <Button
@@ -359,7 +338,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                           </Button>
                         </div>
                       )}
-                      
+
                       {request.status === "approved" && (
                         <Button
                           size="sm"
@@ -370,7 +349,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                           Set Pending
                         </Button>
                       )}
-                      
+
                       {request.status === "rejected" && (
                         <Button
                           size="sm"
@@ -381,7 +360,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                           Set Pending
                         </Button>
                       )}
-                      
+
                       <Button
                         size="sm"
                         variant="outline"
@@ -409,7 +388,7 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
           <DialogHeader>
             <DialogTitle>Request Details</DialogTitle>
           </DialogHeader>
-          
+
           {selectedRequest && (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
@@ -425,30 +404,30 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                   </p>
                 </div>
               </div>
-              
+
               <div className="space-y-3">
                 <div>
                   <label className="text-sm font-medium">Title</label>
                   <p className="text-sm">{selectedRequest.title}</p>
                 </div>
-                
+
                 <div>
                   <label className="text-sm font-medium">Description</label>
                   <p className="text-sm">{selectedRequest.description}</p>
                 </div>
-                
+
                 <div>
                   <label className="text-sm font-medium">Request Date</label>
-                  <p className="text-sm">{new Date(selectedRequest.request_date).toLocaleString()}</p>
+                  <p className="text-sm">{new Date(selectedRequest.request_date).toLocaleDateString()}</p>
                 </div>
-                
+
                 {selectedRequest.hours_requested && (
                   <div>
                     <label className="text-sm font-medium">Additional Hours Requested</label>
                     <p className="text-sm">{selectedRequest.hours_requested} hours</p>
                   </div>
                 )}
-                
+
                 {selectedRequest.clock_in_time && selectedRequest.clock_out_time && (
                   <>
                     <div>
@@ -461,14 +440,14 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                     </div>
                   </>
                 )}
-                
+
                 {selectedRequest.start_date && (
                   <div>
                     <label className="text-sm font-medium">Start Date</label>
                     <p className="text-sm">{new Date(selectedRequest.start_date).toLocaleDateString()}</p>
                   </div>
                 )}
-                
+
                 {selectedRequest.end_date && (
                   <div>
                     <label className="text-sm font-medium">End Date</label>
@@ -476,23 +455,23 @@ export function AdminRequests({ pendingCount }: AdminRequestsProps) {
                   </div>
                 )}
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <label className="text-sm font-medium">Status:</label>
-                <Badge 
+                <Badge
                   variant="outline"
                   className={
-                    selectedRequest.status === "approved" 
+                    selectedRequest.status === "approved"
                       ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
                       : selectedRequest.status === "rejected"
-                      ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
-                      : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                        ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                        : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
                   }
                 >
                   {selectedRequest.status}
                 </Badge>
               </div>
-              
+
               {selectedRequest.status === "pending" && (
                 <div className="flex gap-2 pt-4">
                   <Button

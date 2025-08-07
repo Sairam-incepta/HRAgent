@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Clock, Save, X, Edit3, Coffee, RotateCcw, Plus } from "lucide-react";
 import { getTimeLogsForWeek, updateTimeLog } from "@/lib/util/time-logs";
-import { getLocalDateString } from "@/lib/util/timezone";
+import { getLocalTimezoneDate, getLocalDateString } from "@/lib/util/timezone";
 import { useToast } from "@/hooks/use-toast";
 import { dashboardEvents } from "@/lib/events";
 
@@ -53,18 +53,17 @@ export function EditTimeLogsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<EditingLog | null>(null);
-  
+
   const [dateRange, setDateRange] = useState<{
     startDate: string;
     endDate: string;
   }>({
-    startDate: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
-    endDate: getLocalDateString(new Date())
+    startDate: getLocalDateString(getLocalTimezoneDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))),
+    endDate: getLocalDateString(getLocalTimezoneDate(new Date()))
   });
-  
+
   const [filterMode, setFilterMode] = useState<'range' | 'single'>('range');
-  const [singleDate, setSingleDate] = useState(getLocalDateString(new Date()));
-  
+  const [singleDate, setSingleDate] = useState(getLocalDateString(getLocalTimezoneDate(new Date())));
   const { toast } = useToast();
   const editFormRef = useRef<HTMLDivElement>(null);
 
@@ -90,7 +89,7 @@ export function EditTimeLogsDialog({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!editingLog) return;
-      
+
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleSave();
@@ -118,17 +117,17 @@ export function EditTimeLogsDialog({
       } else {
         logs = await getTimeLogsForWeek(employee.clerk_user_id, dateRange.startDate, dateRange.endDate);
       }
-      
+
       // Sort by date and clock_in in descending order (most recent first)
       const sortedLogs = logs.sort((a, b) => {
         const dateCompare = new Date(b.date).getTime() - new Date(a.date).getTime();
         if (dateCompare !== 0) return dateCompare;
-        
+
         const aClockIn = a.clock_in ? new Date(a.clock_in).getTime() : 0;
         const bClockIn = b.clock_in ? new Date(b.clock_in).getTime() : 0;
         return bClockIn - aClockIn;
       });
-      
+
       setTimeLogs(sortedLogs);
     } catch (error) {
       console.error('Error loading time logs:', error);
@@ -146,17 +145,18 @@ export function EditTimeLogsDialog({
     const formatTimeForInput = (dateString: string | null) => {
       if (!dateString) return '';
       const date = new Date(dateString);
-      return date.toISOString().slice(0, 16);
+      // Convert UTC to PST and format for datetime-local input
+      return date.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 16);
     };
 
-    // Smart defaults for missing values
-    const clockIn = log.clock_in || `${log.date}T09:00`;
-    const clockOut = log.clock_out || `${log.date}T17:00`;
+    // Smart defaults for missing values - in PST timezone
+    const clockIn = log.clock_in || `${log.date}T09:00-08:00`;
+    const clockOut = log.clock_out || `${log.date}T17:00-08:00`;
 
     setEditingLog({
       id: log.id,
-      clock_in: formatTimeForInput(log.clock_in) || clockIn,
-      clock_out: formatTimeForInput(log.clock_out) || clockOut,
+      clock_in: formatTimeForInput(log.clock_in) || clockIn.slice(0, 16),
+      clock_out: formatTimeForInput(log.clock_out) || clockOut.slice(0, 16),
       break_start: formatTimeForInput(log.break_start),
       break_end: formatTimeForInput(log.break_end),
     });
@@ -172,10 +172,11 @@ export function EditTimeLogsDialog({
 
     setSaving(editingLog.id);
     try {
-      const clockIn = editingLog.clock_in ? new Date(editingLog.clock_in) : undefined;
-      const clockOut = editingLog.clock_out ? new Date(editingLog.clock_out) : undefined;
-      const breakStart = editingLog.break_start ? new Date(editingLog.break_start) : undefined;
-      const breakEnd = editingLog.break_end ? new Date(editingLog.break_end) : undefined;
+      // Convert datetime-local inputs (PST) to UTC for storage
+      const clockIn = editingLog.clock_in ? new Date(editingLog.clock_in + '-08:00') : undefined;
+      const clockOut = editingLog.clock_out ? new Date(editingLog.clock_out + '-08:00') : undefined;
+      const breakStart = editingLog.break_start ? new Date(editingLog.break_start + '-08:00') : undefined;
+      const breakEnd = editingLog.break_end ? new Date(editingLog.break_end + '-08:00') : undefined;
 
       // Improved validation with better error messages
       if (clockIn && clockOut && clockIn >= clockOut) {
@@ -267,6 +268,7 @@ export function EditTimeLogsDialog({
   const formatDateTime = (dateString: string | null) => {
     if (!dateString) return '—';
     return new Date(dateString).toLocaleString('en-US', {
+      timeZone: 'America/Los_Angeles',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -276,17 +278,23 @@ export function EditTimeLogsDialog({
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString + 'T00:00:00');
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    // Create PST date from date string
+    const date = new Date(dateString + 'T00:00:00-08:00'); // Force PST interpretation
+    const today = getLocalTimezoneDate(new Date());
+    const yesterday = getLocalTimezoneDate(new Date(today.getTime() - 24 * 60 * 60 * 1000));
 
-    if (date.toDateString() === today.toDateString()) {
+    // Compare just the date parts in PST
+    const dateStr = date.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+    const todayStr = today.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+    const yesterdayStr = yesterday.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+
+    if (dateStr === todayStr) {
       return 'Today';
-    } else if (date.toDateString() === yesterday.toDateString()) {
+    } else if (dateStr === yesterdayStr) {
       return 'Yesterday';
     } else {
       return date.toLocaleDateString('en-US', {
+        timeZone: 'America/Los_Angeles',
         weekday: 'short',
         month: 'short',
         day: 'numeric',
@@ -296,11 +304,11 @@ export function EditTimeLogsDialog({
 
   const calculateHoursWorked = (log: TimeLog) => {
     if (!log.clock_in || !log.clock_out) return 0;
-    
+
     const clockIn = new Date(log.clock_in);
     const clockOut = new Date(log.clock_out);
     let totalMinutes = (clockOut.getTime() - clockIn.getTime()) / (1000 * 60);
-    
+
     return Math.max(0, totalMinutes / 60);
   };
 
@@ -312,8 +320,8 @@ export function EditTimeLogsDialog({
 
   // Quick date range presets
   const setDateRangePreset = (days: number) => {
-    const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const endDate = getLocalTimezoneDate(new Date());
+    const startDate = getLocalTimezoneDate(new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000));
     setDateRange({
       startDate: getLocalDateString(startDate),
       endDate: getLocalDateString(endDate)
@@ -358,7 +366,7 @@ export function EditTimeLogsDialog({
             <Clock className="h-5 w-5" />
             Time Logs for {employee.name}
           </DialogTitle>
-          
+
           {/* Improved date range selector with presets */}
           <div className="flex flex-wrap gap-3 items-center mt-3 p-3 bg-muted rounded-lg">
             {/* Filter Mode Toggle */}
@@ -385,17 +393,17 @@ export function EditTimeLogsDialog({
             {filterMode === 'range' ? (
               <>
                 <div className="flex gap-2 items-center">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setDateRangePreset(7)}
                     className="text-xs transition-all duration-200 hover:scale-105"
                   >
                     Last 7 days
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setDateRangePreset(30)}
                     className="text-xs transition-all duration-200 hover:scale-105"
                   >
@@ -403,7 +411,7 @@ export function EditTimeLogsDialog({
                   </Button>
                   <div className="h-4 border-l border-border mx-2"></div>
                 </div>
-                
+
                 <div className="flex gap-2 items-center">
                   <Label htmlFor="start-date" className="text-sm font-medium">From:</Label>
                   <Input
@@ -474,10 +482,10 @@ export function EditTimeLogsDialog({
                       </Button>
                     </div>
                   </CardHeader>
-                  
+
                   <CardContent className="pt-0">
                     {editingLog?.id === log.id ? (
-                      <div 
+                      <div
                         ref={editFormRef}
                         className="space-y-4 p-4 bg-accent/10 rounded-lg border-2 border-accent/20 transition-all duration-300"
                       >
@@ -489,7 +497,7 @@ export function EditTimeLogsDialog({
                             Press Ctrl+Enter to save, Esc to cancel
                           </div>
                         </div>
-                        
+
                         {/* Required fields */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
@@ -523,7 +531,7 @@ export function EditTimeLogsDialog({
                             />
                           </div>
                         </div>
-                        
+
                         {/* Optional break fields */}
                         <div className="border-t pt-4">
                           <div className="flex items-center justify-between mb-2">
@@ -574,7 +582,7 @@ export function EditTimeLogsDialog({
                             </div>
                           </div>
                         </div>
-                        
+
                         <div className="flex justify-end gap-2 pt-2">
                           <Button
                             variant="outline"
@@ -643,7 +651,7 @@ export function EditTimeLogsDialog({
                   Try last 7 days
                 </Button>
                 <Button
-                  variant="outline" 
+                  variant="outline"
                   size="sm"
                   onClick={() => setFilterMode('single')}
                   className="flex items-center gap-1"

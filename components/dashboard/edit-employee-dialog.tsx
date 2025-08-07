@@ -17,11 +17,11 @@ interface EditEmployeeDialogProps {
   onEmployeeUpdated: () => void;
 }
 
-export function EditEmployeeDialog({ 
-  open, 
-  onOpenChange, 
-  employee, 
-  onEmployeeUpdated 
+export function EditEmployeeDialog({
+  open,
+  onOpenChange,
+  employee,
+  onEmployeeUpdated
 }: EditEmployeeDialogProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -48,9 +48,9 @@ export function EditEmployeeDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!employee) return;
-    
+
     if (!name || !email || !department || !position) {
       toast({
         title: "Error",
@@ -97,7 +97,7 @@ export function EditEmployeeDialog({
           description: `${name}'s information has been successfully updated`,
         });
 
-        onEmployeeUpdated(); // Refresh the employee list
+        onEmployeeUpdated();
         onOpenChange(false);
       } else {
         throw new Error("Failed to update employee");
@@ -234,16 +234,16 @@ export function EditEmployeeDialog({
           </div>
 
           <div className="flex justify-end gap-2 pt-4">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="bg-[#005cb3] hover:bg-[#005cb3]/90"
               disabled={isSubmitting}
             >

@@ -162,7 +162,7 @@ export const getOvertimeHoursThisWeek = async (): Promise<number> => {
         }
       });
 
-      const weeklyOvertimeLimit = 40; // Standard 40-hour work week
+      const weeklyOvertimeLimit = employee.max_hours_before_overtime;
       if (employeeWeekHours > weeklyOvertimeLimit) {
         totalOvertimeHours += (employeeWeekHours - weeklyOvertimeLimit);
       }

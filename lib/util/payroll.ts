@@ -2,14 +2,12 @@ import { supabase } from "../supabase";
 import { getEmployee, getEmployees } from "./employee";
 import { getPolicySales } from "./policies";
 import { getLocalDateString } from "./timezone";
-import { calculateWorkHoursWithLunchDeduction, calculateActualHoursForPeriod } from "./misc";
-import { getEmployeeRateForDate } from "./misc";
 import { appSettings } from "../config/app-settings";
 
 // Enhanced Payroll Functions with Real Database Data
 export interface PayrollPeriod {
-  period: string;  // ✅
-  employees: number;  // ✅
+  period: string;
+  employees: number;
   total: number;
   status: 'current' | 'completed' | 'upcoming';
   startDate: string;

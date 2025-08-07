@@ -33,7 +33,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!firstName || !lastName || !email || !password || !confirmPassword || !department || !position) {
       toast({
         title: "Error",
@@ -121,7 +121,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
         setStatus("active");
         setMaxHoursBeforeOvertime(8);
         setHourlyRate(25);
-        
+
         onAddEmployee(); // Refresh the employee list
         onOpenChange(false);
       } else {
@@ -130,14 +130,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
       }
     } catch (error: any) {
       console.error('Error creating employee:', error);
-      
+
       // Use the error message from the exception
       let errorMessage = "Failed to add employee. Please try again.";
-      
+
       if (error.message) {
         errorMessage = error.message;
       }
-      
+
       toast({
         title: "Error",
         description: errorMessage,
@@ -193,14 +193,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="password">Password *</Label>
             <div className="relative">
-            <Input
-              id="password"
+              <Input
+                id="password"
                 type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter initial password"
-              required
-            />
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter initial password"
+                required
+              />
               <Button
                 type="button"
                 variant="ghost"
@@ -220,14 +220,14 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm Password *</Label>
             <div className="relative">
-            <Input
-              id="confirmPassword"
+              <Input
+                id="confirmPassword"
                 type={showConfirmPassword ? "text" : "password"}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm password"
-              required
-            />
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                required
+              />
               <Button
                 type="button"
                 variant="ghost"
@@ -325,16 +325,16 @@ export function AddEmployeeDialog({ open, onOpenChange, onAddEmployee }: AddEmpl
           </div>
 
           <div className="flex justify-end gap-2 pt-4">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="bg-[#005cb3] hover:bg-[#005cb3]/90"
               disabled={isSubmitting}
             >

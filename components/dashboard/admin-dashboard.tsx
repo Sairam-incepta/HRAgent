@@ -1,23 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { 
-  Clock,
-  FileText,
-  Calendar,
-  Building,
-  Eye,
-} from "lucide-react";
+import { Clock, FileText, Calendar, Building, Eye } from "lucide-react";
 import { EmployeeTable } from "@/components/dashboard/employee-table";
 import { AdminStats } from "@/components/dashboard/admin-stats";
 import { AdminRequests } from "@/components/dashboard/admin-requests";
@@ -66,11 +54,10 @@ export function AdminDashboard() {
     loadData();
   }, []);
 
-  // Auto-refresh data every 15 seconds with background loading to minimize visible refresh
+  // Auto-refresh data every 30 seconds with background loading to minimize visible refresh
   useEffect(() => {
     const interval = setInterval(() => {
-      // Use a more subtle refresh that doesn't show loading states
-      loadData(true); // Background refresh
+      loadData(true);
     }, 30000);
 
     return () => clearInterval(interval);
@@ -104,7 +91,6 @@ export function AdminDashboard() {
     ];
 
     return () => {
-      // Call all cleanup functions
       cleanupFunctions.forEach(cleanup => cleanup());
     };
   }, []);
@@ -113,9 +99,8 @@ export function AdminDashboard() {
     if (!silentUpdate) {
       setLoading(true);
     }
-        
-    try {
 
+    try {
       // Light-weight refresh when called in background
       let employeesData: any[] = employees;
       let salesData: any[] = policySales;
@@ -134,7 +119,7 @@ export function AdminDashboard() {
         getHighValuePolicyNotificationsList(),
         getAllRequests()
       ]);
-      
+
       if (!silentUpdate) {
         setEmployees(employeesData);
         setPolicySales(salesData);
@@ -152,19 +137,19 @@ export function AdminDashboard() {
         setPayrollPeriods(filteredPeriods);
       }
       setHighValueNotifications(notificationsData);
-      
+
       // Count pending requests
       const pendingRequestCount = requestsData.filter(req => req.status === 'pending').length;
       setPendingRequestsCount(pendingRequestCount);
-      
+
       // Update stable count for high-value policies (only pending ones)
       const pendingHighValueCount = notificationsData.filter(n => n.status === 'pending').length;
       setStablePendingCount(pendingHighValueCount);
-      
+
       if (!hasInitiallyLoaded) {
         setHasInitiallyLoaded(true);
       }
-      
+
     } catch (error) {
       console.error('❌ AdminDashboard: Error loading dashboard data:', error);
     } finally {
@@ -189,7 +174,7 @@ export function AdminDashboard() {
   const handleCompanyPayrollView = (period: string) => {
     // Find the payroll period to check if it's upcoming
     const payrollPeriod = payrollPeriods.find(p => p.period === period);
-    
+
     if (payrollPeriod?.status === 'upcoming') {
       // Show toast message for upcoming periods
       toast({
@@ -198,7 +183,7 @@ export function AdminDashboard() {
       });
       return;
     }
-    
+
     setSelectedPayrollPeriod(period);
     setCompanyPayrollDialogOpen(true);
   };
@@ -228,10 +213,10 @@ export function AdminDashboard() {
           <TabsTrigger value="employee-overview">Employee Overview</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="overview" className="space-y-4">
           <AdminStats />
-          
+
           {/* High-Value Policy Alerts - Full Width Below */}
           <div ref={highValueNotificationsRef} data-section="high-value-policies">
             <HighValuePolicyNotifications />
@@ -254,7 +239,7 @@ export function AdminDashboard() {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="reports" className="space-y-4">
           <Card>
             <CardHeader>
@@ -273,7 +258,7 @@ export function AdminDashboard() {
               ) : (
                 <div className="space-y-4">
                   {payrollPeriods.map((payroll, index) => (
-                    <div 
+                    <div
                       key={index}
                       className="flex items-center justify-between p-4 bg-white dark:bg-card border rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-card/80 transition-colors"
                       onClick={() => handleCompanyPayrollView(payroll.period)}
@@ -305,15 +290,15 @@ export function AdminDashboard() {
                           </p>
                           {payroll.details && payroll.status !== "upcoming" && (
                             <p className="text-xs text-muted-foreground">
-                              {Math.round(payroll.details.regularHours + payroll.details.overtimeHours)}h total, 
-                              {payroll.details.totalSales} policies sold, 
+                              {Math.round(payroll.details.regularHours + payroll.details.overtimeHours)}h total,
+                              {payroll.details.totalSales} policies sold,
                               ${payroll.details.totalBonuses.toLocaleString()} bonuses
                             </p>
                           )}
                         </div>
                       </div>
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         className={payroll.status === "current" ? "bg-[#005cb3] hover:bg-[#005cb3]/90" : ""}
                         variant={payroll.status === "current" ? "default" : "outline"}
                         disabled={payroll.status === "upcoming"}
@@ -325,7 +310,7 @@ export function AdminDashboard() {
                   ))}
                 </div>
               )}
-              
+
               <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
                 <div className="flex items-start gap-3">
                   <Calendar className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
@@ -342,9 +327,9 @@ export function AdminDashboard() {
         </TabsContent>
       </Tabs>
 
-      <PayrollDialog 
-        open={payrollDialogOpen} 
-        onOpenChange={setPayrollDialogOpen} 
+      <PayrollDialog
+        open={payrollDialogOpen}
+        onOpenChange={setPayrollDialogOpen}
       />
 
       <CompanyPayrollDialog
@@ -352,7 +337,6 @@ export function AdminDashboard() {
         onOpenChange={setCompanyPayrollDialogOpen}
         payrollPeriod={selectedPayrollPeriod}
       />
-
 
     </div>
   );

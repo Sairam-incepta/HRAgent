@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
   try {
     // Check authentication
     const { userId } = await auth();
-    
+
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -46,25 +46,25 @@ export async function POST(request: NextRequest) {
 
     const result = await createClerkUserAndEmployee(cleanedEmployeeData);
 
-    return NextResponse.json({success: true, result});
+    return NextResponse.json({ success: true, result });
 
-  } 
+  }
   catch (error: any) {
     console.error('Employee creation error:', error);
-    
+
     let errorMessage = 'Failed to create employee';
     let statusCode = 500;
-    
+
     if (error.message) {
       errorMessage = error.message;
-      
+
       if (error.message.includes('already in use') || error.message.includes('Email address')) {
         statusCode = 409; // Conflict
       } else if (error.message.includes('password')) {
         statusCode = 400; // Bad Request
       }
     }
-    
+
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   }
 } 

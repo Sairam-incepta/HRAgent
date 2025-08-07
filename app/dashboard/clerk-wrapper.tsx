@@ -26,7 +26,6 @@ export default function ClerkWrapper() {
   const [clockOutPromptMessage, setClockOutPromptMessage] = useState<string | undefined>();
   const [authError, setAuthError] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
-  // Welcome message state removed per user request
   const [employeeData, setEmployeeData] = useState<{
     name: string;
     email: string;
@@ -38,7 +37,7 @@ export default function ClerkWrapper() {
   useEffect(() => {
     // Initialize app settings
     appSettings.loadSettings();
-    
+
     if (isLoaded && user) {
       // Get role from Clerk metadata on client side
       const publicMetadata = user.publicMetadata as CustomPublicMetadata;
@@ -217,10 +216,10 @@ export default function ClerkWrapper() {
         {/* Main Dashboard Content - Responsive based on chat state */}
         <main
           className={`flex-1 flex flex-col transition-all duration-300 min-h-0 overflow-hidden ${isChatCollapsed
-              ? 'w-full'
-              : isChatExpanded
-                ? 'w-full sm:w-[60%] md:w-[55%] lg:w-[55%] xl:w-[55%] 2xl:w-[45%]'
-                : 'w-full sm:w-[70%] md:w-[65%] lg:w-[65%] xl:w-[65%] 2xl:w-[55%]'
+            ? 'w-full'
+            : isChatExpanded
+              ? 'w-full sm:w-[60%] md:w-[55%] lg:w-[55%] xl:w-[55%] 2xl:w-[45%]'
+              : 'w-full sm:w-[70%] md:w-[65%] lg:w-[65%] xl:w-[65%] 2xl:w-[55%]'
             }`}
         >
           <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
@@ -239,10 +238,10 @@ export default function ClerkWrapper() {
         {userRole && (
           <div
             className={`transition-all duration-300 border-l bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex flex-col ${isChatCollapsed
-                ? 'w-0 overflow-hidden'
-                : isChatExpanded
-                  ? 'w-full sm:w-[40%] md:w-[45%] lg:w-[45%] xl:w-[45%] 2xl:w-[55%] min-w-[320px] max-w-[700px]'
-                  : 'w-full sm:w-[30%] md:w-[35%] lg:w-[35%] xl:w-[35%] 2xl:w-[45%] min-w-[300px] max-w-[580px]'
+              ? 'w-0 overflow-hidden'
+              : isChatExpanded
+                ? 'w-full sm:w-[40%] md:w-[45%] lg:w-[45%] xl:w-[45%] 2xl:w-[55%] min-w-[320px] max-w-[700px]'
+                : 'w-full sm:w-[30%] md:w-[35%] lg:w-[35%] xl:w-[35%] 2xl:w-[45%] min-w-[300px] max-w-[580px]'
               }`}
             style={{ height: 'calc(100vh - 64px)' }}
           >

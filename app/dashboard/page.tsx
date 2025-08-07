@@ -1,13 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from "react";
-import { DashboardHeader } from "@/components/dashboard/header";
-import { EmployeeDashboard } from "@/components/dashboard/employee-dashboard";
-import { AdminDashboard } from "@/components/dashboard/admin-dashboard";
-import { ChatInterface } from "@/components/dashboard/chat-interface";
-import { Loader2, MessageSquare, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Loader2 } from "lucide-react";
 
 // Dynamic import of Clerk hooks to handle SSR issues
 import dynamic from 'next/dynamic';

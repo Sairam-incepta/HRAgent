@@ -25,7 +25,6 @@ export function DailySummaryRequiredDialog({
   const [description, setDescription] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
-  const { user } = useUser();
 
   const handleSubmit = async () => {
     if (!description.trim()) {
@@ -95,7 +94,7 @@ export function DailySummaryRequiredDialog({
             Daily Summary Required
           </DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">

@@ -42,13 +42,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: isSelfReset 
-        ? 'Your password has been updated successfully' 
+      message: isSelfReset
+        ? 'Your password has been updated successfully'
         : 'User password has been reset successfully'
     });
 
-  } 
-  catch (error:any) {
+  }
+  catch (error: any) {
     console.error('Password reset error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

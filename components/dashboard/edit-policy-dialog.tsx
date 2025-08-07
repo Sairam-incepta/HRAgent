@@ -44,7 +44,7 @@ export function EditPolicyDialog({
   // Policy types for the select dropdown
   const policyTypes = [
     "Life Insurance",
-    "Health Insurance", 
+    "Health Insurance",
     "Auto Insurance",
     "Home Insurance",
     "Business Insurance",
@@ -83,7 +83,7 @@ export function EditPolicyDialog({
 
     if (!formData.client_name.trim()) {
       toast({
-        title: "Validation Error", 
+        title: "Validation Error",
         description: "Client name is required",
         variant: "destructive",
       });
@@ -93,7 +93,7 @@ export function EditPolicyDialog({
     if (!formData.policy_type) {
       toast({
         title: "Validation Error",
-        description: "Policy type is required", 
+        description: "Policy type is required",
         variant: "destructive",
       });
       return;
@@ -263,7 +263,7 @@ export function EditPolicyDialog({
             <Checkbox
               id="is_cross_sold_policy"
               checked={formData.is_cross_sold_policy}
-              onCheckedChange={(checked) => 
+              onCheckedChange={(checked) =>
                 setFormData({ ...formData, is_cross_sold_policy: checked as boolean })
               }
             />

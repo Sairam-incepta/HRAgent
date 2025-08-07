@@ -23,7 +23,7 @@ export function ChatInterfaceToggle() {
   }
 
   return (
-    <div 
+    <div
       className={`
         transition-all duration-300 border-l 
         bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 
@@ -33,7 +33,7 @@ export function ChatInterfaceToggle() {
         md:relative absolute top-0 right-0 h-full z-40 md:z-auto
       `}
     >
-      <ChatInterface 
+      <ChatInterface
         onCollapse={() => setIsChatOpen(false)}
         isExpanded={isChatExpanded}
         onToggleExpand={() => setIsChatExpanded(!isChatExpanded)}

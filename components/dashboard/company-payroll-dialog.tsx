@@ -9,12 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { getPayrollPeriods, getPayrollPeriodDetails } from "@/lib/util/payroll";
 import { getHighValuePolicyNotificationsList } from "@/lib/util/high-value-policy-notifications";
 import { dashboardEvents } from "@/lib/events";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface CompanyPayrollDialogProps {
   open: boolean;
@@ -49,30 +43,30 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
 
   const loadPayrollData = async () => {
     if (!payrollPeriod) return;
-    
+
     // Generate unique request ID and store it
     const requestId = Date.now();
     currentRequestRef.current = requestId;
-    
+
     setLoading(true);
     try {
       // SIMPLE: Use the same logic from getPayrollPeriods to find the matching period
       const allPeriods = await getPayrollPeriods();
       const matchingPeriod = allPeriods.find(p => p.period === payrollPeriod);
-      
+
       if (!matchingPeriod) {
         throw new Error(`Period ${payrollPeriod} not found`);
       }
-      
+
       // Use the startDate and endDate that are already calculated
       const details = await getPayrollPeriodDetails(
-        matchingPeriod.startDate, 
+        matchingPeriod.startDate,
         matchingPeriod.endDate
       );
 
       // Use the same logic as personal payroll dialog for high value policies
       const notifications = await getHighValuePolicyNotificationsList();
-      
+
       // ONLY UPDATE STATE IF THIS IS STILL THE CURRENT REQUEST
       if (requestId === currentRequestRef.current) {
         setHighValuePolicies(notifications);
@@ -162,16 +156,16 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
 
                 return hasPendingPolicies;
               })() && (
-                <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
-                    <AlertTriangle className="h-5 w-5" />
-                    <span className="font-medium">High Value Policy Review Required</span>
+                  <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
+                      <AlertTriangle className="h-5 w-5" />
+                      <span className="font-medium">High Value Policy Review Required</span>
+                    </div>
+                    <p className="text-sm text-red-600 dark:text-red-300 mt-1">
+                      {highValuePolicies.filter(policy => policy.status === 'pending').length} high value {highValuePolicies.filter(policy => policy.status === 'pending').length === 1 ? 'policy' : 'policies'} require review before payroll finalization.
+                    </p>
                   </div>
-                  <p className="text-sm text-red-600 dark:text-red-300 mt-1">
-                    {highValuePolicies.filter(policy => policy.status === 'pending').length} high value {highValuePolicies.filter(policy => policy.status === 'pending').length === 1 ? 'policy' : 'policies'} require review before payroll finalization.
-                  </p>
-                </div>
-              )}
+                )}
 
               {/* Key Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -399,8 +393,8 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
 
               {/* Actions */}
               <div className="space-y-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full"
                   onClick={handleClose}
                 >
@@ -417,7 +411,7 @@ export function CompanyPayrollDialog({ open, onOpenChange, payrollPeriod }: Comp
               <p className="text-sm text-muted-foreground">
                 This will show a comprehensive payroll report for all employees for the period: {payrollPeriod}
               </p>
-              <Button 
+              <Button
                 onClick={loadPayrollData}
                 className="w-full bg-[#005cb3] hover:bg-[#005cb3]/90"
               >

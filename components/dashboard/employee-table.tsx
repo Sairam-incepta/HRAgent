@@ -75,7 +75,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     try {
       const data = await getEmployees();
       setEmployees(data);
-      
+
       // Calculate overtime hours for each employee
       await calculateOvertimeHours(data);
     } catch (error) {
@@ -87,7 +87,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
 
   const calculateOvertimeHours = async (employeeList: Employee[]) => {
     const overtimeHours: Record<string, number> = {};
-    
+
     // Get current week dates
     const now = new Date();
     const startOfWeek = new Date(now);
@@ -96,16 +96,16 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
     endOfWeek.setHours(23, 59, 59, 999);
-    
+
     for (const employee of employeeList) {
       try {
         // Skip admin users for hour calculations (they don't clock in/out)
         const isAdmin = employee.position === 'Administrator';
-        
+
         if (!isAdmin) {
           const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
-          const weeklyOvertimeLimit = 40; // Standard 40-hour work week
-          
+          const weeklyOvertimeLimit = employee.max_hours_before_overtime; // Standard 40-hour work week
+
           if (weekHours > weeklyOvertimeLimit) {
             overtimeHours[employee.clerk_user_id] = weekHours - weeklyOvertimeLimit;
           } else {
@@ -119,19 +119,19 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
         overtimeHours[employee.clerk_user_id] = 0;
       }
     }
-    
+
     setEmployeeOvertimeHours(overtimeHours);
   };
 
   const filteredEmployees = employees.filter((employee) => {
-    const matchesSearch = 
+    const matchesSearch =
       employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.position.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     const matchesStatus = statusFilter === "all" || employee.status === statusFilter;
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -176,9 +176,9 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
   // Helper function to get status badge color
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
-      case 'active': 
+      case 'active':
         return "bg-[#005cb3]/10 text-[#005cb3] dark:bg-[#005cb3]/30 dark:text-[#005cb3]";
-      case 'on_leave': 
+      case 'on_leave':
         return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
       case 'inactive':
       default:
@@ -228,8 +228,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
             </Select>
             {/* Show Add Employee button for admins */}
             {isAdmin && (
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 className="h-10 bg-[#005cb3] hover:bg-[#005cb3]/90"
                 onClick={() => setAddEmployeeOpen(true)}
               >
@@ -256,7 +256,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
             <TableBody>
               {filteredEmployees.length > 0 ? (
                 filteredEmployees.map((employee) => (
-                  <TableRow 
+                  <TableRow
                     key={employee.id}
                     className="hover:bg-muted/50"
                   >
@@ -284,7 +284,7 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                       <span className="text-sm">${employee.hourly_rate}/hr</span>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <Badge 
+                      <Badge
                         variant="outline"
                         className={getStatusBadgeClass(employee.status)}
                       >
@@ -293,8 +293,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => handleViewDetails(employee)}
                           className="h-8"
@@ -303,8 +303,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                           Details
                         </Button>
                         {isAdmin && (
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant="outline"
                             size="sm"
                             onClick={() => handleEditEmployee(employee)}
                             className="h-8"
@@ -313,8 +313,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                             Edit
                           </Button>
                         )}
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => handleGeneratePayroll(employee)}
                           className="h-8"
@@ -322,8 +322,8 @@ export function EmployeeTable({ showInOverview = false }: EmployeeTableProps) {
                           <CreditCard className="mr-1 h-3 w-3" />
                           Payroll
                         </Button>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => handleViewPayrollHistory(employee)}
                           className="h-8"

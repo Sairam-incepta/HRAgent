@@ -46,28 +46,28 @@ export function AdminStats() {
   }, []);
 
   const loadStats = async () => {
-    try {      
+    try {
       // Get employees (all employees - role is handled by Clerk, not database)
       const employees = await getEmployees();
-      
+
       let totalPolicies = 0;
       let totalHours = 0;
       let totalOvertimeThisWeek = 0;
       let totalRegularHoursThisWeek = 0;
       let clockedInCount = 0;
       let adminCount = 0;
-      
+
       // Calculate current biweekly period dates
       const currentDate = new Date();
       const referenceDate = new Date('2025-01-04'); // Friday, January 3, 2025
       const daysSinceReference = Math.floor((currentDate.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
       const biweeklyPeriodsSinceReference = Math.floor(daysSinceReference / 14);
-      
+
       const currentPeriodStart = new Date(referenceDate);
       currentPeriodStart.setDate(referenceDate.getDate() + (biweeklyPeriodsSinceReference * 14));
       const currentPeriodEnd = new Date(currentPeriodStart);
       currentPeriodEnd.setDate(currentPeriodStart.getDate() + 13);
-      
+
       // Get current week dates for overtime calculation
       const startOfWeek = new Date(currentDate);
       startOfWeek.setDate(currentDate.getDate() - currentDate.getDay()); // Sunday
@@ -75,32 +75,32 @@ export function AdminStats() {
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
       endOfWeek.setHours(23, 59, 59, 999);
-      
+
       // Get policy sales and hours for each employee using correct employee ID
       for (const employee of employees) {
 
         // Skip admin users for hour calculations (they don't clock in/out)
         const isAdmin = employee.position === 'Administrator';
 
-        if (isAdmin){
+        if (isAdmin) {
           adminCount++;
         }
-        
+
         if (!isAdmin) {
           // Check if employee is currently clocked in
           const { clockedIn } = await getTodayTimeTracking(employee.clerk_user_id);
           if (clockedIn) {
             clockedInCount++;
           }
-          
+
           // Calculate hours for current biweekly period using clerk_user_id
           const empHours = await calculateActualHoursForPeriod(employee.clerk_user_id, currentPeriodStart, currentPeriodEnd);
           totalHours += empHours;
-          
+
           // Calculate this week's hours and overtime (using 40-hour weekly limit)
           const weekHours = await calculateActualHoursForPeriod(employee.clerk_user_id, startOfWeek, endOfWeek);
-          const weeklyOvertimeLimit = 40; // Standard 40-hour work week
-          
+          const weeklyOvertimeLimit = employee.max_hours_before_overtime;
+
           if (weekHours > weeklyOvertimeLimit) {
             const overtime = weekHours - weeklyOvertimeLimit;
             totalOvertimeThisWeek += overtime;
@@ -109,26 +109,26 @@ export function AdminStats() {
             totalRegularHoursThisWeek += weekHours;
           }
         }
-        
+
         // Get policy sales using clerk_user_id (this is what's stored in policy_sales.employee_id)
         const policySales = await getPolicySales(employee.clerk_user_id);
-        
+
         totalPolicies += policySales.length;
       }
-      
+
       // Get new stats using the new functions
       const totalPolicySalesAmount = await getTotalPolicySalesAmount();
-      
+
       // Calculate expenditure based on actual payroll costs (use the same period as calculated above)
       const payrollDetails = await getPayrollPeriodDetails(
         currentPeriodStart.toISOString().split('T')[0],
         currentPeriodEnd.toISOString().split('T')[0]
       );
-      
+
       const expenditure = payrollDetails.summary.totalPay;
 
       setStats({
-        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length - adminCount},
+        clockedInEmployees: { clockedIn: clockedInCount, total: employees.length - adminCount },
         totalHours,
         totalPolicies,
         totalPolicySalesAmount,
@@ -136,7 +136,7 @@ export function AdminStats() {
         regularHoursThisWeek: totalRegularHoursThisWeek,
         expenditure
       });
-      
+
     } catch (error) {
       console.error("❌ AdminStats: Error loading statistics:", error);
     } finally {
