@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Clock, Save, X, Edit3, Coffee, RotateCcw, Plus } from "lucide-react";
 import { getTimeLogsForWeek, updateTimeLog } from "@/lib/util/time-logs";
-import { getLocalTimezoneDate, getLocalDateString } from "@/lib/util/timezone";
+import { getLocalDateString } from "@/lib/util/timezone";
 import { useToast } from "@/hooks/use-toast";
 import { dashboardEvents } from "@/lib/events";
 
@@ -58,12 +58,13 @@ export function EditTimeLogsDialog({
     startDate: string;
     endDate: string;
   }>({
-    startDate: getLocalDateString(getLocalTimezoneDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))),
-    endDate: getLocalDateString(getLocalTimezoneDate(new Date()))
+    startDate: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
+    endDate: getLocalDateString(new Date())
   });
 
   const [filterMode, setFilterMode] = useState<'range' | 'single'>('range');
-  const [singleDate, setSingleDate] = useState(getLocalDateString(getLocalTimezoneDate(new Date())));
+  const [singleDate, setSingleDate] = useState(getLocalDateString(new Date()));
+
   const { toast } = useToast();
   const editFormRef = useRef<HTMLDivElement>(null);
 
@@ -145,18 +146,17 @@ export function EditTimeLogsDialog({
     const formatTimeForInput = (dateString: string | null) => {
       if (!dateString) return '';
       const date = new Date(dateString);
-      // Convert UTC to PST and format for datetime-local input
-      return date.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 16);
+      return date.toISOString().slice(0, 16);
     };
 
-    // Smart defaults for missing values - in PST timezone
-    const clockIn = log.clock_in || `${log.date}T09:00-08:00`;
-    const clockOut = log.clock_out || `${log.date}T17:00-08:00`;
+    // Smart defaults for missing values
+    const clockIn = log.clock_in || `${log.date}T09:00`;
+    const clockOut = log.clock_out || `${log.date}T17:00`;
 
     setEditingLog({
       id: log.id,
-      clock_in: formatTimeForInput(log.clock_in) || clockIn.slice(0, 16),
-      clock_out: formatTimeForInput(log.clock_out) || clockOut.slice(0, 16),
+      clock_in: formatTimeForInput(log.clock_in) || clockIn,
+      clock_out: formatTimeForInput(log.clock_out) || clockOut,
       break_start: formatTimeForInput(log.break_start),
       break_end: formatTimeForInput(log.break_end),
     });
@@ -172,11 +172,10 @@ export function EditTimeLogsDialog({
 
     setSaving(editingLog.id);
     try {
-      // Convert datetime-local inputs (PST) to UTC for storage
-      const clockIn = editingLog.clock_in ? new Date(editingLog.clock_in + '-08:00') : undefined;
-      const clockOut = editingLog.clock_out ? new Date(editingLog.clock_out + '-08:00') : undefined;
-      const breakStart = editingLog.break_start ? new Date(editingLog.break_start + '-08:00') : undefined;
-      const breakEnd = editingLog.break_end ? new Date(editingLog.break_end + '-08:00') : undefined;
+      const clockIn = editingLog.clock_in ? new Date(editingLog.clock_in) : undefined;
+      const clockOut = editingLog.clock_out ? new Date(editingLog.clock_out) : undefined;
+      const breakStart = editingLog.break_start ? new Date(editingLog.break_start) : undefined;
+      const breakEnd = editingLog.break_end ? new Date(editingLog.break_end) : undefined;
 
       // Improved validation with better error messages
       if (clockIn && clockOut && clockIn >= clockOut) {
@@ -268,7 +267,6 @@ export function EditTimeLogsDialog({
   const formatDateTime = (dateString: string | null) => {
     if (!dateString) return '—';
     return new Date(dateString).toLocaleString('en-US', {
-      timeZone: 'America/Los_Angeles',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -278,23 +276,17 @@ export function EditTimeLogsDialog({
   };
 
   const formatDate = (dateString: string) => {
-    // Create PST date from date string
-    const date = new Date(dateString + 'T00:00:00-08:00'); // Force PST interpretation
-    const today = getLocalTimezoneDate(new Date());
-    const yesterday = getLocalTimezoneDate(new Date(today.getTime() - 24 * 60 * 60 * 1000));
+    const date = new Date(dateString + 'T00:00:00');
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
 
-    // Compare just the date parts in PST
-    const dateStr = date.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
-    const todayStr = today.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
-    const yesterdayStr = yesterday.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
-
-    if (dateStr === todayStr) {
+    if (date.toDateString() === today.toDateString()) {
       return 'Today';
-    } else if (dateStr === yesterdayStr) {
+    } else if (date.toDateString() === yesterday.toDateString()) {
       return 'Yesterday';
     } else {
       return date.toLocaleDateString('en-US', {
-        timeZone: 'America/Los_Angeles',
         weekday: 'short',
         month: 'short',
         day: 'numeric',
@@ -320,8 +312,8 @@ export function EditTimeLogsDialog({
 
   // Quick date range presets
   const setDateRangePreset = (days: number) => {
-    const endDate = getLocalTimezoneDate(new Date());
-    const startDate = getLocalTimezoneDate(new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000));
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
     setDateRange({
       startDate: getLocalDateString(startDate),
       endDate: getLocalDateString(endDate)
