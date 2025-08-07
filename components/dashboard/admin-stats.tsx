@@ -206,7 +206,7 @@ export function AdminStats() {
         <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
           <div className="flex items-center justify-between h-full">
             <div className="flex flex-col justify-center min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground leading-tight truncate">Overtime Hours</p>
+              <p className="text-xs text-muted-foreground leading-tight truncate">Weekly Overtime Hours</p>
               <p className="text-2xl font-semibold text-amber-600 leading-tight">
                 {formatHours(stats.overtimeHoursThisWeek)}
               </p>
@@ -221,7 +221,7 @@ export function AdminStats() {
         <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
           <div className="flex items-center justify-between h-full">
             <div className="flex flex-col justify-center min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground leading-tight truncate">Policy Sales</p>
+              <p className="text-xs text-muted-foreground leading-tight truncate">Biweekly Policy Sales</p>
               <p className="text-2xl font-semibold text-foreground leading-tight">
                 ${Math.round(stats.totalPolicySalesAmount).toLocaleString()}
               </p>
@@ -236,7 +236,7 @@ export function AdminStats() {
         <div className="bg-card rounded-lg border p-4 hover:shadow-sm transition-shadow h-20">
           <div className="flex items-center justify-between h-full">
             <div className="flex flex-col justify-center min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground leading-tight truncate">Expenditure</p>
+              <p className="text-xs text-muted-foreground leading-tight truncate">Biweekly Expenditure</p>
               <p className="text-2xl font-semibold text-foreground leading-tight">
                 ${Math.round(stats.expenditure).toLocaleString()}
               </p>
